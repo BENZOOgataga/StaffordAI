@@ -1,6 +1,32 @@
 import { defineConfig } from 'electron-vite';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { mkdirSync, readdirSync, copyFileSync } from 'node:fs';
 import { NATIVE_EXTERNALS } from './src/build/native-externals.ts';
+
+/**
+ * Copies the migration `.sql` files next to the built main bundle.
+ *
+ * `openDatabase` reads `./migrations/*.sql` relative to its own module. After
+ * bundling that module is folded into `out/main/index.js`, so at runtime
+ * `import.meta.url` is that bundle and `./migrations/` resolves to
+ * `out/main/migrations/`. The SQL is not JavaScript, so rollup does not carry it
+ * there on its own. This lands it at exactly that path, in dev and packaged
+ * both, so the path the guard checks and the path the app reads are the same
+ * one. `packaged-bundle` asserts it survived into the asar.
+ */
+function copyMigrations() {
+    return {
+        name: 'stafford-copy-migrations',
+        writeBundle(): void {
+            const from = resolve(__dirname, 'src/main/storage/migrations');
+            const to = resolve(__dirname, 'out/main/migrations');
+            mkdirSync(to, { recursive: true });
+            for (const entry of readdirSync(from)) {
+                if (entry.endsWith('.sql')) copyFileSync(join(from, entry), join(to, entry));
+            }
+        }
+    };
+}
 
 /**
  * Build layout only. The entry points it names are placeholders until Task 7,
@@ -28,6 +54,7 @@ import { NATIVE_EXTERNALS } from './src/build/native-externals.ts';
  */
 export default defineConfig({
     main: {
+        plugins: [copyMigrations()],
         build: {
             outDir: 'out/main',
             lib: { entry: resolve(__dirname, 'src/main/index.ts') },

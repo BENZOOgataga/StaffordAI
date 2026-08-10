@@ -73,6 +73,36 @@ function main() {
     for (const bin of sqliteUnpacked) console.log('  OK    unpacked native module: ' + rel(bin));
     console.log('  better-sqlite3 invariant: checked ' + sqliteUnpacked.length + ' .node file(s) unpacked');
 
+    // The migration .sql must survive into the bundle at the exact path the app
+    // resolves at runtime. openDatabase reads `./migrations/*.sql` relative to
+    // its own module, which is bundled into out/main/index.js, so at runtime the
+    // path is out/main/migrations/ inside the asar. The .sql is not unpacked;
+    // Electron's patched fs reads it from inside the asar, so this reads the asar
+    // the same way, with @electron/asar. A missing migration is a failed first
+    // launch on a user's machine, invisible in dev, which is exactly the class
+    // this guard exists to catch.
+    const asar = require('@electron/asar');
+    const asarPath = files.find((f) => path.basename(f) === 'app.asar');
+    if (!asarPath) {
+        fail('no app.asar found in dist. Cannot verify the migrations shipped.');
+    }
+    // The runtime path openDatabase resolves, out/main/migrations/0001_init.sql.
+    // listPackage returns OS-separated paths, so compare after normalising to
+    // forward slashes rather than assuming a separator.
+    const MIGRATION_IN_ASAR = 'out/main/migrations/0001_init.sql';
+    const inAsar = asar.listPackage(asarPath)
+        .map((p) => p.replace(/\\/g, '/').replace(/^\//, ''));
+    if (!inAsar.includes(MIGRATION_IN_ASAR)) {
+        fail('migration ' + MIGRATION_IN_ASAR + ' is not in app.asar at the path openDatabase resolves ' +
+            'at runtime. electron-vite did not copy the .sql next to the main bundle, so the packaged app ' +
+            'would throw at first launch trying to read its schema.');
+    }
+    const stat = asar.statFile(asarPath, ['out', 'main', 'migrations', '0001_init.sql'].join(path.sep));
+    if (!stat || stat.size === 0) {
+        fail('migration ' + MIGRATION_IN_ASAR + ' is present in the asar but empty.');
+    }
+    console.log('  OK    migration in asar at runtime path: ' + MIGRATION_IN_ASAR + ' (' + stat.size + ' bytes)');
+
     const darwinHelpers = unpacked.filter((f) =>
         path.basename(f) === 'spawn-helper' && !f.includes('win32'));
     const nodeBinaries = unpacked.filter((f) => f.endsWith('.node'));
