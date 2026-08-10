@@ -55,7 +55,17 @@ jobs:
       # binary serves every runtime here and no compiler is needed. If this
       # step ever starts invoking node-gyp, that assumption has broken and the
       # log is where it shows first.
+      #
+      # .npmrc sets ignore-scripts, so npm ci runs no install script, including
+      # the repo postinstall. That is what stops better-sqlite3 compiling from
+      # source without a toolchain. The one script that still has to run on macOS
+      # is the node-pty spawn-helper repair, run explicitly below.
       - run: npm ci
+
+      # The darwin spawn-helper repair the disabled postinstall would have done.
+      # No-op on Windows, repairs the 0644 helper to executable on macOS, without
+      # which every pty.spawn on darwin fails.
+      - run: node scripts/fix-node-pty-permissions.cjs
 
       - run: npm run typecheck
 
@@ -109,6 +119,12 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # .npmrc disables install scripts, so the darwin spawn-helper repair is run
+      # explicitly here too. It must happen before packaging: electron-builder
+      # copies node_modules into the app, so a 0644 helper here ships a 0644
+      # helper in the bundle, which the packaged-bundle check then fails on.
+      - run: node scripts/fix-node-pty-permissions.cjs
 
       # Electron dropped its own postinstall in 42.0.0, so npm ci does not
       # download the Electron binary. The test job never needs it; this job
