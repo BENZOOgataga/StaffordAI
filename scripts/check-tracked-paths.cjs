@@ -90,7 +90,7 @@ const ALLOWED_EXTENSIONS = {
     hooks: ['.cjs', '.md', '.ps1'],
     runner: ['.js'],
     scripts: ['.cjs', '.js', '.json'],
-    src: ['.html', '.json', '.md', '.ts']
+    src: ['.html', '.json', '.md', '.sql', '.ts']
 };
 
 /**
