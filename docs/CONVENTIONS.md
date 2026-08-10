@@ -497,3 +497,39 @@ Every native dependency must therefore be Node-API and ship a prebuild for every
 asserts each native external has a prebuild binary for each, so adding a dependency without a prebuild,
 or an arch without one, fails loudly. `better-sqlite3` arrives in Task 8 and is Node-API with
 prebuilds, so it joins the native externals and this check together.
+
+## `ignore-scripts` is on purpose, and three things move together
+
+`.npmrc` sets `ignore-scripts=true`. It looks like a stray line a cleanup would delete. It is
+load-bearing, and deleting it breaks native dependencies in a way that only surfaces at runtime on a
+user's machine.
+
+Why it is there: better-sqlite3 13 ships an ABI-independent Node-API prebuild per arch that loads on
+Node 26 with no build, and it sets `gypfile: false` to tell npm not to compile it. npm 11 ignores
+`gypfile: false` and runs `node-gyp rebuild` from the package's `binding.gyp`, which fails on any
+machine without a compiler. That includes the Windows CI runner, which has no Visual Studio by design,
+and the reference Windows machine. npm has no per-package way to suppress that one build, and the older
+`prebuild-install` line (better-sqlite3 <= 12) has no Node-26 prebuild and fails worse. So install
+scripts are turned off globally. This was the last resort after the narrow and version fixes were shown
+not to exist on Node 26; the reasoning is in `docs/stack-migration-verification.md`.
+
+**Three things move together. Remove any one alone and native deps break at runtime, not at build.**
+
+1. **`ignore-scripts=true` in `.npmrc`.** Remove it and `npm ci` tries to compile better-sqlite3 with
+   node-gyp and fails wherever there is no compiler, which is every CI leg on Windows and the reference
+   machine.
+2. **The explicit `fix:native` step.** With scripts off, the repo `postinstall` does not run, so the
+   node-pty darwin spawn-helper is left at mode 0644. `UnixTerminal` hands that path to `posix_spawnp`,
+   which needs the execute bit, so every `pty.spawn` on macOS fails, silently, with no build error. The
+   repair runs as an explicit step after `npm ci` in both CI jobs, before `electron-builder` in the
+   package job, and as `npm run fix:native` for a Mac developer. Delete the step and macOS pty spawning
+   breaks with nothing red until someone tries to open a terminal.
+3. **`install-scripts.test.ts`.** Because scripts are globally off, any dependency that gains an install
+   script is now silenced too. This guard fails if a dependency has an install script not on a reviewed
+   allowlist, so a new native dep, or a version bump that adds a `postinstall`, cannot land without
+   someone deciding in review whether that script matters and wiring it explicitly the way `fix:native`
+   is. Do not delete it, and do not widen the allowlist to quiet it without making that decision.
+
+node-pty itself loads from its bundled prebuild without its own install script, verified, so nothing
+else regresses under `ignore-scripts`. The two prebuild guards above still assume every native dep is
+Node-API with a shipped prebuild, which is also what `npmRebuild: false` in packaging depends on.
