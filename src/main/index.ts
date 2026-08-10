@@ -16,6 +16,7 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { currentPlatform } from './platform/index.ts';
 import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './window/security.ts';
@@ -25,12 +26,15 @@ import { registerHandlers } from './ipc/handlers.ts';
 import { ProofPty } from './ipc/proof-pty.ts';
 import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
+import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
+const APP_ID = 'Stafford';
 
 let store: OpenResult | null = null;
 let repositories: Repositories | null = null;
+let transport: HookTransport | null = null;
 
 /**
  * Opens the database and brings it to the current schema, before anything a user
@@ -129,19 +133,92 @@ function openWindow(): void {
     window = win;
 }
 
+/**
+ * Brings the hook transport up at launch, and runs the agent-readiness gate.
+ *
+ * Placed after the DB open and before the tray. The socket is security-critical
+ * and must be up before the UI can offer any action that spawns an agent, and
+ * the bring-up is cheap: a named pipe create on Windows, a directory chmod plus a
+ * bind on macOS, no migration-sized I/O. So it sits ahead of the tray at no
+ * perceptible cost, and the transport is proven up before anything can connect.
+ *
+ * Two separate gates, two separate failures. `assertLaunchable` refuses if the
+ * Claude binary is absent or a self-check fails, because a machine that cannot
+ * run an agent should refuse rather than present a tray that does nothing.
+ * `startHookTransport` refuses on a socket mode mismatch or a bind failure,
+ * because a hook socket in the wrong place is an exposure. Either failure shows a
+ * visible error and quits, rather than half-starting.
+ *
+ * Nothing consumes a hook event yet. A connection is accepted and acknowledged;
+ * mapping an event to agent state is the next step, kept separate on purpose.
+ */
+/**
+ * Spawns a throwaway pty and kills it, to prove the spawn-and-kill layer works
+ * before the app claims it can run agents. The same shape the harness uses.
+ *
+ * process.execPath is the Electron binary in a packaged app, so it is run with
+ * ELECTRON_RUN_AS_NODE to evaluate a no-op and exit, rather than launching a
+ * second Stafford. In development, where execPath is already node, the env is
+ * harmless.
+ */
+function canSpawnAndKill(): boolean {
+    const require = createRequire(import.meta.url);
+    const nodePty = require('node-pty') as {
+        spawn: (file: string, args: readonly string[], options: Record<string, unknown>) => { kill(): void };
+    };
+    const term = nodePty.spawn(process.execPath, ['-e', '0'], {
+        name: 'xterm-256color', cols: 80, rows: 24, cwd: process.cwd(),
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: process.env.PATH ?? '' }
+    });
+    try { term.kill(); } catch { /* opening it is the question, not closing it */ }
+    return true;
+}
+
+async function startTransport(): Promise<boolean> {
+    const platform = currentPlatform();
+    const home = os.homedir();
+    try {
+        assertLaunchable(platform, home, APP_ID, canSpawnAndKill);
+        transport = await startHookTransport({ platform, home, appId: APP_ID });
+        smoke('hook transport up at ' + transport.socketPath + ' | ' + transport.accessDetail);
+        smoke('socket setup: ' + JSON.stringify(transport.report));
+        return true;
+    } catch (error) {
+        const message = 'Stafford could not start its hook transport and will not run:\n\n' +
+            (error instanceof Error ? error.message : String(error));
+        process.stderr.write('[fatal] ' + message + '\n');
+        try { dialog.showErrorBox('Stafford', message); } catch { /* headless */ }
+        app.quit();
+        return false;
+    }
+}
+
 let proofQuitting = false;
-function quit(): void {
+async function quit(): Promise<void> {
     proofQuitting = true;
     proof.kill();
+    // Tear the socket down cleanly, before quitting, so no stale pipe or socket
+    // file lingers. Awaited so the close completes before the process exits, and
+    // done here rather than in the drain, which is a later task: this is the
+    // plain app-quit path.
+    if (transport) {
+        await stopHookTransport(transport).catch(() => {});
+        transport = null;
+    }
     app.quit();
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     applySessionSecurity(session.defaultSession);
 
     // The store first, before the tray or any handler. If it cannot open, the
     // app has already quit inside openStore and there is nothing more to do.
     if (!openStore()) return;
+
+    // The hook transport next, after the store gives its socket somewhere to
+    // live and before the tray can offer to spawn anything. If it cannot come
+    // up, the app has already quit inside startTransport.
+    if (!(await startTransport())) return;
 
     // Never register the login item during a smoke run. A smoke run launches
     // the packaged app for verification, where app.isPackaged is true and the
@@ -197,7 +274,7 @@ app.whenReady().then(() => {
         setTimeout(() => {
             smoke('renderer drove a pty open through the bridge = ' + proof.isOpen());
             smoke('quitting');
-            quit();
+            void quit();
         }, 6000);
     }
 

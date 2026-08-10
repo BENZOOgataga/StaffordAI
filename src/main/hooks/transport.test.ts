@@ -1,0 +1,156 @@
+/**
+ * The launch wiring against a real socket on the platform running the test: a
+ * named pipe on Windows, a socket file under a temp home on macOS. It proves the
+ * shell-started transport keeps the properties the modules give it, rather than
+ * re-testing the modules: the byte-identical acknowledgement, the connection cap,
+ * that it is a pipe or socket and never a TCP port, and clean teardown.
+ *
+ * The 0700 directory and owner-only socket file are macOS filesystem properties.
+ * Their logic is covered by socket-setup.test.ts with injected fs on every
+ * platform, and the real-hardware ownership is the macOS harness section 3. This
+ * file proves the transport comes up and enforces its access rules, not the mode
+ * bits, which cannot be asserted meaningfully on Windows.
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import net from 'node:net';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { startHookTransport, stopHookTransport, type HookTransport } from './transport.ts';
+import { currentPlatform } from '../platform/index.ts';
+import { ACKNOWLEDGEMENT } from './hook-listener.ts';
+
+const platform = currentPlatform();
+let counter = 0;
+
+function appIdFor(name: string): string {
+    counter += 1;
+    return 'StaffordTx-' + name + '-' + process.pid + '-' + counter;
+}
+
+async function withTransport(
+    name: string,
+    options: { maxConnections?: number },
+    fn: (t: HookTransport, home: string) => Promise<void>
+): Promise<void> {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-tx-'));
+    const transport = await startHookTransport({
+        platform, home, appId: appIdFor(name),
+        ...(options.maxConnections === undefined ? {} : { maxConnections: options.maxConnections })
+    });
+    try {
+        await fn(transport, home);
+    } finally {
+        await stopHookTransport(transport).catch(() => {});
+        fs.rmSync(home, { recursive: true, force: true });
+    }
+}
+
+/** Connect, send one line, resolve with the full reply, then the socket closes. */
+function send(socketPath: string, line: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        let reply = '';
+        const socket = net.connect(socketPath);
+        socket.setTimeout(3000, () => { socket.destroy(); reject(new Error('client timeout')); });
+        socket.on('data', (d) => { reply += String(d); });
+        socket.on('close', () => resolve(reply));
+        socket.on('error', reject);
+        socket.on('connect', () => socket.write(line));
+    });
+}
+
+test('the socket comes up and a valid agent gets the byte-identical acknowledgement', async () => {
+    await withTransport('ack', {}, async (t) => {
+        const secret = t.secrets.issue('marion');
+        const reply = await send(t.socketPath,
+            JSON.stringify({ event: 'Stop', sessionId: 's1', agentId: 'marion', secret }) + '\n');
+        assert.equal(reply, ACKNOWLEDGEMENT, 'the ack is byte-identical, unchanged by the shell wiring');
+    });
+});
+
+test('the connection cap rejects the connection past the cap, from the shell wiring', async () => {
+    await withTransport('cap', { maxConnections: 2 }, async (t) => {
+        const rejections: string[] = [];
+        t.listener.on('rejected', (r: { reason: string }) => rejections.push(r.reason));
+
+        // Two connections held open by connecting and not sending, so the third
+        // arrives while the count is at the cap.
+        const held: net.Socket[] = [];
+        for (let i = 0; i < 2; i += 1) {
+            await new Promise<void>((resolve, reject) => {
+                const s = net.connect(t.socketPath);
+                s.on('connect', () => { held.push(s); resolve(); });
+                s.on('error', reject);
+            });
+        }
+
+        const rejected = new Promise<void>((resolve) => {
+            t.listener.on('rejected', () => resolve());
+        });
+        const third = net.connect(t.socketPath);
+        await rejected;
+        assert.ok(rejections.includes('too-many-connections'), 'the connection past the cap is rejected');
+
+        third.destroy();
+        for (const s of held) s.destroy();
+    });
+});
+
+test('the transport is a pipe or socket path, never a TCP port', async () => {
+    await withTransport('no-tcp', {}, async (t) => {
+        assert.equal(typeof t.socketPath, 'string');
+        const isPipe = t.socketPath.startsWith('\\\\.\\pipe\\');
+        const isPath = path.isAbsolute(t.socketPath);
+        assert.ok(isPipe || isPath, 'a pipe name or a filesystem path, not a number, so no port was bound');
+        assert.equal(/^\d+$/.test(t.socketPath), false, 'not a bare port number');
+    });
+});
+
+test('teardown closes the transport and a later connection fails', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-tx-'));
+    const t = await startHookTransport({ platform, home, appId: appIdFor('teardown') });
+    await stopHookTransport(t);
+    await assert.rejects(
+        () => send(t.socketPath, 'x\n'),
+        'after close, nothing is listening, so connecting fails'
+    );
+    fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('the socket setup report matches the platform', async () => {
+    await withTransport('report', {}, async (t) => {
+        if (platform.id === 'win32') {
+            // A named pipe: no parent directory, no socket file, no stale removal.
+            assert.equal(t.report.parentDir, null);
+            assert.equal(t.report.staleRemoved, false);
+        } else {
+            // A socket file in an owner-only directory the setup created or found.
+            assert.notEqual(t.report.parentDir, null);
+        }
+    });
+});
+
+test('a stale socket file at launch is removed and the transport rebinds', async () => {
+    // Only meaningful where the transport is a socket file. On Windows the pipe
+    // has no file, so this asserts the pipe path binds with nothing to remove.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-tx-'));
+    const appId = appIdFor('stale');
+    const plan = platform.hookSocket(appId, home);
+    try {
+        if (plan.parentDir !== null) {
+            fs.mkdirSync(plan.parentDir, { recursive: true });
+            fs.writeFileSync(plan.path, '');
+            const t = await startHookTransport({ platform, home, appId });
+            assert.equal(t.report.staleRemoved, true, 'the leftover socket file was removed before binding');
+            await stopHookTransport(t);
+        } else {
+            const t = await startHookTransport({ platform, home, appId });
+            assert.equal(t.report.staleRemoved, false, 'a pipe has no file to remove, and it binds');
+            await stopHookTransport(t);
+        }
+    } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+    }
+});
