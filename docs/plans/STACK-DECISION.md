@@ -246,9 +246,11 @@ An unsigned Electron app on macOS is stopped by Gatekeeper, and unsigned install
 Windows trigger SmartScreen. Signing and notarizing needs an Apple Developer account at
 99 USD a year.
 
-This is no longer a decision to defer. The auto-update requirement settles it: macOS will
-not apply an unsigned update, so signing is a prerequisite for the updater working at all.
-See the auto-update section below.
+Apple Developer signing is deferred, not required for the updater to function. Under the
+settled click-and-notify strategy the updater works with no Apple involvement: Windows
+auto-updates, and macOS checks the feed, prompts, and the user does a guided download plus a
+one-time Open Anyway. Apple signing adds only the silent in-place macOS swap, which removes
+the drag-and-Open-Anyway step. See the auto-update section below.
 
 `electron-builder` produces both targets. Building and notarizing a macOS artifact requires
 macOS, so either his MacBook or a GitHub Actions macOS runner.
@@ -259,17 +261,22 @@ Three tiers, Benzoo's requirement. The app checks in the background and either o
 relaunch or blocks.
 
 `electron-updater` with GitHub Releases as the feed, plus a detached signature over every
-artifact verified against a public key pinned in the app. OS code signing proves the app is
-Benzoo's; the detached signature proves the artifact is the one he published. Both are
-required, and the second one works today whereas the first waits on Apple enrolment. It is the mature choice, it covers
-Windows NSIS and macOS Squirrel, and it is already in the `electron-builder` ecosystem the
-build uses.
+artifact verified against a public key pinned in the app. These are two different mechanisms,
+and only the second gates the click-and-notify updater. The detached Ed25519 signature proves
+the artifact is the one Benzoo published, and it works today with no Apple dependency, so it is
+what the update path relies on for integrity now. OS code signing proves the app came from his
+Apple developer identity, and it waits on enrolment, but the updater does not need it to check
+the feed, prompt, and guide an install. It is the mature choice, it covers Windows NSIS and
+macOS Squirrel, and it is already in the `electron-builder` ecosystem the build uses.
 
-**Signing is now mandatory, not a decision to defer.** macOS will not apply an unsigned
-update at all, so the Apple Developer account at 99 USD a year is a prerequisite for the
-updater working rather than a nicety for distribution. On Windows an unsigned update means
-the app cannot verify what it is installing, which defeats the purpose of a channel that
-exists partly to ship security fixes.
+**Apple signing is deferred, and the updater works without it.** macOS will not apply an
+unsigned update silently in place, so the Apple Developer account at 99 USD a year is what the
+silent macOS swap needs, not what the updater needs to function. Without it macOS still checks
+the feed, prompts, and guides the user through a download and a one-time Open Anyway, which is
+the settled strategy. Update integrity does not depend on Apple at all: every artifact carries
+the detached Ed25519 signature above, verified against the pinned key, so the app never
+installs an artifact it cannot verify on either platform. That is what stops an unsigned or
+tampered update, and it is in place now.
 
 State the threat plainly, because it is the largest one in the project. Stafford runs as
 Benzoo, spawns processes, and has full disk access on a machine holding corporate and
@@ -448,9 +455,11 @@ it, and do not build it before the terminal view works.
 9. Auto-update through electron-updater, three tiers, blocking decided by a
    `minimumSupportedVersion` floor rather than a severity label. A blocking update drains
    running agents before quitting.
-10. Code signing and notarization on both platforms is required, not optional, because the
-    macOS updater will not apply unsigned updates and an unverified update channel on a
-    machine like this is the largest risk in the project.
+10. Update integrity rests on the detached Ed25519 signature, which is in place now and needs
+    no Apple account. Apple code signing and notarization are deferred: they gate the silent
+    in-place macOS swap and smooth Gatekeeper and SmartScreen, not the click-and-notify updater,
+    which works without them. An unverified update channel on a machine like this is the largest
+    risk in the project, and the Ed25519 signature is what closes it.
 4. SQLite via better-sqlite3, WAL, numbered migrations.
 5. React, Vite, Tailwind, Geist tokens, Radix primitives, Motion, Zustand, xterm.js.
 6. node:test for main, Vitest for renderer, Playwright Electron for end to end.
