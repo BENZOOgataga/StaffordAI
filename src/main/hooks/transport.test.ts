@@ -25,9 +25,22 @@ import { ACKNOWLEDGEMENT } from './hook-listener.ts';
 const platform = currentPlatform();
 let counter = 0;
 
-function appIdFor(name: string): string {
+// A short appId, because on macOS the socket path is
+// <home>/Library/Application Support/<appId>/hook.sock and a unix socket path
+// is capped near 104 bytes. The product uses ~/Library/... which is short; only
+// a test with a long temp home risks the limit, so keep both short.
+function appIdFor(): string {
     counter += 1;
-    return 'StaffordTx-' + name + '-' + process.pid + '-' + counter;
+    return 'Stx' + counter;
+}
+
+// A short temp home for the same reason: os.tmpdir() on macOS is a long
+// /var/folders path, which would blow the socket-path limit. /tmp is short and
+// writable on POSIX; Windows uses a named pipe, so the home length is irrelevant
+// there and the standard temp dir is fine.
+function shortHome(): string {
+    const base = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+    return fs.mkdtempSync(path.join(base, 's-'));
 }
 
 async function withTransport(
@@ -35,9 +48,10 @@ async function withTransport(
     options: { maxConnections?: number },
     fn: (t: HookTransport, home: string) => Promise<void>
 ): Promise<void> {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-tx-'));
+    void name;
+    const home = shortHome();
     const transport = await startHookTransport({
-        platform, home, appId: appIdFor(name),
+        platform, home, appId: appIdFor(),
         ...(options.maxConnections === undefined ? {} : { maxConnections: options.maxConnections })
     });
     try {
@@ -109,8 +123,8 @@ test('the transport is a pipe or socket path, never a TCP port', async () => {
 });
 
 test('teardown closes the transport and a later connection fails', async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-tx-'));
-    const t = await startHookTransport({ platform, home, appId: appIdFor('teardown') });
+    const home = shortHome();
+    const t = await startHookTransport({ platform, home, appId: appIdFor() });
     await stopHookTransport(t);
     await assert.rejects(
         () => send(t.socketPath, 'x\n'),
@@ -135,8 +149,8 @@ test('the socket setup report matches the platform', async () => {
 test('a stale socket file at launch is removed and the transport rebinds', async () => {
     // Only meaningful where the transport is a socket file. On Windows the pipe
     // has no file, so this asserts the pipe path binds with nothing to remove.
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-tx-'));
-    const appId = appIdFor('stale');
+    const home = shortHome();
+    const appId = appIdFor();
     const plan = platform.hookSocket(appId, home);
     try {
         if (plan.parentDir !== null) {
