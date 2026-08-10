@@ -1000,7 +1000,7 @@ point, rather than settling Windows and discovering a macOS surprise at Task 5.
 The macOS half needs a session running on the MacBook. It is not something the Windows side
 can do remotely: it spawns processes, reads socket permissions and runs a real `claude`
 binary, all of which have to happen on that machine. The remote exists, so the Mac clones
-`BENZOOgataga/Stafford` and the work runs there, committing to the same verification file so
+the repository and the work runs there, committing to the same verification file so
 both halves share one history.
 One window per platform.
 
