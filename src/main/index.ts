@@ -13,8 +13,9 @@
  * Task 7a. No packaging, no update checker, no drain. Those are 7b and Task 8.
  */
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog } from 'electron';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { currentPlatform } from './platform/index.ts';
 import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './window/security.ts';
@@ -22,9 +23,56 @@ import { installTray } from './tray.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
 import { ProofPty } from './ipc/proof-pty.ts';
+import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database.ts';
+import { createRepositories, type Repositories } from './storage/repository.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
+
+let store: OpenResult | null = null;
+let repositories: Repositories | null = null;
+
+/**
+ * Opens the database and brings it to the current schema, before anything a user
+ * can see.
+ *
+ * On the critical path to the tray on purpose. It runs the migrations
+ * synchronously and blocks until they finish, and better-sqlite3 blocks the
+ * event loop while it does, so the tray does not appear until the store is
+ * ready. For the expected database size, a handful of projects and hires and a
+ * capped run of tasks, migration 0001 is sub-millisecond, so the delay is not
+ * perceptible. If migrations ever grow heavy enough to be felt at launch, that
+ * is the point to move the tray ahead of the open and show a preparing state,
+ * not before.
+ *
+ * If it throws, migrations failed, the file is corrupt, or its version is ahead
+ * of this build. The app must not run with no store, half a product, so this
+ * shows a visible error and quits rather than continuing into a tray backed by
+ * nothing.
+ *
+ * The base passed to openDatabase is the platform app-data directory with its
+ * appId segment stripped, because openDatabase appends its own `Stafford`
+ * segment (the runtime APP_ID, human-readable, deliberately not the reverse-DNS
+ * packaging appId). The result is `<app data>/Stafford/stafford.db`, one Stafford
+ * rather than two.
+ */
+function openStore(): boolean {
+    try {
+        const base = path.dirname(currentPlatform().appDataDir(os.homedir(), DATA_DIR_NAME));
+        store = openDatabase({ appDataDir: base });
+        repositories = createRepositories(store.db);
+        smoke('db open ' + store.path + ', migration ' + JSON.stringify(store.migration));
+        return true;
+    } catch (error) {
+        const message = 'Stafford could not open its database and will not start:\n\n' +
+            (error instanceof Error ? error.message : String(error));
+        process.stderr.write('[fatal] ' + message + '\n');
+        // showErrorBox works before any window exists. Then quit hard.
+        try { dialog.showErrorBox('Stafford', message); } catch { /* headless */ }
+        app.quit();
+        return false;
+    }
+}
 
 /**
  * A non-interactive proof path, for verifying the shell without a human at the
@@ -91,6 +139,10 @@ function quit(): void {
 app.whenReady().then(() => {
     applySessionSecurity(session.defaultSession);
 
+    // The store first, before the tray or any handler. If it cannot open, the
+    // app has already quit inside openStore and there is nothing more to do.
+    if (!openStore()) return;
+
     // Never register the login item during a smoke run. A smoke run launches
     // the packaged app for verification, where app.isPackaged is true and the
     // login item would otherwise register, which is a change to a live system
@@ -106,6 +158,23 @@ app.whenReady().then(() => {
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +
         ', windows open now ' + BrowserWindow.getAllWindows().length);
+
+    if (SMOKE && repositories) {
+        // A real repository write and read from the running app, not a test, the
+        // way 7a proved the pty path. Proves the DB opened, migrated, and the
+        // repository round-trips against the on-disk file.
+        const project = {
+            id: 'smoke-' + STARTED_AT, name: 'smoke', repos: [{ path: '/x', label: 'x' }],
+            policy: {
+                push: 'none' as const, allowedRoles: [], toolCeiling: null, writePaths: null,
+                requirePipeline: false, allowWebFetch: false, permissionMode: 'default', maxConcurrentAgents: 1
+            }
+        };
+        repositories.projects.insert(project);
+        const back = repositories.projects.get(project.id);
+        smoke('repository write+read ok = ' + (back !== null && back.id === project.id));
+        smoke('projects in store now = ' + repositories.projects.all().length);
+    }
 
     if (SMOKE) {
         // Open the window so the renderer runs the real chain end to end: health
