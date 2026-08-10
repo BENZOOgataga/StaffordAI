@@ -20,6 +20,14 @@
  * platform and arch under `prebuilds/`, so a darwin checkout carries the win32
  * prebuilds too. The CI packaging legs prove the prebuilt binary actually works
  * once packaged; this proves it exists to be packaged.
+ *
+ * Two prebuild layouts, because the two native deps ship differently and the
+ * guard must accept both without loosening into a check that passes on nothing:
+ *   - node-pty:       a directory per arch, `prebuilds/<os>-<arch>/<name>.node`.
+ *   - better-sqlite3: a flat file per arch, `prebuilds/<os>-<arch>.node`.
+ * A prebuild counts only if one of those two exists with a real `.node` binary.
+ * Neither present is a miss, and a miss still fails the run, proven by a red case
+ * in the task that added the flat layout.
  */
 
 import test from 'node:test';
@@ -80,18 +88,28 @@ test('every native dependency has a prebuild for every arch the build targets', 
 
     for (const dep of NATIVE_EXTERNALS) {
         for (const { os, arch } of arches) {
-            const dir = root + 'node_modules/' + dep + '/prebuilds/' + os + '-' + arch;
+            const base = root + 'node_modules/' + dep + '/prebuilds/' + os + '-' + arch;
+
+            // node-pty's directory layout: prebuilds/<os>-<arch>/<name>.node.
+            const dirBinaries = existsSync(base)
+                ? readdirSync(base).filter((f) => f.endsWith('.node'))
+                : [];
+            // better-sqlite3's flat layout: prebuilds/<os>-<arch>.node.
+            const flatFile = base + '.node';
+            const flatExists = existsSync(flatFile);
+
+            const layout = dirBinaries.length > 0
+                ? 'dir(' + dirBinaries.length + ')'
+                : flatExists ? 'flat' : null;
+
             assert.ok(
-                existsSync(dir),
-                dep + ' has no prebuild for ' + os + '-' + arch + '. npmRebuild is off, so there is ' +
-                'no from-source fallback: this build would ship a bundle that fails to load at runtime.'
+                layout !== null,
+                dep + ' has no prebuild for ' + os + '-' + arch + ', in either a ' +
+                'prebuilds/' + os + '-' + arch + '/ directory or a flat ' +
+                'prebuilds/' + os + '-' + arch + '.node. npmRebuild is off, so there is no ' +
+                'from-source fallback: this build would ship a bundle that fails to load at runtime.'
             );
-            const binaries = readdirSync(dir).filter((f) => f.endsWith('.node'));
-            assert.ok(
-                binaries.length > 0,
-                dep + '/prebuilds/' + os + '-' + arch + ' exists but has no .node binary'
-            );
-            checked.push(dep + ' ' + os + '-' + arch + ' (' + binaries.length + ' .node)');
+            checked.push(dep + ' ' + os + '-' + arch + ' (' + layout + ')');
         }
     }
 

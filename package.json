@@ -12,6 +12,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/fix-node-pty-permissions.cjs",
+    "fix:native": "node scripts/fix-node-pty-permissions.cjs",
     "electron:install": "install-electron",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -22,6 +23,7 @@
     "check:paths": "node scripts/check-tracked-paths.cjs"
   },
   "dependencies": {
+    "better-sqlite3": "13.0.3",
     "node-pty": "1.1.0"
   },
   "devDependencies": {

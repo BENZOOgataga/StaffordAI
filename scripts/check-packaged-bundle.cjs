@@ -59,6 +59,20 @@ function main() {
     const files = walk(DIST, []);
     const unpacked = files.filter((f) => f.includes('app.asar.unpacked') && f.includes(sep('node-pty')));
 
+    // better-sqlite3 is the second native external, added in Task 8. It has no
+    // spawn-helper, so its only invariant is the same one node-pty has on
+    // Windows: its .node binary must be unpacked from the asar rather than sealed
+    // inside it, or it fails to load at runtime in the packaged app. Checked on
+    // every bundle, darwin and windows both, because it ships on both.
+    const sqliteUnpacked = files.filter(
+        (f) => f.includes('app.asar.unpacked') && f.includes(sep('better-sqlite3')) && f.endsWith('.node'));
+    if (sqliteUnpacked.length === 0) {
+        fail('no unpacked better-sqlite3 .node file. asarUnpack for better-sqlite3 is missing or broken, ' +
+            'so the database module is sealed in the asar and cannot load in the packaged app.');
+    }
+    for (const bin of sqliteUnpacked) console.log('  OK    unpacked native module: ' + rel(bin));
+    console.log('  better-sqlite3 invariant: checked ' + sqliteUnpacked.length + ' .node file(s) unpacked');
+
     const darwinHelpers = unpacked.filter((f) =>
         path.basename(f) === 'spawn-helper' && !f.includes('win32'));
     const nodeBinaries = unpacked.filter((f) => f.endsWith('.node'));

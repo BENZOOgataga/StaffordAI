@@ -44,6 +44,7 @@ const ALLOWED_TOP_LEVEL = new Set([
     '.env.example',
     '.github',
     '.gitignore',
+    '.npmrc',
     'LICENSE',
     'README.md',
     'SECURITY.md',
