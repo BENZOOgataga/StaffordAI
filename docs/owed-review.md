@@ -3,6 +3,30 @@
 A single accounting of everything parked, taken from the plan and the tree rather than memory, so the
 next build is chosen against the whole board. Read-only: this decides nothing and builds nothing.
 
+## Update, 2026-08-10, since the review below
+
+The review below is a snapshot. Two of the four ready-now items are now built, so read this first.
+
+Item 1, the live repository consumer, is done and merged (PR #8). `projects:list` is a read-only IPC
+handler that returns ids and names only, no paths, registered in the channel allowlist and exercised by
+the renderer proof window every run. The store is read on a real path now, not only in the smoke run.
+
+Item 2, wiring the hook transport at Electron launch, is done: PR #9, green on all five CI legs, awaiting
+Benzoo's merge. `index.ts` brings the socket up after the DB and before the tray, through
+`src/main/hooks/transport.ts`, which orchestrates the existing `prepareSocketFor`, `HookListener`, and
+`AgentSecrets` rather than reimplementing them. There are two launch gates. `assertLaunchable` covers
+agent-readiness with a real spawn-and-kill prober, and `startHookTransport` covers the socket; each
+refuses to a visible error and quits on failure. Teardown is awaited on the app-quit path. Nothing
+consumes a hook event or maps agent state yet. That is the next step, kept separate on purpose so a
+transport failure stays attributable to the transport rather than to a mapping bug.
+
+`assertStartable` and `selfChecks` now run in the Electron shell too, which closes the item-10 gap that
+paired them with the transport.
+
+Items 3 and 4 are unchanged and still ready: the drain (Task 9) first, then the updater
+click-and-notify path. The drain is the next build. Everything below is the original review, left intact
+for its reasoning.
+
 ## Ready now, in build order
 
 Argued from dependencies, not preference.
