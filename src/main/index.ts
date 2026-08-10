@@ -153,7 +153,19 @@ app.whenReady().then(() => {
         startedAt: STARTED_AT,
         platformId: currentPlatform().id,
         proof,
-        sender: () => (window && !window.isDestroyed() ? window.webContents : null)
+        sender: () => (window && !window.isDestroyed() ? window.webContents : null),
+        // The store's one live consumer. Read-only, bounded, ids and names only.
+        // repositories is set by openStore above, which the app quits without if
+        // it failed, so it is present here. The only caller of this is the
+        // renderer through ipcMain, so the smoke line firing proves the IPC read
+        // reached main and returned rows, the way proof.isOpen() proved the pty.
+        listProjects: () => {
+            const projects = repositories
+                ? repositories.projects.all().map((p) => ({ id: p.id, name: p.name }))
+                : [];
+            smoke('projects:list served ' + projects.length + ' rows over IPC');
+            return { projects };
+        }
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +

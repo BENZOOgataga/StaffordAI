@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHandlers } from './handlers.ts';
-import { INVOKE_CHANNELS, type HealthReport } from '../../shared/ipc.ts';
+import { INVOKE_CHANNELS, type HealthReport, type ProjectsList } from '../../shared/ipc.ts';
 import type { ProofPty } from './proof-pty.ts';
 
 function fakeProof(open = false): ProofPty {
@@ -13,12 +13,13 @@ function fakeProof(open = false): ProofPty {
     } as unknown as ProofPty;
 }
 
-function deps(proof = fakeProof()) {
+function deps(proof = fakeProof(), projects: ProjectsList = { projects: [] }) {
     return {
         startedAt: '2026-08-08T00:00:00.000Z',
         platformId: 'darwin',
         proof,
-        sender: () => null
+        sender: () => null,
+        listProjects: () => projects
     };
 }
 
@@ -35,6 +36,13 @@ test('health reports the platform and whether a pty is open', () => {
     assert.equal(report.ok, true);
     assert.equal(report.platform, 'darwin');
     assert.equal(report.ptyOpen, true);
+});
+
+test('projects:list returns the summaries and takes no payload', () => {
+    const rows: ProjectsList = { projects: [{ id: 'p1', name: 'Stafford' }, { id: 'p2', name: 'other' }] };
+    const handlers = buildHandlers(deps(fakeProof(), rows));
+    const result = handlers['projects:list'](undefined) as ProjectsList;
+    assert.deepEqual(result, rows);
 });
 
 test('proof:spawn refuses arguments that fail the guard', () => {
