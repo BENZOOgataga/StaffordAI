@@ -19,6 +19,7 @@
 /** Renderer invokes, main replies. Request/response. */
 export const INVOKE_CHANNELS = [
     'health',
+    'projects:list',
     'proof:spawn',
     'proof:write',
     'proof:kill'
@@ -46,6 +47,21 @@ export interface HealthReport {
     readonly platform: string;
     readonly startedAt: string;
     readonly ptyOpen: boolean;
+}
+
+/**
+ * A project as the renderer sees it in a list: an id and a name, never the repo
+ * paths. The renderer acts on ids, and a project's `repos` are filesystem paths
+ * that have no business crossing to a renderer that must not name a directory.
+ */
+export interface ProjectSummary {
+    readonly id: string;
+    readonly name: string;
+}
+
+/** The reply to `projects:list`. Bounded: projects are capped by user creation. */
+export interface ProjectsList {
+    readonly projects: readonly ProjectSummary[];
 }
 
 /** What the proof window sends to open a pty. Ids only, no paths. */

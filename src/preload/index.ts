@@ -12,7 +12,8 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import {
-    isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel, type HealthReport
+    isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel,
+    type HealthReport, type ProjectsList
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -41,6 +42,11 @@ function on(channel: EventChannel, listener: (payload: unknown) => void): () => 
  */
 const api = Object.freeze({
     health: (): Promise<HealthReport> => invoke('health') as Promise<HealthReport>,
+
+    // Read-only. Ids and names only; no path crosses the bridge.
+    projects: Object.freeze({
+        list: (): Promise<ProjectsList> => invoke('projects:list') as Promise<ProjectsList>
+    }),
 
     // The proof window's surface, thrown away with that window when real UI
     // lands. Ids and sizes only, never a path.

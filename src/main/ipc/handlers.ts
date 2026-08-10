@@ -12,7 +12,7 @@
  */
 
 import type { IpcMain, WebContents } from 'electron';
-import { INVOKE_CHANNELS, type InvokeChannel, type HealthReport } from '../../shared/ipc.ts';
+import { INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList } from '../../shared/ipc.ts';
 import { isProofSpawn, isProofWrite } from '../../domain/guards.ts';
 import type { ProofPty } from './proof-pty.ts';
 
@@ -22,6 +22,12 @@ export interface HandlerDeps {
     readonly proof: ProofPty;
     /** Where proof:data and proof:exit are pushed. */
     readonly sender: () => WebContents | null;
+    /**
+     * A read-only, bounded list of projects as summaries, ids and names only.
+     * A function rather than the repository itself, so the handler stays
+     * injectable and testable and never reaches for the store directly.
+     */
+    readonly listProjects: () => ProjectsList;
 }
 
 /**
@@ -37,6 +43,12 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
             startedAt: deps.startedAt,
             ptyOpen: deps.proof.isOpen()
         }),
+
+        // Read-only. No payload, like health, so no argument guard: it takes
+        // nothing from the renderer to act on. It exists to exercise the store's
+        // mapping and query path on every run rather than only under the smoke
+        // flag.
+        'projects:list': (): ProjectsList => deps.listProjects(),
 
         'proof:spawn': (payload: unknown): { ok: boolean } => {
             if (!isProofSpawn(payload)) throw new Error('proof:spawn requires {cols,rows}');

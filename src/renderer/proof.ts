@@ -32,6 +32,11 @@ async function main(): Promise<void> {
     status.textContent = 'health: ok=' + health.ok + ' platform=' + health.platform +
         ' ptyOpen=' + health.ptyOpen;
 
+    // Exercise the store's read path over IPC on load, without a click. Ids and
+    // names only; the renderer never sees a repo path.
+    const projects = await window.stafford.projects.list();
+    status.textContent += ' | projects=' + projects.projects.length;
+
     window.stafford.proof.onData((data) => append(data));
     window.stafford.proof.onExit((info) => append('\n[exit ' + JSON.stringify(info) + ']\n'));
 
