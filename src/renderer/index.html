@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Stafford proof window</title>
+<!--
+  Deliberately ugly. This window exists to prove IPC and node-pty work together
+  end to end, and it is thrown away when real UI lands. It is exempt from the
+  layout rules a real screen must follow: no fixed widths sized to English text,
+  because translations run longer. Nothing here should be copied into that UI.
+-->
+<style>
+  body { font: 13px monospace; margin: 0; padding: 8px; background: #111; color: #ddd; }
+  #status { padding: 4px 0; color: #8c8; }
+  #out { white-space: pre-wrap; word-break: break-all; height: 60vh; overflow: auto; border: 1px solid #333; padding: 4px; }
+  input { width: 100%; font: inherit; background: #000; color: #ddd; border: 1px solid #333; margin-top: 4px; padding: 4px; box-sizing: border-box; }
+</style>
+<div id="status">booting</div>
+<div id="out"></div>
+<input id="in" placeholder="type a command, Enter to send" autofocus />
+<script type="module" src="./proof.ts"></script>

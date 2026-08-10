@@ -1,0 +1,5 @@
+{
+  "name": "stafford-macos-harness-probe",
+  "private": true,
+  "main": "main.js"
+}

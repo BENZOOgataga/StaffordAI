@@ -1,0 +1,35 @@
+{
+  "name": "stafford",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Local dashboard for running Claude Code agents as a team, named after Stafford Beer",
+  "author": "BENZOOgataga",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "out/main/index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "postinstall": "node scripts/fix-node-pty-permissions.cjs",
+    "electron:install": "install-electron",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "package": "electron-vite build && electron-builder --mac --dir",
+    "test": "node scripts/run-tests.cjs",
+    "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.preload.json && tsc -p tsconfig.web.json",
+    "check:paths": "node scripts/check-tracked-paths.cjs"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.2",
+    "electron": "43.3.0",
+    "electron-builder": "26.0.12",
+    "electron-vite": "5.0.0",
+    "typescript": "7.0.2",
+    "vite": "7.3.6"
+  }
+}

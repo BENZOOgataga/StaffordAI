@@ -1,0 +1,218 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  # The full-history secret scan. Weekly rather than per push, because the
+  # history only grows at the tip and a push already covers what it added.
+  # One ubuntu job, so this costs about a minute a week.
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Windows is the machine this runs on daily, so it is the reference.
+  # macOS is here because hardware is deferred and this is the only darwin
+  # signal until that session happens. Read section 8 of
+  # docs/plans/stack-migration.technical.md before treating a green macOS run
+  # as verification: it covers pure logic and nothing else.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # The weekly trigger exists for the full-history secret scan alone. Running
+    # the matrix on it would spend Windows and macOS minutes every week to
+    # re-test a tree nobody touched.
+    if: github.event_name != 'schedule'
+    # A hang is this project's deliberate signal, so a job with no timeout turns
+    # every hang into a bill. The default is six hours; Windows minutes bill at
+    # 2x on a private repository. Measured baseline for this job is 65 to 88
+    # seconds across four consecutive runs, so ten minutes is generous and still
+    # fails a hang in a tenth of the time.
+    #
+    # Not a way to hide a hang. A job that hits this is a failure to read, not a
+    # flake to rerun: the suite has no --test-force-exit precisely so that a
+    # leaked handle surfaces here.
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+          cache: npm
+
+      # node-pty and better-sqlite3 build against Node-API, so a prebuilt
+      # binary serves every runtime here and no compiler is needed. If this
+      # step ever starts invoking node-gyp, that assumption has broken and the
+      # log is where it shows first.
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      # No --test-force-exit, deliberately. It was removed because it hid a
+      # per-session handle leak. A hang here means something is leaking again,
+      # which is the signal working rather than a flaky job.
+      # The pty tests skip where a pty cannot open, and the run asserts the
+      # skip count so a probe that starts failing cannot quietly empty the job.
+      - run: npm test
+
+  # The packaged build, per arch, with the spawn-helper invariant read inside
+  # the bundle. Separate from the test job because it is slower and different in
+  # kind: it produces a real artefact and inspects it, rather than running the
+  # suite. Native per arch, on an arm64 and an x64 macOS runner and a Windows
+  # runner, so each darwin spawn-helper is checked on hardware of its own arch
+  # rather than cross-built.
+  package:
+    name: package (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    # Same reason as the test job. The weekly run is the secret scan only.
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: darwin-arm64
+            runner: macos-14
+            builder: --mac --arm64 --dir
+          # darwin-x64 is not a CI leg. Intel macOS needs a macos-13 runner,
+          # which is GitHub's Intel image, being wound down, and the leg sat
+          # unallocated for over an hour. Not a packaging fault. The darwin-x64
+          # prebuild still ships and native-prebuilds.test.ts asserts it exists,
+          # and its spawn-helper mode is read inside the arm64 bundle, which
+          # carries every platform's prebuilds. What is not verified is a
+          # darwin-x64 bundle built and run on Intel hardware, and a leg that
+          # read as Intel coverage without ever running on Intel would be the
+          # mislabeled coverage this project keeps paying for. It comes back only
+          # if Stafford is decided to ship for Intel Macs, which is Benzoo's call
+          # and unmade. See docs/stack-migration-verification.md.
+          - name: windows-x64
+            runner: windows-latest
+            builder: --win --x64 --dir
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+          cache: npm
+
+      - run: npm ci
+
+      # Electron dropped its own postinstall in 42.0.0, so npm ci does not
+      # download the Electron binary. The test job never needs it; this job
+      # cannot package without it. Explicit, not a repository postinstall, which
+      # would recreate the supply-chain surface Electron removed.
+      - run: npm run electron:install
+
+      - run: npm run typecheck
+
+      # Bundle with electron-vite, then package the built output with
+      # electron-builder for exactly this leg's arch. Unsigned: no Apple
+      # Developer account, and electron-builder is told identity null in the
+      # config so it does not look for a certificate.
+      - run: npx electron-vite build
+      - run: npx electron-builder ${{ matrix.builder }}
+
+      # The guard, reading inside the built bundle. Prints what it checked and
+      # how many, and exits non-zero on failure, so a green leg demonstrably ran
+      # the check. On a Windows bundle it says the darwin invariant is not
+      # applicable and checks the Windows equivalent instead of passing silently.
+      - run: node scripts/check-packaged-bundle.cjs
+
+  # Agents commit to this repository, so this is not a formality.
+  #
+  # **On a push this scans the pushed commits, and nothing older.** That is the
+  # right scope for a merge gate and it is the wrong scope for a question like
+  # "has this repository ever contained a credential", which is what a green
+  # tick here was being read as. It never scanned the history, and nobody
+  # noticed for two weeks, because a job that reports success while examining
+  # almost nothing looks exactly like a job that examined everything.
+  #
+  # So the history is covered on a schedule instead, and the job prints its own
+  # scope, so a green tick states what it checked rather than implying all of it.
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history: the scheduled run needs it, and the push-range scan
+          # needs the commit before the push to diff against.
+          fetch-depth: 0
+
+      # gitleaks looks for credential-shaped strings. It does not look for a
+      # directory nobody meant to commit, and an accidental directory in a
+      # repository that is going public is a disclosure rather than noise.
+      # An agent's `git add -A` swept conversation transcripts into a push here,
+      # so this runs in CI rather than as a local hook: a hook protects whoever
+      # configured it, and this protects every clone.
+      - name: tracked paths are the ones we expect
+        run: node scripts/check-tracked-paths.cjs
+
+      # Pinned to the version the scope below was proven against, rather than a
+      # floating major. A scanner that silently changes its rule set changes what
+      # a green tick means.
+      - name: install gitleaks
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks version
+        env:
+          GITLEAKS_VERSION: 8.24.3
+
+      # The whole history, on a schedule and on manual dispatch. This is the run
+      # that answers "has this repository ever contained a credential", and
+      # before 2026-08-10 nothing did.
+      - name: scan the full history
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "scope: every commit reachable from every ref, gitleaks default rule set, entropy on."
+          /tmp/gitleaks git . --log-opts="--all" --redact --verbose
+
+      # Everything the push actually added, which on a merge is the whole branch
+      # rather than the tip. `--first-parent` is deliberately absent: it skips
+      # the merged-in commits, which is exactly where an agent's stray commit
+      # would be.
+      - name: scan the pushed commits
+        if: github.event_name == 'push'
+        run: |
+          BASE="${{ github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "scope: new branch or unknown base, so scanning every commit reachable from every ref."
+            /tmp/gitleaks git . --log-opts="--all" --redact --verbose
+          else
+            echo "scope: commits added by this push only, ${BASE}..${{ github.sha }}. The history is covered by the scheduled run, not by this."
+            /tmp/gitleaks git . --log-opts="${BASE}..${{ github.sha }}" --redact --verbose
+          fi
+
+      # A pull request's own commits, for the merge gate.
+      - name: scan the pull request commits
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "scope: commits on this pull request only. The history is covered by the scheduled run, not by this."
+          /tmp/gitleaks git . --log-opts="origin/${{ github.base_ref }}..${{ github.event.pull_request.head.sha }}" --redact --verbose
+
+      # Says what a green tick does and does not mean, in the job's own output,
+      # because the previous version of this job was read as proving more than
+      # it checked.
+      - name: state the scope
+        if: always()
+        run: |
+          echo "This job scans commit contents for credential-shaped strings using gitleaks' default rules."
+          echo "It does NOT prove: that no secret was ever exposed elsewhere, that a credential in an"
+          echo "unreachable commit is gone, or that a secret in a format gitleaks has no rule for is absent."
+          echo "Repository secret scanning is a separate GitHub setting and is currently disabled."

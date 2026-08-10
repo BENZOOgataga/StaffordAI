@@ -1,0 +1,90 @@
+<svg viewBox="0 0 700 640" width="700" height="640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="pt pd">
+<title id="pt">Feature pipeline from brief to push</title>
+<desc id="pd">Nine sequential stages. The PM assistant writes a design plan, Benzoo confirms it, the lead dev writes a technical plan on a new branch, developers implement, the code reviewer audits, QA writes and runs tests, the writer polishes copy and docs, the PM assistant writes a closing summary, and Benzoo approves the merge and pushes. Any rejection returns the work to the implement stage. Everything from the technical plan to the closing summary happens on the feature branch.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M0,1 L9,5 L0,9 z" fill="#888780"/>
+</marker>
+<style>
+text { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+.role { font-size: 14px; font-weight: 500; }
+.detail { font-size: 12px; }
+.band { font-size: 12px; fill: #5F5E5A; }
+.agent .role { fill: #2C2C2A; }
+.agent .detail { fill: #5F5E5A; }
+.you .role { fill: #26215C; }
+.you .detail { fill: #534AB7; }
+</style>
+</defs>
+
+<rect x="0" y="0" width="700" height="640" fill="#FFFFFF"/>
+
+<rect x="140" y="150" width="420" height="396" rx="8" fill="#F7F6F1"/>
+<text class="band" x="154" y="170">on the feature branch</text>
+
+<g class="agent">
+<rect x="152" y="28" width="392" height="44" rx="4" fill="#F1EFE8" stroke="#B4B2A9"/>
+<text class="role" x="168" y="48">PM assistant</text>
+<text class="detail" x="168" y="65">design plan, written to a file</text>
+</g>
+<line x1="348" y1="72" x2="348" y2="90" stroke="#888780" marker-end="url(#arrow)"/>
+
+<g class="you">
+<rect x="152" y="92" width="392" height="44" rx="4" fill="#EEEDFE" stroke="#7F77DD"/>
+<text class="role" x="168" y="112">You</text>
+<text class="detail" x="168" y="129">confirm the plan</text>
+</g>
+<line x1="348" y1="136" x2="348" y2="176" stroke="#888780" marker-end="url(#arrow)"/>
+
+<g class="agent">
+<rect x="152" y="178" width="392" height="44" rx="4" fill="#F1EFE8" stroke="#B4B2A9"/>
+<text class="role" x="168" y="198">Lead dev</text>
+<text class="detail" x="168" y="215">technical plan, new branch</text>
+</g>
+<line x1="348" y1="222" x2="348" y2="240" stroke="#888780" marker-end="url(#arrow)"/>
+
+<g class="agent">
+<rect x="152" y="242" width="392" height="44" rx="4" fill="#F1EFE8" stroke="#B4B2A9"/>
+<text class="role" x="168" y="262">Developers, lead dev alongside</text>
+<text class="detail" x="168" y="279">implement</text>
+</g>
+<line x1="348" y1="286" x2="348" y2="304" stroke="#888780" marker-end="url(#arrow)"/>
+
+<g class="agent">
+<rect x="152" y="306" width="392" height="44" rx="4" fill="#F1EFE8" stroke="#B4B2A9"/>
+<text class="role" x="168" y="326">Code reviewer</text>
+<text class="detail" x="168" y="343">audit only, no write tool, no merge</text>
+</g>
+<line x1="348" y1="350" x2="348" y2="368" stroke="#888780" marker-end="url(#arrow)"/>
+
+<g class="agent">
+<rect x="152" y="370" width="392" height="44" rx="4" fill="#F1EFE8" stroke="#B4B2A9"/>
+<text class="role" x="168" y="390">QA tester</text>
+<text class="detail" x="168" y="407">write and run tests</text>
+</g>
+<line x1="348" y1="414" x2="348" y2="432" stroke="#888780" marker-end="url(#arrow)"/>
+
+<g class="agent">
+<rect x="152" y="434" width="392" height="44" rx="4" fill="#F1EFE8" stroke="#B4B2A9"/>
+<text class="role" x="168" y="454">Writer</text>
+<text class="detail" x="168" y="471">copy and docs only, never code</text>
+</g>
+<line x1="348" y1="478" x2="348" y2="496" stroke="#888780" marker-end="url(#arrow)"/>
+
+<g class="agent">
+<rect x="152" y="498" width="392" height="44" rx="4" fill="#F1EFE8" stroke="#B4B2A9"/>
+<text class="role" x="168" y="518">PM assistant</text>
+<text class="detail" x="168" y="535">closing summary against the plan</text>
+</g>
+<line x1="348" y1="542" x2="348" y2="570" stroke="#888780" marker-end="url(#arrow)"/>
+
+<g class="you">
+<rect x="152" y="572" width="392" height="44" rx="4" fill="#EEEDFE" stroke="#7F77DD"/>
+<text class="role" x="168" y="592">You</text>
+<text class="detail" x="168" y="609">approve, merge to main, push</text>
+</g>
+
+<path d="M544,391 L578,391 L578,263 L546,263" fill="none" stroke="#888780" stroke-width="1" marker-end="url(#arrow)"/>
+<text class="band" x="586" y="322">any</text>
+<text class="band" x="586" y="337">rejection</text>
+</svg>

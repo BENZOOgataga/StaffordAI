@@ -1,0 +1,32 @@
+node_modules/
+
+# Secrets. The token lives in ~/.agent-dashboard/token and never in the repo.
+.env
+.env.*
+!.env.example
+
+# Runner state. Session ids, terminal buffers and the hire registry are local
+# to a machine and some of it echoes repo contents.
+.state/
+logs/
+*.log
+
+# Agent and session state. Written into the working tree by the tools used to
+# develop Stafford, not by Stafford. It contains conversation transcripts, so it
+# is closer to a private notebook than to build output, and this repository is
+# going public.
+#
+# .gitignore rather than .git/info/exclude, deliberately. See CONVENTIONS.md:
+# decision 7's rule is about repositories Stafford manages for someone else, and
+# this is Stafford's own. info/exclude would protect this clone and leave the
+# work PC and every future clone unprotected.
+.letta/
+
+# Windows and editor noise
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+# Build output
+out/
+dist/

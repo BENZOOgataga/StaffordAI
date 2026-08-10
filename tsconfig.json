@@ -1,0 +1,4 @@
+{
+  "//": "Per-environment configs, so main-process code cannot reference DOM globals. Node context (main, domain, shared, build) and the sandboxed preload get no DOM lib; only the renderer does. `npm run typecheck` runs all three. This root extends the node config so an editor defaults to the strictest, DOM-free view for the bulk of the tree.",
+  "extends": "./tsconfig.node.json"
+}

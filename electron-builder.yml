@@ -1,0 +1,67 @@
+# Packaging config. Unsigned, unpacked-dir builds only.
+#
+# The whole reason this exists is the asarUnpack line. A .node binary cannot be
+# loaded from inside an asar archive, so node-pty is unpacked beside the app.
+# node-pty also ships a darwin spawn-helper that posix_spawnp must execute, and
+# whether its execute bit survives asar packing is the invariant the packaged
+# build has to prove. The postinstall script repairs a dev install and does
+# nothing for a packaged app, so this is the only thing standing between a user
+# and a build where no pty ever opens.
+#
+# better-sqlite3 is deliberately absent. It arrives with storage in Task 8, and
+# it is added to the native externals and to asarUnpack as a pair then. The
+# native-externals guard going red on a divergence is the point.
+
+appId: net.benzoogataga.stafford
+productName: Stafford
+
+# Do not rebuild native modules from source. node-pty is Node-API and ships a
+# prebuilt binary for every target arch, so the prebuilt one is what ships, the
+# same premise the test job runs on. With this on, electron-builder ran
+# @electron/rebuild which invoked node-gyp, and on Windows that needs Visual
+# Studio and failed with "Could not find any Visual Studio installation". The
+# postinstall makes the darwin prebuild spawn-helper executable, and asar
+# preserves the mode, so the invariant holds through the prebuilt file rather
+# than a rebuilt one.
+npmRebuild: false
+
+directories:
+  output: dist
+  buildResources: build
+
+# electron-vite builds into out/. Package that, plus the manifest.
+files:
+  - out/**/*
+  - package.json
+
+# The invariant. node-pty carries a .node binary and the darwin spawn-helper,
+# neither of which can live inside the asar.
+asarUnpack:
+  - node_modules/node-pty/**
+
+mac:
+  # Both darwin arches, because node-pty ships a spawn-helper for each and a
+  # macOS user may be on either. Each CI leg builds one arch natively, on an
+  # arm64 and an x64 runner, filtered with --arm64 / --x64, so the spawn-helper
+  # for the arch that ships is checked on hardware of that arch.
+  target:
+    - target: dir
+      arch:
+        - arm64
+        - x64
+  # Unsigned: there is no Apple Developer account yet. identity null tells
+  # electron-builder not to attempt signing rather than fail looking for a
+  # certificate. Signing gates the updater, not this task.
+  identity: null
+
+win:
+  # Windows is the reference platform, so a packaged Windows build is worth
+  # proving. The darwin spawn-helper invariant does not apply here; the packaged
+  # bundle check reports that explicitly and asserts the Windows equivalent,
+  # that node-pty's native .node modules are unpacked from the asar. x64 only:
+  # node-pty ships a win32-arm64 prebuild too, but the daily machine and the CI
+  # runner are x64, so arm64 is not built until there is a reason.
+  target:
+    - target: dir
+      arch:
+        - x64
