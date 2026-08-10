@@ -11,11 +11,13 @@
  * `node --test`. The guard needs to read this list without executing the
  * config, so the list lives here where nothing else runs.
  *
- * One entry today. `better-sqlite3` is deliberately absent: it arrives with
- * storage in Task 8, and naming a module that is not installed is the drift
- * this project keeps paying for. `native-externals.test.ts` fails if this list
- * and the installed dependencies diverge in either direction, so Task 8 has to
- * add the dependency and this entry as a pair.
+ * Two entries. `better-sqlite3` joined in Task 8 with the storage dependency,
+ * added here the same commit it was installed, because
+ * `native-externals.test.ts` fails if this list and the installed dependencies
+ * diverge in either direction. It is Node-API and ships a flat-file prebuild per
+ * arch, so it needs no compiler and no rebuild; like node-pty it carries a
+ * `.node` binary that cannot be read from inside an asar, so it stays external
+ * and gets its own `asarUnpack` entry.
  */
 
-export const NATIVE_EXTERNALS = ['node-pty'] as const;
+export const NATIVE_EXTERNALS = ['node-pty', 'better-sqlite3'] as const;

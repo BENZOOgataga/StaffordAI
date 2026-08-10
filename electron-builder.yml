@@ -8,9 +8,12 @@
 # nothing for a packaged app, so this is the only thing standing between a user
 # and a build where no pty ever opens.
 #
-# better-sqlite3 is deliberately absent. It arrives with storage in Task 8, and
-# it is added to the native externals and to asarUnpack as a pair then. The
-# native-externals guard going red on a divergence is the point.
+# better-sqlite3 joined in Task 8, added to the native externals and to
+# asarUnpack as a pair, the same premise as node-pty: a .node binary cannot load
+# from inside an asar. It is Node-API with a flat-file prebuild per arch, so it
+# ships prebuilt under npmRebuild off with no compiler, and unlike node-pty it
+# carries no spawn-helper, so the only invariant for it is that the binary is
+# unpacked rather than sealed into the asar.
 
 appId: net.benzoogataga.stafford
 productName: Stafford
@@ -38,6 +41,7 @@ files:
 # neither of which can live inside the asar.
 asarUnpack:
   - node_modules/node-pty/**
+  - node_modules/better-sqlite3/**
 
 mac:
   # Both darwin arches, because node-pty ships a spawn-helper for each and a

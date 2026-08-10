@@ -22,6 +22,7 @@
     "check:paths": "node scripts/check-tracked-paths.cjs"
   },
   "dependencies": {
+    "better-sqlite3": "13.0.3",
     "node-pty": "1.1.0"
   },
   "devDependencies": {
