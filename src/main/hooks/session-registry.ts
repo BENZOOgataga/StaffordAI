@@ -122,6 +122,8 @@ export class SessionRegistry {
     #teardown: ((agentId: string) => Promise<void>) | null = null;
     /** Notified when a pending spawn binds, so the lifecycle can stop waiting on it. */
     #onBound: ((agentId: string) => void) | null = null;
+    /** Notified on every event for a known session, so the lifecycle resets its idle clock. */
+    #onActivity: ((agentId: string) => void) | null = null;
 
     constructor(store: HireStore) {
         this.#store = store;
@@ -138,6 +140,11 @@ export class SessionRegistry {
     /** Wires the bind callback, so the lifecycle learns when a spawn reports. */
     setOnBound(onBound: (agentId: string) => void): void {
         this.#onBound = onBound;
+    }
+
+    /** Wires the activity callback, so the lifecycle resets a session's idle clock. */
+    setOnActivity(onActivity: (agentId: string) => void): void {
+        this.#onActivity = onActivity;
     }
 
     /** Live sessions currently tracked. For proofs and diagnostics. */
@@ -221,6 +228,9 @@ export class SessionRegistry {
 
         if (changed) this.#store.setState(binding.hireId, next.state);
         if (bound && this.#onBound) this.#onBound(binding.hireId);
+        // Any event for a known session is activity, whether or not it changed
+        // state, so the idle clock resets on it.
+        if (this.#onActivity) this.#onActivity(binding.hireId);
 
         return { handled: true, sessionId, hireId: binding.hireId, state: next.state, changed, ended, bound };
     }

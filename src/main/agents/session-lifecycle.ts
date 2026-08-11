@@ -39,6 +39,34 @@ import type { AgentSecrets } from '../hooks/agent-secrets.ts';
 /** How long a spawn has to attach its hook before it is shown as not reporting. */
 export const DEFAULT_NOT_REPORTING_MS = 30_000;
 
+/**
+ * How long a session may be idle before it is torn down. Ten minutes, the plan's
+ * number, kept as global config here rather than a ProjectPolicy field so it does
+ * not intersect the open sandbox decision.
+ */
+export const DEFAULT_IDLE_MS = 10 * 60 * 1000;
+
+/** A scheduled timer. The real one is a node Timeout; a test injects its own. */
+export interface TimerHandle {
+    unref?: () => void;
+}
+
+/**
+ * The timer seam, injected so a test drives a virtual clock and can see that a
+ * handle was unref'd. The default is a real setTimeout, and every timer the
+ * lifecycle arms is unref'd through the handle, so a session waiting on an idle
+ * period or a hook that never comes cannot hold the app open at quit.
+ */
+export interface Timers {
+    set(callback: () => void, ms: number): TimerHandle;
+    clear(handle: TimerHandle): void;
+}
+
+const realTimers: Timers = {
+    set: (callback, ms) => setTimeout(callback, ms),
+    clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)
+};
+
 /** Where a hire's session runs. Resolved from the hire's active project. */
 export interface SpawnTarget {
     readonly projectId: string;
@@ -67,6 +95,9 @@ export interface LifecycleDeps {
     /** Notified when a state changes here, so the roster can be told. */
     readonly onStateChanged?: (hireId: string) => void;
     readonly notReportingMs?: number;
+    readonly idleMs?: number;
+    /** Injected so a test drives a virtual clock and sees the unref. Defaults to real. */
+    readonly timers?: Timers;
     /** Injected so a unit test does not reap a real process tree. Defaults to the real one. */
     readonly killTree?: (platform: Platform, pid: number) => Promise<KillTreeReport>;
 }
@@ -77,7 +108,8 @@ interface Owned {
     readonly cwd: string;
     readonly pid: number;
     readonly session: PtySession;
-    readonly notReportTimer: ReturnType<typeof setTimeout>;
+    notReportTimer: TimerHandle | null;
+    idleTimer: TimerHandle | null;
     reported: boolean;
     tornDown: boolean;
 }
@@ -86,16 +118,30 @@ export class SessionLifecycle {
     readonly #deps: LifecycleDeps;
     readonly #owned = new Map<string, Owned>();
     readonly #notReportingMs: number;
+    readonly #idleMs: number;
+    readonly #timers: Timers;
 
     constructor(deps: LifecycleDeps) {
         this.#deps = deps;
         this.#notReportingMs = deps.notReportingMs ?? DEFAULT_NOT_REPORTING_MS;
+        this.#idleMs = deps.idleMs ?? DEFAULT_IDLE_MS;
+        this.#timers = deps.timers ?? realTimers;
         // The drainable checkpoint and the drain's force-kill both come back here,
         // so a session is torn down through one path however the drain reaches it.
         deps.registry.setTeardown((agentId) => this.teardown(agentId));
         // The registry tells us when a spawn's first event bound, so we stop the
         // not-reporting clock: the hook attached, the session is reporting.
         deps.registry.setOnBound((agentId) => this.#onReported(agentId));
+        // Every event for a session is activity, so it resets the idle clock: a
+        // session only idles down after it has genuinely gone quiet.
+        deps.registry.setOnActivity((agentId) => this.#resetIdle(agentId));
+    }
+
+    /** Arms an unref'd timer, so it never itself keeps the app open at quit. */
+    #arm(callback: () => void, ms: number): TimerHandle {
+        const handle = this.#timers.set(callback, ms);
+        handle.unref?.();
+        return handle;
     }
 
     /** How many sessions the shell currently owns. For proofs. */
@@ -116,6 +162,8 @@ export class SessionLifecycle {
         const existing = this.#owned.get(hireId);
         const session = existing ? existing.session : this.#spawn(hireId).session;
         session.write(text);
+        // A message is activity, so it resets the idle clock too.
+        this.#resetIdle(hireId);
         return (existing ?? this.#owned.get(hireId))?.pid ?? 0;
     }
 
@@ -156,13 +204,10 @@ export class SessionLifecycle {
         // as unknown, and so a not-yet-reporting process is drainable by its pid.
         this.#deps.registry.preRegister(agentId, pid, hireId, target.projectId);
 
-        const notReportTimer = setTimeout(() => this.#onNotReporting(agentId), this.#notReportingMs);
-        // Unref'd, so a session waiting on a hook that never comes cannot hold the
-        // app open at quit.
-        notReportTimer.unref();
-
         const owned: Owned = {
-            agentId, hireId, cwd: target.cwd, pid, session, notReportTimer,
+            agentId, hireId, cwd: target.cwd, pid, session,
+            notReportTimer: this.#arm(() => this.#onNotReporting(agentId), this.#notReportingMs),
+            idleTimer: this.#arm(() => this.#onIdle(agentId), this.#idleMs),
             reported: false, tornDown: false
         };
         this.#owned.set(agentId, owned);
@@ -171,11 +216,43 @@ export class SessionLifecycle {
         return owned;
     }
 
+    /** Re-arms the idle clock on any activity, so a working session never idles down. */
+    #resetIdle(agentId: string): void {
+        const owned = this.#owned.get(agentId);
+        if (!owned || owned.tornDown) return;
+        if (owned.idleTimer) this.#timers.clear(owned.idleTimer);
+        owned.idleTimer = this.#arm(() => this.#onIdle(agentId), this.#idleMs);
+    }
+
+    /**
+     * The idle timeout fired: the session has been quiet for the full idle period,
+     * so tear it down through the shared path to free the process. An idle shutdown
+     * writes no drain_report row: that table is the quit-time drain's report, and a
+     * routine idle teardown of a session with nothing to commit is not part of any
+     * quit. A resume brings the colleague back when the person returns.
+     */
+    #onIdle(agentId: string): void {
+        void this.teardown(agentId);
+    }
+
+    /**
+     * Disarms every session's timers, called at the start of quit so neither an
+     * idle timeout nor a not-reporting timeout can fire mid-drain and race the
+     * drain's own teardown. The timers are unref'd anyway, so this is about
+     * ordering, not about letting the app quit.
+     */
+    disarmTimers(): void {
+        for (const owned of this.#owned.values()) {
+            if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
+            if (owned.idleTimer) { this.#timers.clear(owned.idleTimer); owned.idleTimer = null; }
+        }
+    }
+
     #onReported(agentId: string): void {
         const owned = this.#owned.get(agentId);
         if (!owned) return;
         owned.reported = true;
-        clearTimeout(owned.notReportTimer);
+        if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
     }
 
     #onNotReporting(agentId: string): void {
@@ -223,7 +300,8 @@ export class SessionLifecycle {
             return;
         }
         owned.tornDown = true;
-        clearTimeout(owned.notReportTimer);
+        if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
+        if (owned.idleTimer) { this.#timers.clear(owned.idleTimer); owned.idleTimer = null; }
 
         try {
             const kill = this.#deps.killTree ?? defaultKillTree;

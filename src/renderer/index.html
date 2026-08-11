@@ -28,6 +28,7 @@
     --waiting-edge: rgba(232, 161, 58, 0.55);
     --limited: #9B8CC4;
     --danger: #C4735A;
+    --nosignal: #7C8AA0;
 
     --radius: 13px;
     --gap: 14px;
@@ -196,6 +197,23 @@
   @keyframes pulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(232, 161, 58, 0.45); }
     50% { box-shadow: 0 0 0 5px rgba(232, 161, 58, 0); }
+  }
+
+  /* Cannot reach this one: spawned, alive, but silent. A dashed edge and a hollow
+     ring read as a connection that did not complete, not as resting and not as a
+     summons. Cool slate, deliberately not amber, which is reserved for the person
+     being needed. Static, because a pulse would read as attention. */
+  .card.not_reporting {
+    border-left-style: dashed;
+    border-left-color: var(--nosignal);
+  }
+  .card.not_reporting .rail {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--nosignal);
+  }
+  .card.not_reporting .state-line {
+    color: var(--nosignal);
+    font-style: italic;
   }
 
   .empty {
