@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { SessionLifecycle } from './session-lifecycle.ts';
+import { SessionLifecycle, type Timers, type TimerHandle } from './session-lifecycle.ts';
 import { SessionRegistry, coerceHookEvent, type HireStore, type HireBinding } from '../hooks/session-registry.ts';
 import { AgentSecrets } from '../hooks/agent-secrets.ts';
 import { startHookTransport, stopHookTransport } from '../hooks/transport.ts';
@@ -73,11 +73,41 @@ const noKill = async (): Promise<KillTreeReport> => ({
     rootPid: 0, snapshot: [], groups: [], survivorsBeforeSweep: [], survivors: [], ok: true, detail: 'stub'
 });
 
+interface FakeTimer { id: number; cb: () => void; ms: number; unrefed: boolean; cleared: boolean }
+
+/** A timer seam a test drives by hand, so the virtual clock is deterministic. */
+function fakeTimers(): {
+    timers: Timers;
+    armed: () => FakeTimer[];
+    fireByMs: (ms: number) => void;
+} {
+    const all: FakeTimer[] = [];
+    let seq = 0;
+    const timers: Timers = {
+        set: (cb, ms) => {
+            const rec: FakeTimer = { id: ++seq, cb, ms, unrefed: false, cleared: false };
+            all.push(rec);
+            return { id: rec.id, unref: () => { rec.unrefed = true; } } as TimerHandle & { id: number };
+        },
+        clear: (handle) => {
+            const rec = all.find((r) => r.id === (handle as { id: number }).id);
+            if (rec) rec.cleared = true;
+        }
+    };
+    return {
+        timers,
+        armed: () => all.filter((r) => !r.cleared),
+        fireByMs: (ms) => { all.find((r) => r.ms === ms && !r.cleared)?.cb(); }
+    };
+}
+
 function buildDeps(over: {
     spawn?: PtyLike;
     setState?: (hireId: string, state: string) => void;
     trust?: 'trusted' | 'not_trusted' | 'unknown';
     notReportingMs?: number;
+    idleMs?: number;
+    timers?: Timers;
     target?: { projectId: string; cwd: string } | null;
 } = {}) {
     const { store, sets, binds } = fakeStore({});
@@ -95,10 +125,14 @@ function buildDeps(over: {
         setState: (hireId, state) => { setStateCalls.push({ hireId, state }); over.setState?.(hireId, state); },
         trustFor: () => over.trust ?? 'trusted',
         notReportingMs: over.notReportingMs ?? 30_000,
+        ...(over.idleMs === undefined ? {} : { idleMs: over.idleMs }),
+        ...(over.timers ? { timers: over.timers } : {}),
         killTree: async (_p, pid) => { killed.push(pid); return noKill(); }
     });
     return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, pty };
 }
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
 
 test('the first message cold-spawns a session and pre-registers it as drainable by its pid', () => {
     const { lifecycle, registry } = buildDeps();
@@ -145,6 +179,74 @@ test('a spawn that dies before attaching in a trusted dir is crashed', () => {
     lifecycle.sendMessage('h1', 'hello');
     pty.fireExit(1);
     assert.deepEqual(setStateCalls, [{ hireId: 'h1', state: 'crashed' }]);
+});
+
+test('every armed timer is unref\'d, so a waiting session cannot hold the app open', () => {
+    const ft = fakeTimers();
+    const { lifecycle } = buildDeps({ timers: ft.timers, idleMs: 1000, notReportingMs: 2000 });
+    lifecycle.sendMessage('h1', 'hello');
+    const armed = ft.armed();
+    assert.equal(armed.length, 2, 'the idle and not-reporting timers');
+    assert.ok(armed.every((t) => t.unrefed), 'both are unref\'d');
+});
+
+test('the idle timer fires after the idle period and tears down through the shared path', async () => {
+    const ft = fakeTimers();
+    const { lifecycle, registry, killed } = buildDeps({ timers: ft.timers, idleMs: 1000, notReportingMs: 999_999 });
+    const pid = lifecycle.sendMessage('h1', 'hello');
+
+    ft.fireByMs(1000); // the virtual clock reaches the idle period
+    await tick();
+
+    assert.deepEqual(killed, [pid], 'the idle session was reaped once, through the shared teardown');
+    assert.equal(lifecycle.has('h1'), false);
+    assert.equal(registry.drainables().length, 0, 'zero survivors: deregistered');
+});
+
+test('activity resets the idle timer, so a session that keeps working never idles down', () => {
+    const ft = fakeTimers();
+    const { lifecycle, registry } = buildDeps({ timers: ft.timers, idleMs: 1000, notReportingMs: 999_999 });
+    lifecycle.sendMessage('h1', 'hello');
+    const firstIdle = ft.armed().find((t) => t.ms === 1000);
+
+    // An event for the session is activity: the registry tells the lifecycle,
+    // which re-arms the idle clock. The first idle timer is cleared, a new one set.
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+
+    assert.equal(ft.armed().some((t) => t.id === firstIdle?.id), false, 'the first idle timer was cleared');
+    assert.equal(ft.armed().some((t) => t.ms === 1000), true, 'a fresh idle timer was armed');
+});
+
+test('teardown disarms the idle timer, so a torn-down session has no dangling timer', async () => {
+    const ft = fakeTimers();
+    const { lifecycle } = buildDeps({ timers: ft.timers, idleMs: 1000, notReportingMs: 999_999 });
+    lifecycle.sendMessage('h1', 'hello');
+    await lifecycle.teardown('h1');
+    assert.equal(ft.armed().length, 0, 'no armed timer survives teardown');
+});
+
+test('an idle shutdown racing the drain resolves to one teardown, zero survivors, one honest row', async () => {
+    const ft = fakeTimers();
+    const { lifecycle, registry, killed } = buildDeps({ timers: ft.timers, idleMs: 1000, notReportingMs: 999_999 });
+    lifecycle.sendMessage('h1', 'hello');
+
+    // The drain snapshots the drainables, then the idle timer fires mid-flight.
+    const snapshot = registry.drainables();
+    ft.fireByMs(1000);
+    await tick();
+    assert.deepEqual(killed, [4242], 'the idle shutdown reaped it once');
+
+    // The drain then runs over its stale snapshot, reaching the shared teardown
+    // again through the checkpoint. Idempotent, so no second kill, no error.
+    const { sink, rows } = collectingSink();
+    await runDrain({
+        agents: snapshot, platform: PLATFORM, sink, drainId: 'd1', now: () => '2026-08-11T00:00:00Z',
+        forceKill: (a) => lifecycle.teardown(a.agentId)
+    });
+
+    assert.equal(killed.length, 1, 'still one kill: the teardown was idempotent under the race');
+    assert.equal(rows.length, 1, 'one honest drain_report row, not two');
+    assert.equal(rows[0]?.committed, false, 'never a false commit');
 });
 
 test('teardown is idempotent: twice does not double-kill or throw', async () => {

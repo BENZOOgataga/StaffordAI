@@ -305,6 +305,12 @@ async function quit(): Promise<void> {
         transport = null;
     }
 
+    // Disarm every session's idle and not-reporting timers before the drain, so
+    // neither can fire mid-drain and race the drain's own teardown. The shared
+    // teardown is idempotent, so a race would still resolve cleanly, but ordering
+    // it this way means the drain owns teardown for the whole shutdown.
+    lifecycle?.disarmTimers();
+
     // Drain the active sessions: checkpoint, bounded wait, force-kill what remains,
     // one durable report row per agent. Bounded by its own total cap, so a stuck
     // agent cannot hold the quit. A drain failure must not block the quit either,

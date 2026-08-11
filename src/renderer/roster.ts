@@ -13,6 +13,7 @@
 import type { StaffordApi } from '../preload/index.ts';
 import type { RosterCard } from '../shared/ipc.ts';
 import { RosterAlerts } from './roster-alerts.ts';
+import { cardClassName, stateLabel } from './roster-view.ts';
 
 declare global {
     interface Window {
@@ -28,30 +29,6 @@ const alerts = new RosterAlerts();
 let muted = false;
 let latest: readonly RosterCard[] = [];
 
-/** Plain-language state label, per language-flexible and never a raw enum. */
-function stateLabel(card: RosterCard): string {
-    switch (card.state) {
-        case 'working': return 'Working';
-        case 'waiting_for_you': return 'Waiting for you';
-        case 'rate_limited': return 'Rate limited';
-        case 'crashed': return 'Crashed';
-        case 'needs_trust': return 'Needs trust';
-        default: return elapsedLabel('Idle', card.since);
-    }
-}
-
-/** Turns an ISO start time into a quiet "for 12m" suffix, or nothing. */
-function elapsedLabel(base: string, since: string | null): string {
-    if (!since) return base;
-    const started = Date.parse(since);
-    if (Number.isNaN(started)) return base;
-    const minutes = Math.floor((Date.now() - started) / 60_000);
-    if (minutes < 1) return base;
-    if (minutes < 60) return base + ' for ' + minutes + 'm';
-    const hours = Math.floor(minutes / 60);
-    return base + ' for ' + hours + 'h';
-}
-
 function chip(label: string): HTMLElement {
     const el = document.createElement('span');
     el.className = 'chip';
@@ -61,7 +38,7 @@ function chip(label: string): HTMLElement {
 
 function cardElement(card: RosterCard): HTMLElement {
     const el = document.createElement('article');
-    el.className = 'card ' + card.state + (alerts.isBadged(card.id) ? ' badged' : '');
+    el.className = cardClassName(card.state, alerts.isBadged(card.id));
 
     const rail = document.createElement('span');
     rail.className = 'rail';
@@ -87,7 +64,7 @@ function cardElement(card: RosterCard): HTMLElement {
 
     const state = document.createElement('div');
     state.className = 'state-line';
-    state.textContent = stateLabel(card) + (card.project ? ' on ' + card.project : '');
+    state.textContent = stateLabel(card, Date.now()) + (card.project ? ' on ' + card.project : '');
     body.appendChild(state);
 
     if (card.task) {
