@@ -9,9 +9,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     hireToRow, hireFromRow, projectToRow, projectFromRow, taskToRow, taskFromRow,
-    policyLogToRow, policyLogFromRow, type Row
+    policyLogToRow, policyLogFromRow, drainReportToRow, drainReportFromRow, type Row
 } from './mapping.ts';
-import type { HiredAgent, Project, ProjectPolicy, Task, PolicyLogEntry } from '../../domain/models.ts';
+import type { HiredAgent, Project, ProjectPolicy, Task, PolicyLogEntry, DrainReportEntry } from '../../domain/models.ts';
 
 const POLICY: ProjectPolicy = {
     push: 'feature-branches',
@@ -46,8 +46,38 @@ const LOG: PolicyLogEntry = {
     before: { push: 'none' }, after: { push: 'feature-branches' }
 };
 
+const DRAIN_COMMITTED: DrainReportEntry = {
+    drainId: 'run-1', agentId: 'h1', outcome: 'committed', committed: true,
+    branch: 'feat/x', commitId: 'abc123', at: '2026-08-11T00:00:00Z'
+};
+
+const DRAIN_KILLED: DrainReportEntry = {
+    drainId: 'run-1', agentId: 'h2', outcome: 'force-killed', committed: false,
+    branch: null, commitId: null, at: '2026-08-11T00:00:01Z'
+};
+
 test('a hire round-trips through the mapping unchanged', () => {
     assert.deepEqual(hireFromRow(hireToRow(HIRE)), HIRE);
+});
+
+test('a drain report row round-trips, committed true with a branch and commit id', () => {
+    assert.deepEqual(drainReportFromRow(drainReportToRow(DRAIN_COMMITTED)), DRAIN_COMMITTED);
+});
+
+test('a force-killed drain row round-trips, committed false with null branch and commit id', () => {
+    const row = drainReportToRow(DRAIN_KILLED);
+    assert.equal(row['committed'], 0, 'a false boolean stores as the integer 0');
+    assert.deepEqual(drainReportFromRow(row), DRAIN_KILLED);
+});
+
+test('a drain row with a committed value that is not 0 or 1 fails loudly', () => {
+    const row: Row = { ...drainReportToRow(DRAIN_COMMITTED), committed: 2 };
+    assert.throws(() => drainReportFromRow(row), /not the 0 or 1/);
+});
+
+test('a drain row with an outcome outside the set fails loudly', () => {
+    const row: Row = { ...drainReportToRow(DRAIN_COMMITTED), outcome: 'exploded' };
+    assert.throws(() => drainReportFromRow(row), /not one of/);
 });
 
 test('a project round-trips, and its policy is identical', () => {
