@@ -226,7 +226,8 @@ function rosterSnapshot(): RosterSnapshot {
         hires: repositories.hires.all(),
         projectName: (id) => names.get(id) ?? null,
         live: (hireId) => (registry ? registry.liveInfoByHire(hireId) : null),
-        currentTask: () => null
+        currentTask: () => null,
+        contextLost: (hireId) => (lifecycle ? lifecycle.contextLost(hireId) : false)
     });
 }
 
@@ -277,7 +278,11 @@ function buildLifecycle(store: HireStore): void {
             const project = repositories?.projects.get(hire.activeProjectId);
             const cwd = project?.repos[0]?.path;
             if (!cwd) return null;
-            return { projectId: hire.activeProjectId, cwd };
+            // A stored session id for this project resumes; nothing cold-spawns.
+            return {
+                projectId: hire.activeProjectId, cwd,
+                resumeSessionId: hire.sessions[hire.activeProjectId] ?? null
+            };
         },
         setState: (hireId, state) => store.setState(hireId, state),
         trustFor: (cwd) => readTrust({

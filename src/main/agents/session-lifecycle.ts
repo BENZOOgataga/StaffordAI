@@ -71,6 +71,8 @@ const realTimers: Timers = {
 export interface SpawnTarget {
     readonly projectId: string;
     readonly cwd: string;
+    /** The stored session id to resume, or null for a cold spawn. */
+    readonly resumeSessionId?: string | null;
 }
 
 export interface LifecycleDeps {
@@ -108,6 +110,8 @@ interface Owned {
     readonly cwd: string;
     readonly pid: number;
     readonly session: PtySession;
+    /** True when this spawn was a resume, so an early exit is a stale-id failure. */
+    readonly resuming: boolean;
     notReportTimer: TimerHandle | null;
     idleTimer: TimerHandle | null;
     reported: boolean;
@@ -117,6 +121,8 @@ interface Owned {
 export class SessionLifecycle {
     readonly #deps: LifecycleDeps;
     readonly #owned = new Map<string, Owned>();
+    /** Hires whose current session started fresh after a failed resume, for the note. */
+    readonly #contextLost = new Set<string>();
     readonly #notReportingMs: number;
     readonly #idleMs: number;
     readonly #timers: Timers;
@@ -129,12 +135,16 @@ export class SessionLifecycle {
         // The drainable checkpoint and the drain's force-kill both come back here,
         // so a session is torn down through one path however the drain reaches it.
         deps.registry.setTeardown((agentId) => this.teardown(agentId));
-        // The registry tells us when a spawn's first event bound, so we stop the
-        // not-reporting clock: the hook attached, the session is reporting.
-        deps.registry.setOnBound((agentId) => this.#onReported(agentId));
-        // Every event for a session is activity, so it resets the idle clock: a
-        // session only idles down after it has genuinely gone quiet.
-        deps.registry.setOnActivity((agentId) => this.#resetIdle(agentId));
+        // Every event for a session means the hook attached and the session is
+        // reporting, whether it bound as a cold spawn by agent id or as a resume by
+        // a known session id. So activity is what marks a session reported and
+        // resets its idle clock.
+        deps.registry.setOnActivity((agentId) => this.#onActivity(agentId));
+    }
+
+    /** Whether this hire's current session started fresh after a failed resume. */
+    contextLost(hireId: string): boolean {
+        return this.#contextLost.has(hireId);
     }
 
     /** Arms an unref'd timer, so it never itself keeps the app open at quit. */
@@ -167,9 +177,17 @@ export class SessionLifecycle {
         return (existing ?? this.#owned.get(hireId))?.pid ?? 0;
     }
 
-    #spawn(hireId: string): Owned {
+    #spawn(hireId: string, options: { cold?: boolean } = {}): Owned {
         const target = this.#deps.resolveTarget(hireId);
         if (!target) throw new Error('cannot spawn ' + hireId + ': the hire is on no project');
+
+        // A stored session id resumes; nothing, or a forced-cold fallback, spawns
+        // fresh. Resume reuses everything else about the cold spawn below: the env,
+        // the secret handoff, the hook rendezvous, the pid registration, and the
+        // drainable. The only difference is the --resume argument and that an early
+        // exit means a stale id rather than a crash.
+        const resumeSessionId = options.cold ? null : (target.resumeSessionId ?? null);
+        const args = resumeSessionId ? ['--resume', resumeSessionId] : [];
 
         // The agent id the spawn sets and the forwarder echoes. Held equal to the
         // hire id so the first event binds directly, which is the invariant the
@@ -193,6 +211,7 @@ export class SessionLifecycle {
             agentId,
             platform: this.#deps.platform,
             file: this.#deps.claudePath,
+            args,
             cwd: target.cwd,
             env,
             spawn: this.#deps.spawn
@@ -205,7 +224,7 @@ export class SessionLifecycle {
         this.#deps.registry.preRegister(agentId, pid, hireId, target.projectId);
 
         const owned: Owned = {
-            agentId, hireId, cwd: target.cwd, pid, session,
+            agentId, hireId, cwd: target.cwd, pid, session, resuming: resumeSessionId !== null,
             notReportTimer: this.#arm(() => this.#onNotReporting(agentId), this.#notReportingMs),
             idleTimer: this.#arm(() => this.#onIdle(agentId), this.#idleMs),
             reported: false, tornDown: false
@@ -248,11 +267,20 @@ export class SessionLifecycle {
         }
     }
 
-    #onReported(agentId: string): void {
+    /**
+     * An event arrived for the session: it attached its hook and is reporting, so
+     * the not-reporting clock stops, and it is activity, so the idle clock resets.
+     * This is the health signal for both a cold spawn and a resume: a resume that
+     * is genuinely healthy reaches here, so it is never mistaken for a stale id.
+     */
+    #onActivity(agentId: string): void {
         const owned = this.#owned.get(agentId);
-        if (!owned) return;
-        owned.reported = true;
-        if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
+        if (!owned || owned.tornDown) return;
+        if (!owned.reported) {
+            owned.reported = true;
+            if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
+        }
+        this.#resetIdle(agentId);
     }
 
     #onNotReporting(agentId: string): void {
@@ -268,9 +296,20 @@ export class SessionLifecycle {
         const owned = this.#owned.get(agentId);
         if (!owned || owned.tornDown) return;
 
-        // A spawn that dies before attaching its hook is classified by trust: no
-        // dialog answered and never trusted is needs_trust, otherwise crashed. This
-        // is the exited case, distinct from not_reporting, which stays alive.
+        // The three cases are told apart by exit versus alive and by resuming
+        // versus cold. A resume that exited before ever reporting is the stale-id
+        // failure: a healthy resume reports (owned.reported) before it exits, and a
+        // slow-but-alive resume never reaches here because it has not exited. So an
+        // unreported exit on a resuming session, and only that, is the failed
+        // resume, and it falls back to a fresh spawn. The not_reporting case is a
+        // process that stays alive, so it fires the timer, not this exit path.
+        if (!owned.reported && owned.resuming) {
+            void this.#fallbackToFresh(agentId);
+            return;
+        }
+
+        // A cold spawn that dies before attaching its hook is classified by trust:
+        // no dialog answered and never trusted is needs_trust, otherwise crashed.
         if (!owned.reported) {
             const report = classifyExit({
                 trustAtSpawn: this.#deps.trustFor(owned.cwd),
@@ -287,6 +326,27 @@ export class SessionLifecycle {
     }
 
     /**
+     * A resume failed on a stale id. Tear the exited session down, mark the hire
+     * context-lost for the note, and cold-spawn fresh so the colleague ends up
+     * working, just freshly. The fresh spawn's first hook writes a new session id
+     * over the stale one through the rendezvous, so the hire stops pointing at a
+     * session that no longer exists. Not an error state, an honest note: the person
+     * is told this is a clean start rather than a continuation.
+     */
+    async #fallbackToFresh(agentId: string): Promise<void> {
+        await this.teardown(agentId);
+        this.#contextLost.add(agentId);
+        try {
+            this.#spawn(agentId, { cold: true });
+        } catch {
+            // No project to spawn into, or the hire is gone. The teardown already
+            // cleared the failed session; there is nothing to leave stuck.
+            this.#contextLost.delete(agentId);
+        }
+        this.#deps.onStateChanged?.(agentId);
+    }
+
+    /**
      * The one idempotent teardown. Reaps the whole tree through `killTree`,
      * deregisters from the registry, and revokes the per-agent secret. Safe to call
      * twice: a second call finds the session already gone and only makes sure the
@@ -300,6 +360,10 @@ export class SessionLifecycle {
             return;
         }
         owned.tornDown = true;
+        // The context-lost note belongs to the session that was live; a torn-down
+        // session no longer carries it. The fallback re-sets it after this returns,
+        // for the fresh session it spawns.
+        this.#contextLost.delete(agentId);
         if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
         if (owned.idleTimer) { this.#timers.clear(owned.idleTimer); owned.idleTimer = null; }
 
