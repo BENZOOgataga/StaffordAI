@@ -13,7 +13,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
     isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel,
-    type HealthReport, type ProjectsList
+    type HealthReport, type ProjectsList, type RosterSnapshot
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -46,6 +46,13 @@ const api = Object.freeze({
     // Read-only. Ids and names only; no path crosses the bridge.
     projects: Object.freeze({
         list: (): Promise<ProjectsList> => invoke('projects:list') as Promise<ProjectsList>
+    }),
+
+    // The roster. Read-only cards, and a change signal the renderer answers by
+    // re-requesting the snapshot. onChanged returns an unsubscribe.
+    roster: Object.freeze({
+        snapshot: (): Promise<RosterSnapshot> => invoke('roster:snapshot') as Promise<RosterSnapshot>,
+        onChanged: (listener: () => void): (() => void) => on('roster:changed', () => listener())
     }),
 
     // The proof window's surface, thrown away with that window when real UI

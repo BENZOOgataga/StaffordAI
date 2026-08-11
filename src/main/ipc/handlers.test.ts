@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHandlers } from './handlers.ts';
-import { INVOKE_CHANNELS, type HealthReport, type ProjectsList } from '../../shared/ipc.ts';
+import { INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot } from '../../shared/ipc.ts';
 import type { ProofPty } from './proof-pty.ts';
 
 function fakeProof(open = false): ProofPty {
@@ -13,13 +13,18 @@ function fakeProof(open = false): ProofPty {
     } as unknown as ProofPty;
 }
 
-function deps(proof = fakeProof(), projects: ProjectsList = { projects: [] }) {
+function deps(
+    proof = fakeProof(),
+    projects: ProjectsList = { projects: [] },
+    roster: RosterSnapshot = { cards: [] }
+) {
     return {
         startedAt: '2026-08-08T00:00:00.000Z',
         platformId: 'darwin',
         proof,
         sender: () => null,
-        listProjects: () => projects
+        listProjects: () => projects,
+        rosterSnapshot: () => roster
     };
 }
 
@@ -43,6 +48,18 @@ test('projects:list returns the summaries and takes no payload', () => {
     const handlers = buildHandlers(deps(fakeProof(), rows));
     const result = handlers['projects:list'](undefined) as ProjectsList;
     assert.deepEqual(result, rows);
+});
+
+test('roster:snapshot returns the cards and takes no payload', () => {
+    const cards: RosterSnapshot = {
+        cards: [{
+            id: 'h1', name: 'Marion', role: 'Lead developer', state: 'waiting_for_you',
+            project: 'Stafford', task: null, apprentices: 0, queued: 0, since: null
+        }]
+    };
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, cards));
+    const result = handlers['roster:snapshot'](undefined) as RosterSnapshot;
+    assert.deepEqual(result, cards);
 });
 
 test('proof:spawn refuses arguments that fail the guard', () => {

@@ -1,19 +1,226 @@
 <!doctype html>
 <meta charset="utf-8" />
-<title>Stafford proof window</title>
+<title>Stafford</title>
 <!--
-  Deliberately ugly. This window exists to prove IPC and node-pty work together
-  end to end, and it is thrown away when real UI lands. It is exempt from the
-  layout rules a real screen must follow: no fixed widths sized to English text,
-  because translations run longer. Nothing here should be copied into that UI.
+  The roster. A calm, mostly-quiet room of colleagues, with one warm signal when
+  one of them needs you. Dark by default, because this sits ambient in a tray. The
+  one place boldness is spent is the waiting card: a warm amber edge and a soft
+  lift among cool, recessed idle and working cards.
+
+  No fixed widths sized to English. State and task lines vary by language, so
+  cards flex and text wraps. Reduced motion and reduced transparency are honoured.
+  The platform system font, because no external face can load under the CSP and
+  the personality lives in the treatment and the amber signature, not a novelty
+  face.
 -->
 <style>
-  body { font: 13px monospace; margin: 0; padding: 8px; background: #111; color: #ddd; }
-  #status { padding: 4px 0; color: #8c8; }
-  #out { white-space: pre-wrap; word-break: break-all; height: 60vh; overflow: auto; border: 1px solid #333; padding: 4px; }
-  input { width: 100%; font: inherit; background: #000; color: #ddd; border: 1px solid #333; margin-top: 4px; padding: 4px; box-sizing: border-box; }
+  :root {
+    --bg: #14181F;
+    --surface: #1E242E;
+    --surface-hover: #232B38;
+    --text: #E7EAF0;
+    --muted: #98A2B3;
+    --line: rgba(255, 255, 255, 0.07);
+
+    --working: #57B6A3;
+    --waiting: #E8A13A;
+    --waiting-soft: rgba(232, 161, 58, 0.16);
+    --waiting-edge: rgba(232, 161, 58, 0.55);
+    --limited: #9B8CC4;
+    --danger: #C4735A;
+
+    --radius: 13px;
+    --gap: 14px;
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 18px 22px 14px;
+    background: rgba(20, 24, 31, 0.72);
+    backdrop-filter: blur(18px) saturate(160%);
+    border-bottom: 1px solid var(--line);
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    header { background: var(--bg); backdrop-filter: none; }
+  }
+
+  .wordmark {
+    font-weight: 620;
+    letter-spacing: -0.015em;
+    font-size: 1.05rem;
+  }
+  .waiting-count {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .waiting-count.active {
+    color: var(--waiting);
+    font-weight: 560;
+  }
+  header .spacer { flex: 1; }
+
+  .mute {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.82rem;
+    padding: 4px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .mute:hover { color: var(--text); border-color: rgba(255,255,255,0.16); }
+  .mute:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+
+  main {
+    padding: 16px 22px 28px;
+    display: grid;
+    gap: var(--gap);
+    grid-template-columns: 1fr;
+    max-width: 1100px;
+  }
+  @media (min-width: 720px) {
+    main { grid-template-columns: 1fr 1fr; }
+  }
+
+  .card {
+    position: relative;
+    display: flex;
+    gap: 14px;
+    padding: 15px 17px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid transparent;
+    border-radius: var(--radius);
+    transition: transform 260ms var(--ease), box-shadow 260ms var(--ease),
+                background 200ms var(--ease);
+  }
+  .card:hover { background: var(--surface-hover); }
+
+  /* The rail dot: the state colour, quiet for ambient states. */
+  .rail {
+    flex: 0 0 auto;
+    width: 9px;
+    height: 9px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .card.working .rail { background: var(--working); }
+  .card.rate_limited .rail { background: var(--limited); }
+  .card.crashed .rail { background: var(--danger); }
+
+  .body { flex: 1 1 auto; min-width: 0; }
+
+  .name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .name { font-weight: 600; letter-spacing: -0.01em; font-size: 1.06rem; }
+  .role { color: var(--muted); font-size: 0.85rem; }
+
+  .state-line {
+    margin-top: 4px;
+    font-size: 0.98rem;
+    color: var(--muted);
+  }
+  .card.working .state-line { color: var(--working); }
+
+  .task {
+    margin-top: 3px;
+    color: var(--text);
+    opacity: 0.82;
+    font-size: 0.92rem;
+    overflow-wrap: anywhere;
+  }
+
+  .meta {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .chip {
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+
+  /* The signature. The one warm card in a cool room. */
+  .card.waiting_for_you {
+    border-left-color: var(--waiting-edge);
+    background: linear-gradient(90deg, var(--waiting-soft), var(--surface) 42%);
+    box-shadow: 0 0 0 1px var(--waiting-soft), 0 8px 24px -12px rgba(232, 161, 58, 0.5);
+    transform: translateY(-2px);
+  }
+  .card.waiting_for_you .rail { background: var(--waiting); }
+  .card.waiting_for_you .state-line { color: var(--waiting); font-weight: 560; }
+
+  /* The unseen badge: a small amber dot that clears when the person looks. */
+  .badge {
+    display: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--waiting);
+    box-shadow: 0 0 0 0 var(--waiting-soft);
+  }
+  .card.badged .badge {
+    display: inline-block;
+    animation: pulse 2.4s var(--ease) infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(232, 161, 58, 0.45); }
+    50% { box-shadow: 0 0 0 5px rgba(232, 161, 58, 0); }
+  }
+
+  .empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--muted);
+    padding: 64px 20px;
+  }
+  .empty strong { color: var(--text); font-weight: 560; display: block; margin-bottom: 6px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card { transition: background 160ms ease; transform: none !important; }
+    .card.badged .badge { animation: none; }
+  }
+
+  :focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
 </style>
-<div id="status">booting</div>
-<div id="out"></div>
-<input id="in" placeholder="type a command, Enter to send" autofocus />
-<script type="module" src="./proof.ts"></script>
+
+<header>
+  <span class="wordmark">Stafford</span>
+  <span id="waiting-count" class="waiting-count"></span>
+  <span class="spacer"></span>
+  <button id="mute" class="mute" type="button" aria-pressed="false">Mute</button>
+</header>
+
+<main id="roster" aria-live="polite"></main>
+
+<script type="module" src="./roster.ts"></script>

@@ -29,6 +29,8 @@ import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent } from './agents/drain.ts';
 import { SessionRegistry, hireStoreOver, coerceHookEvent } from './hooks/session-registry.ts';
+import { assembleRoster } from './roster/snapshot.ts';
+import type { RosterSnapshot } from '../shared/ipc.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
@@ -206,6 +208,27 @@ function activeDrainables(): DrainableAgent[] {
     return registry ? registry.drainables() : [];
 }
 
+/**
+ * The roster as cards, assembled from the persisted hires and the live registry.
+ * Read-only and bounded, one card per hire. The task line is null until task
+ * dispatch exists; the field is a real seam, not invented data.
+ */
+function rosterSnapshot(): RosterSnapshot {
+    if (!repositories) return { cards: [] };
+    const names = new Map(repositories.projects.all().map((p) => [p.id, p.name]));
+    return assembleRoster({
+        hires: repositories.hires.all(),
+        projectName: (id) => names.get(id) ?? null,
+        live: (hireId) => (registry ? registry.liveInfoByHire(hireId) : null),
+        currentTask: () => null
+    });
+}
+
+/** Tells the roster window a card changed, so it re-reads the snapshot. */
+function notifyRosterChanged(): void {
+    if (window && !window.isDestroyed()) window.webContents.send('roster:changed');
+}
+
 let proofQuitting = false;
 async function quit(): Promise<void> {
     proofQuitting = true;
@@ -275,6 +298,9 @@ app.whenReady().then(async () => {
             const result = registry?.ingest(coerceHookEvent(raw), new Date().toISOString());
             if (result?.changed) {
                 smoke('hook drove ' + result.hireId + ' to ' + result.state);
+                // A transition, so the roster changed. The renderer re-reads on
+                // this signal rather than being pushed a card per hook event.
+                notifyRosterChanged();
             }
         });
     }
@@ -301,7 +327,8 @@ app.whenReady().then(async () => {
                 : [];
             smoke('projects:list served ' + projects.length + ' rows over IPC');
             return { projects };
-        }
+        },
+        rosterSnapshot
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +
@@ -322,16 +349,24 @@ app.whenReady().then(async () => {
         const back = repositories.projects.get(project.id);
         smoke('repository write+read ok = ' + (back !== null && back.id === project.id));
         smoke('projects in store now = ' + repositories.projects.all().length);
+
+        // A hire in the waiting state, so the roster has the signature card to
+        // render. Proves the roster path end to end, hire in the store through
+        // the snapshot to the card the renderer paints.
+        repositories.hires.insert({
+            id: 'smoke-hire-' + STARTED_AT, name: 'Marion', type: 'lead-developer',
+            title: 'Lead developer', seniority: 2, ownerId: 'owner', sessions: {},
+            activeProjectId: project.id, state: 'waiting_for_you', hiredAt: STARTED_AT, firedAt: null
+        });
+        smoke('roster snapshot cards = ' + rosterSnapshot().cards.length);
     }
 
     if (SMOKE) {
-        // Open the window so the renderer runs the real chain end to end: health
-        // over IPC, a shell spawned through main, then streamed back. proof.isOpen
-        // afterwards is true only if the preload bridge, the renderer, the IPC
-        // handler and node-pty all worked. Then quit. STAFFORD_SMOKE=1 only.
+        // Open the roster window so the renderer runs the real read path: the
+        // snapshot over IPC, rendered as cards. Then quit. STAFFORD_SMOKE=1 only.
         openWindow();
         setTimeout(() => {
-            smoke('renderer drove a pty open through the bridge = ' + proof.isOpen());
+            smoke('roster window open = ' + (window !== null && !window.isDestroyed()));
             smoke('quitting');
             void quit();
         }, 6000);

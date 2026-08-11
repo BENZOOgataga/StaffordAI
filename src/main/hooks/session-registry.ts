@@ -34,6 +34,7 @@ import { applyEvent, emptySession, type HookEvent, type SessionSnapshot } from '
 import type { AgentState } from '../../domain/agent-state.ts';
 import type { DrainableAgent, CheckpointResult } from '../agents/drain.ts';
 import type { Repositories } from '../storage/repository.ts';
+import type { LiveInfo } from '../roster/snapshot.ts';
 
 /** Which hire and project a live session belongs to. */
 export interface HireBinding {
@@ -75,6 +76,8 @@ interface LiveEntry {
      * kill the shell has no right to perform.
      */
     pid: number | null;
+    /** When the current state began, for the roster's elapsed time. */
+    stateSince: string;
 }
 
 /**
@@ -140,16 +143,20 @@ export class SessionRegistry {
         // SessionEnd ends the session. Apply its final state, then deregister so a
         // finished session is not in the drainable set and is not force-killed on a
         // later quit. Stop is not an end: a stopped session is idle and may resume.
+        // Persist only on a real transition. Most events do not change state, so
+        // this keeps the write count to actual transitions rather than per event.
+        const changed = next.state !== prev.state;
+
         const ended = next.sawSessionEnd;
         if (ended) {
             this.#live.delete(sessionId);
         } else {
-            this.#live.set(sessionId, { snapshot: next, binding, pid: existing?.pid ?? null });
+            // stateSince advances only on a transition, or is set fresh for a new
+            // session, so the roster's elapsed measures time in the current state.
+            const stateSince = existing && !changed ? existing.stateSince : now;
+            this.#live.set(sessionId, { snapshot: next, binding, pid: existing?.pid ?? null, stateSince });
         }
 
-        // Persist only on a real transition. Most events do not change state, so
-        // this keeps the write count to actual transitions rather than per event.
-        const changed = next.state !== prev.state;
         if (changed) this.#store.setState(binding.hireId, next.state);
 
         return { handled: true, sessionId, hireId: binding.hireId, state: next.state, changed, ended };
@@ -163,6 +170,20 @@ export class SessionRegistry {
     setPid(sessionId: string, pid: number | null): void {
         const entry = this.#live.get(sessionId);
         if (entry) entry.pid = pid;
+    }
+
+    /**
+     * Live session info for a hire, or null when no session is up for it. Used by
+     * the roster to add the apprentice count and elapsed to the persisted card.
+     * Scans, which is bounded by how many sessions are live at once.
+     */
+    liveInfoByHire(hireId: string): LiveInfo | null {
+        for (const entry of this.#live.values()) {
+            if (entry.binding.hireId === hireId) {
+                return { apprentices: entry.snapshot.subagentsCompleted, since: entry.stateSince };
+            }
+        }
+        return null;
     }
 
     /** Every live session as a drainable, so the drain sees a real set at quit. */

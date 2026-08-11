@@ -20,6 +20,7 @@
 export const INVOKE_CHANNELS = [
     'health',
     'projects:list',
+    'roster:snapshot',
     'proof:spawn',
     'proof:write',
     'proof:kill'
@@ -27,6 +28,7 @@ export const INVOKE_CHANNELS = [
 
 /** Main pushes to the renderer. One-way, no reply. */
 export const EVENT_CHANNELS = [
+    'roster:changed',
     'proof:data',
     'proof:exit'
 ] as const;
@@ -62,6 +64,36 @@ export interface ProjectSummary {
 /** The reply to `projects:list`. Bounded: projects are capped by user creation. */
 export interface ProjectsList {
     readonly projects: readonly ProjectSummary[];
+}
+
+/**
+ * One hire as a card on the roster. Ids and names and human text only, never a
+ * repo path: the renderer acts on the id and shows the name.
+ *
+ * `state` and `task` are the primary fields, foregrounded on the card, because
+ * the screen is people-centric: it reads as what a colleague is doing, not as a
+ * telemetry row. `apprentices` and `queued` are secondary counts, shown quietly
+ * and only when non-zero. `since` is when the current state began, so the
+ * renderer can show elapsed time without the main process holding a clock.
+ */
+export interface RosterCard {
+    readonly id: string;
+    readonly name: string;
+    readonly role: string;
+    readonly state: string;
+    /** Active project name, not a path. Null when the hire is on no project. */
+    readonly project: string | null;
+    /** The current task in one line, or null. Null until task dispatch exists. */
+    readonly task: string | null;
+    readonly apprentices: number;
+    readonly queued: number;
+    /** ISO time the current state began, for elapsed. Null with no live session. */
+    readonly since: string | null;
+}
+
+/** The reply to `roster:snapshot`. Bounded: one card per hire, hires are capped. */
+export interface RosterSnapshot {
+    readonly cards: readonly RosterCard[];
 }
 
 /** What the proof window sends to open a pty. Ids only, no paths. */

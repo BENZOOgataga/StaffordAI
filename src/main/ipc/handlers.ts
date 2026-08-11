@@ -12,7 +12,9 @@
  */
 
 import type { IpcMain, WebContents } from 'electron';
-import { INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList } from '../../shared/ipc.ts';
+import {
+    INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot
+} from '../../shared/ipc.ts';
 import { isProofSpawn, isProofWrite } from '../../domain/guards.ts';
 import type { ProofPty } from './proof-pty.ts';
 
@@ -28,6 +30,12 @@ export interface HandlerDeps {
      * injectable and testable and never reaches for the store directly.
      */
     readonly listProjects: () => ProjectsList;
+    /**
+     * The roster as cards, read-only and bounded (one per hire). A function, so
+     * the handler stays injectable and never reaches into the store or the
+     * registry directly.
+     */
+    readonly rosterSnapshot: () => RosterSnapshot;
 }
 
 /**
@@ -49,6 +57,11 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         // mapping and query path on every run rather than only under the smoke
         // flag.
         'projects:list': (): ProjectsList => deps.listProjects(),
+
+        // Read-only, no payload. One card per hire, bounded by how many hires
+        // exist. The renderer re-requests this on a roster:changed signal rather
+        // than being pushed a card per hook event.
+        'roster:snapshot': (): RosterSnapshot => deps.rosterSnapshot(),
 
         'proof:spawn': (payload: unknown): { ok: boolean } => {
             if (!isProofSpawn(payload)) throw new Error('proof:spawn requires {cols,rows}');
