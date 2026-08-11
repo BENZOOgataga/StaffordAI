@@ -13,6 +13,12 @@ test('the channel allowlist is an exact set, not a prefix pattern', () => {
     assert.equal(isInvokeChannel('proof:'), false);
     assert.equal(isInvokeChannel(''), false);
     assert.equal(isInvokeChannel(42), false);
+
+    // The roster channel is on the allowlist; a name near it is still refused, so
+    // the renderer cannot reach an off-allowlist channel through the preload gate.
+    assert.equal(isInvokeChannel('roster:snapshot'), true);
+    assert.equal(isInvokeChannel('roster:write'), false);
+    assert.equal(isInvokeChannel('roster:'), false);
 });
 
 test('invoke and event channels are disjoint', () => {

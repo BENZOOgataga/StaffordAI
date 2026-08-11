@@ -137,6 +137,22 @@ test('coerceHookEvent narrows the raw record and drops non-string fields', () =>
     assert.equal(e.cwd, undefined, 'a non-string field is dropped, not passed through');
 });
 
+test('live info gives the roster the apprentice count and when the state began', () => {
+    const { store } = fakeStore({ 'sess-1': { hireId: 'h1', projectId: 'p1' } });
+    const registry = new SessionRegistry(store);
+
+    registry.ingest(ev('SessionStart', 'sess-1'), '2026-08-11T09:00:00.000Z');
+    // A transition moves the state-start time; a non-transition (SubagentStop)
+    // bumps the count but leaves the start time alone.
+    registry.ingest(ev('UserPromptSubmit', 'sess-1'), '2026-08-11T09:05:00.000Z');
+    registry.ingest(ev('SubagentStop', 'sess-1'), '2026-08-11T09:06:00.000Z');
+
+    const info = registry.liveInfoByHire('h1');
+    assert.equal(info?.apprentices, 1);
+    assert.equal(info?.since, '2026-08-11T09:05:00.000Z', 'the start time is the last transition, not the last event');
+    assert.equal(registry.liveInfoByHire('nobody'), null);
+});
+
 // --- backed by the real repository ------------------------------------------
 
 function withRepos(fn: (repos: ReturnType<typeof createRepositories>) => void): void {
