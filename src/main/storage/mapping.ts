@@ -19,9 +19,10 @@
  */
 
 import type {
-    HiredAgent, Project, ProjectPolicy, ProjectRepo, Task, TaskOrigin, Approval, PolicyLogEntry
+    HiredAgent, Project, ProjectPolicy, ProjectRepo, Task, TaskOrigin, Approval, PolicyLogEntry,
+    DrainReportEntry, DrainOutcome
 } from '../../domain/models.ts';
-import { PUSH_POLICIES, TASK_KINDS, APPROVAL_VERDICTS } from '../../domain/models.ts';
+import { PUSH_POLICIES, TASK_KINDS, APPROVAL_VERDICTS, DRAIN_OUTCOMES } from '../../domain/models.ts';
 import { isAgentState } from '../../domain/agent-state.ts';
 
 export type Row = Record<string, unknown>;
@@ -43,6 +44,12 @@ function int(row: Row, col: string): number {
     const v = row[col];
     if (typeof v !== 'number' || !Number.isInteger(v)) throw fail(col, 'integer', v);
     return v;
+}
+
+function bool(row: Row, col: string): boolean {
+    const v = int(row, col);
+    if (v !== 0 && v !== 1) throw new Error('column ' + col + ' is ' + v + ', not the 0 or 1 a boolean stores as');
+    return v === 1;
 }
 
 function json<T>(row: Row, col: string): T {
@@ -166,5 +173,24 @@ export function policyLogFromRow(row: Row): PolicyLogEntry {
     return {
         at: str(row, 'at'), actor: str(row, 'actor'), projectId: str(row, 'project_id'),
         before: object<Partial<ProjectPolicy>>(row, 'before'), after: object<Partial<ProjectPolicy>>(row, 'after')
+    };
+}
+
+// --- drain report (append-only) --------------------------------------------
+
+export function drainReportToRow(e: DrainReportEntry): Row {
+    return {
+        drain_id: e.drainId, agent_id: e.agentId, outcome: e.outcome,
+        // The schema stores the flag as 0 or 1; the domain carries a boolean.
+        committed: e.committed ? 1 : 0, branch: e.branch, commit_id: e.commitId, at: e.at
+    };
+}
+
+export function drainReportFromRow(row: Row): DrainReportEntry {
+    return {
+        drainId: str(row, 'drain_id'), agentId: str(row, 'agent_id'),
+        outcome: oneOf<DrainOutcome>(row, 'outcome', Object.values(DRAIN_OUTCOMES)),
+        committed: bool(row, 'committed'), branch: nstr(row, 'branch'),
+        commitId: nstr(row, 'commit_id'), at: str(row, 'at')
     };
 }

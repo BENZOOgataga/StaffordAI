@@ -26,11 +26,11 @@
  * ever added.
  */
 
-import type { HiredAgent, Project, Task, PolicyLogEntry } from '../../domain/models.ts';
+import type { HiredAgent, Project, Task, PolicyLogEntry, DrainReportEntry } from '../../domain/models.ts';
 import type { StorageDatabase, Statement } from './database.ts';
 import {
     hireToRow, hireFromRow, projectToRow, projectFromRow, taskToRow, taskFromRow,
-    policyLogToRow, policyLogFromRow, type Row
+    policyLogToRow, policyLogFromRow, drainReportToRow, drainReportFromRow, type Row
 } from './mapping.ts';
 
 /** A page of a growing table. Both are required: there is no read-everything. */
@@ -160,12 +160,44 @@ export class PolicyLogRepository {
     }
 }
 
+/**
+ * The append-only drain report. Append and grouped read only, by design.
+ *
+ * One quit writes one report: a row per active agent, grouped by `drain_id`. The
+ * drain only ever inserts, as each agent's outcome becomes known, so a drain
+ * interrupted partway still leaves the resolved agents' rows on disk. There is no
+ * update or delete method here and no way to add one that would work: migration
+ * 0001's triggers raise on UPDATE and DELETE, so the database refuses them even
+ * by raw statement.
+ *
+ * The read is bounded by `drain_id`: one shutdown's rows, which is one row per
+ * live agent, so it is not a growing scan and needs no pagination.
+ */
+export class DrainReportRepository {
+    readonly #append: Statement;
+    readonly #byDrain: Statement;
+
+    constructor(db: StorageDatabase) {
+        this.#append = db.prepare(
+            'INSERT INTO drain_report (drain_id, agent_id, outcome, committed, branch, commit_id, at) ' +
+            'VALUES (@drain_id, @agent_id, @outcome, @committed, @branch, @commit_id, @at)');
+        this.#byDrain = db.prepare('SELECT * FROM drain_report WHERE drain_id = ? ORDER BY id');
+    }
+
+    append(entry: DrainReportEntry): void { this.#append.run(drainReportToRow(entry)); }
+    /** Every row for one shutdown, in write order. */
+    byDrain(drainId: string): DrainReportEntry[] {
+        return rowsOf(this.#byDrain, drainId).map(drainReportFromRow);
+    }
+}
+
 /** Every repository, built once over one open database. */
 export interface Repositories {
     readonly hires: HireRepository;
     readonly projects: ProjectRepository;
     readonly tasks: TaskRepository;
     readonly policyLog: PolicyLogRepository;
+    readonly drainReports: DrainReportRepository;
 }
 
 export function createRepositories(db: StorageDatabase): Repositories {
@@ -173,6 +205,7 @@ export function createRepositories(db: StorageDatabase): Repositories {
         hires: new HireRepository(db),
         projects: new ProjectRepository(db),
         tasks: new TaskRepository(db),
-        policyLog: new PolicyLogRepository(db)
+        policyLog: new PolicyLogRepository(db),
+        drainReports: new DrainReportRepository(db)
     };
 }

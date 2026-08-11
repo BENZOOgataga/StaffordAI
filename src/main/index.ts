@@ -27,6 +27,7 @@ import { ProofPty } from './ipc/proof-pty.ts';
 import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
+import { runDrain, type DrainableAgent } from './agents/drain.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
@@ -193,18 +194,60 @@ async function startTransport(): Promise<boolean> {
     }
 }
 
+/**
+ * The active agent sessions the drain checkpoints. Empty until a roster maps hook
+ * events to live agents, which is the step after this one. The drain runs against
+ * an empty set now, so the quit path is wired and proven end to end while the
+ * behaviour that fills it is tested with stubs in drain.test.ts.
+ */
+function activeDrainables(): DrainableAgent[] {
+    return [];
+}
+
 let proofQuitting = false;
 async function quit(): Promise<void> {
     proofQuitting = true;
     proof.kill();
-    // Tear the socket down cleanly, before quitting, so no stale pipe or socket
-    // file lingers. Awaited so the close completes before the process exits, and
-    // done here rather than in the drain, which is a later task: this is the
-    // plain app-quit path.
+
+    // Socket first, then sessions. The hook socket is the inbound agent-event
+    // channel and holds no state worth saving, so closing it first shuts the gate:
+    // the drain then checkpoints a stable set of sessions with nothing new arriving.
+    // The sessions hold the working trees, the valuable resource, so they get the
+    // full drain grace after the gate is shut. Awaited so no stale pipe or socket
+    // file lingers.
     if (transport) {
         await stopHookTransport(transport).catch(() => {});
         transport = null;
     }
+
+    // Drain the active sessions: checkpoint, bounded wait, force-kill what remains,
+    // one durable report row per agent. Bounded by its own total cap, so a stuck
+    // agent cannot hold the quit. A drain failure must not block the quit either,
+    // so it is caught and the quit proceeds.
+    if (repositories) {
+        try {
+            await runDrain({
+                agents: activeDrainables(),
+                platform: currentPlatform(),
+                sink: repositories.drainReports,
+                drainId: 'drain-' + new Date().toISOString(),
+                now: () => new Date().toISOString()
+            });
+        } catch (error) {
+            process.stderr.write('[warn] drain did not complete cleanly: ' +
+                (error instanceof Error ? error.message : String(error)) + '\n');
+        }
+    }
+
+    // Force the exit. node-pty can leave a non-unref'd five-second timer per
+    // Windows kill (issue 886) and stacking several holds the event loop, so a
+    // natural quit can look hung at the worst moment. A 3s timer turns quit into a
+    // hard app.exit(0). Everything that matters is already checkpointed and killed
+    // by the time the drain returns, so the forced exit only drops handles the OS
+    // reclaims anyway. The timer is unref'd so it never itself keeps the app alive.
+    // See plan 7.4.1: this containment is why the kill path is not changed.
+    const forced = setTimeout(() => { app.exit(0); }, 3000);
+    forced.unref();
     app.quit();
 }
 
