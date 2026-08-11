@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    stateFor, looksRateLimited, applyEvent, emptySession, startTask, REGISTERED_EVENTS
+    stateFor, looksRateLimited, looksLikePermissionPrompt, classifyNotification,
+    applyEvent, emptySession, startTask, REGISTERED_EVENTS
 } from './session-state.ts';
 import { AGENT_STATES } from '../../domain/agent-state.ts';
 
@@ -75,7 +76,7 @@ test('stateFor maps events to states', () => {
     assert.equal(stateFor({ event: 'UserPromptSubmit' }), AGENT_STATES.WORKING);
     assert.equal(stateFor({ event: 'Stop' }), AGENT_STATES.IDLE);
     assert.equal(stateFor({ event: 'SessionEnd' }), AGENT_STATES.IDLE);
-    assert.equal(stateFor({ event: 'Notification', message: 'needs your input' }), AGENT_STATES.WAITING);
+    assert.equal(stateFor({ event: 'Notification', message: 'Claude needs your permission' }), AGENT_STATES.WAITING);
     assert.equal(stateFor({ event: 'SubagentStop' }), null, 'carries no state meaning');
     assert.equal(stateFor({ event: 'PostToolUse' }), null);
 });
@@ -115,6 +116,62 @@ test('rate limit notifications are not treated as waiting for input', () => {
         AGENT_STATES.RATE_LIMITED,
         'the queue must pause rather than retry'
     );
+});
+
+// ---------------------------------------------------------------------------
+// The three-way Notification classifier, driven by the measured strings.
+// Strings measured 2026-08-08, docs/stack-migration-verification.md.
+// ---------------------------------------------------------------------------
+
+test('the measured permission-prompt string resolves to waiting_for_you', () => {
+    // Verbatim from the verification log: the permission-prompt Notification.
+    assert.equal(classifyNotification('Claude needs your permission'), AGENT_STATES.WAITING);
+    assert.equal(looksLikePermissionPrompt('Claude needs your permission'), true);
+});
+
+test('the measured idle string resolves to idle, not waiting', () => {
+    // Verbatim from the verification log: the idle Notification after Stop.
+    assert.equal(classifyNotification('Claude is waiting for your input'), AGENT_STATES.IDLE);
+    assert.equal(looksLikePermissionPrompt('Claude is waiting for your input'), false,
+        'the idle variant is not the permission prompt');
+});
+
+test('an unknown Notification resolves to idle, never waiting: the default flip', () => {
+    // The core of this piece. The old default was waiting_for_you, which lit a
+    // false badge on any unrecognised Notification. It is idle now.
+    assert.equal(classifyNotification('something no one measured'), AGENT_STATES.IDLE);
+    assert.equal(classifyNotification(undefined), AGENT_STATES.IDLE);
+    assert.equal(stateFor({ event: 'Notification', message: 'novel text' }), AGENT_STATES.IDLE,
+        'an unknown Notification no longer resolves to waiting');
+});
+
+test('a rate-limit Notification never resolves to waiting', () => {
+    // By the heuristic where it matches, and by the idle default where it does
+    // not, but never waiting. The uncaptured rate-limit string degrades to idle.
+    assert.equal(classifyNotification('usage limit reached'), AGENT_STATES.RATE_LIMITED);
+    assert.notEqual(classifyNotification('usage limit reached'), AGENT_STATES.WAITING);
+    assert.equal(classifyNotification('some unmeasured limit phrasing'), AGENT_STATES.IDLE,
+        'an unmatched rate-limit message degrades to idle, not waiting');
+});
+
+test('a sandboxed agent, receiving only the idle Notification variant, resolves to idle', () => {
+    // Under a sandbox the permission-prompt Notification never fires, only the
+    // idle variant does. So a sandboxed agent shows no hook-driven waiting in v1,
+    // which is correct: real waiting there needs a second source, out of scope.
+    assert.equal(classifyNotification('Claude is waiting for your input'), AGENT_STATES.IDLE);
+});
+
+test('the default flip carries through applyEvent end to end', () => {
+    // A working session hit by an unknown Notification resolves to idle, not
+    // waiting, all the way through the transition path piece 1 wired.
+    let session = applyEvent(emptySession('s1'), { event: 'UserPromptSubmit' }, NOW);
+    assert.equal(session.state, AGENT_STATES.WORKING);
+
+    session = applyEvent(session, { event: 'Notification', message: 'unrecognised' }, NOW);
+    assert.equal(session.state, AGENT_STATES.IDLE, 'an unknown Notification degrades to idle through applyEvent');
+
+    session = applyEvent(session, { event: 'Notification', message: 'Claude needs your permission' }, NOW);
+    assert.equal(session.state, AGENT_STATES.WAITING, 'the measured prompt still drives waiting');
 });
 
 // ---------------------------------------------------------------------------
