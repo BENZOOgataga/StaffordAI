@@ -64,16 +64,59 @@ export interface SessionSnapshot {
 }
 
 /**
- * Rate limit arrives as a notification rather than a distinct event, so this is
- * the one place the message text is read. Narrow and case-insensitive on
- * purpose: the queue must pause rather than retry, and a false positive there
- * stalls work that could have run.
+ * Rate limit arrives as a notification rather than a distinct event, so the
+ * message text is read here. Narrow and case-insensitive on purpose: the queue
+ * must pause rather than retry, and a false positive there stalls work that could
+ * have run.
  */
 const RATE_LIMIT_HINTS = [/rate limit/i, /usage limit/i, /limit reached/i];
 
 export function looksRateLimited(message: string | undefined): boolean {
     if (!message) return false;
     return RATE_LIMIT_HINTS.some((re) => re.test(message));
+}
+
+/**
+ * The permission-prompt Notification, measured on Benzoo's machine 2026-08-08 as
+ * `Claude needs your permission`, recorded in docs/stack-migration-verification.md.
+ * It is the one deterministic signal that the agent needs a decision from the
+ * person. Matched as a case-insensitive substring rather than by equality, because
+ * Claude Code can append a tool name or detail to the line, and a substring
+ * survives that where an exact match would fall through to the default.
+ */
+const PERMISSION_PROMPT_HINT = /needs your permission/i;
+
+export function looksLikePermissionPrompt(message: string | undefined): boolean {
+    if (!message) return false;
+    return PERMISSION_PROMPT_HINT.test(message);
+}
+
+/**
+ * Classifies a Notification into one of three states, defaulting to idle.
+ *
+ * The default is the point. A Notification that is neither a known rate limit nor
+ * the measured permission prompt resolves to idle, never to waiting. A false idle
+ * is a missed nudge; a false waiting is a badge the person learns to ignore, which
+ * kills the signal the roster exists for. The asymmetry is deliberate: degrade to
+ * idle.
+ *
+ * Rate limited is checked first and stays a heuristic, because the rate-limit
+ * Notification string was never captured deterministically. Anything the heuristic
+ * misses falls through to idle rather than to waiting, so an uncaptured rate-limit
+ * case degrades safely rather than lighting the badge.
+ *
+ * The idle variant, measured as `Claude is waiting for your input`, needs no
+ * matcher of its own: it is neither a rate limit nor a permission prompt, so it
+ * lands on the idle default. Under a sandboxed project only that idle variant ever
+ * fires, because the sandbox contains a Bash call instead of prompting, so a
+ * sandboxed agent that is genuinely waiting cannot be detected from the hook alone
+ * and correctly shows idle in this version. A positive waiting signal for
+ * sandboxed agents needs a second source and is a separate, later decision.
+ */
+export function classifyNotification(message: string | undefined): AgentState {
+    if (looksRateLimited(message)) return AGENT_STATES.RATE_LIMITED;
+    if (looksLikePermissionPrompt(message)) return AGENT_STATES.WAITING;
+    return AGENT_STATES.IDLE;
 }
 
 /**
@@ -90,7 +133,7 @@ export function stateFor(event: HookEvent): AgentState | null {
         case 'PreToolUse':
             return AGENT_STATES.WORKING;
         case 'Notification':
-            return looksRateLimited(event.message) ? AGENT_STATES.RATE_LIMITED : AGENT_STATES.WAITING;
+            return classifyNotification(event.message);
         case 'Stop':
         case 'SessionEnd':
             return AGENT_STATES.IDLE;
