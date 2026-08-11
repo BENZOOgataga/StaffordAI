@@ -28,6 +28,7 @@ import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent } from './agents/drain.ts';
+import { SessionRegistry, hireStoreOver, coerceHookEvent } from './hooks/session-registry.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
@@ -36,6 +37,7 @@ const APP_ID = 'Stafford';
 let store: OpenResult | null = null;
 let repositories: Repositories | null = null;
 let transport: HookTransport | null = null;
+let registry: SessionRegistry | null = null;
 
 /**
  * Opens the database and brings it to the current schema, before anything a user
@@ -201,7 +203,7 @@ async function startTransport(): Promise<boolean> {
  * behaviour that fills it is tested with stubs in drain.test.ts.
  */
 function activeDrainables(): DrainableAgent[] {
-    return [];
+    return registry ? registry.drainables() : [];
 }
 
 let proofQuitting = false;
@@ -262,6 +264,20 @@ app.whenReady().then(async () => {
     // live and before the tray can offer to spawn anything. If it cannot come
     // up, the app has already quit inside startTransport.
     if (!(await startTransport())) return;
+
+    // Connect the live listener to the state machine. A real inbound hook event
+    // now drives a hire's state through the existing applyEvent path and registers
+    // its session into the drainable set, so the drain no longer drains nothing.
+    // repositories and transport are both set above, or the app already quit.
+    if (repositories && transport) {
+        registry = new SessionRegistry(hireStoreOver(repositories));
+        transport.listener.on('event', (raw: Record<string, unknown>) => {
+            const result = registry?.ingest(coerceHookEvent(raw), new Date().toISOString());
+            if (result?.changed) {
+                smoke('hook drove ' + result.hireId + ' to ' + result.state);
+            }
+        });
+    }
 
     // Never register the login item during a smoke run. A smoke run launches
     // the packaged app for verification, where app.isPackaged is true and the
