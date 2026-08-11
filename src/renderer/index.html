@@ -226,6 +226,56 @@
     overflow-wrap: anywhere;
   }
 
+  .card[role="button"] { cursor: pointer; }
+  .card[role="button"]:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+
+  /* The detail view, same window, two panes: the colleague's terminal and, later,
+     the input box the write half adds. It fills the window over the roster and
+     hands back with a clear control. */
+  .detail {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+  .detail[hidden] { display: none; }
+  .detail-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(20, 24, 31, 0.72);
+    backdrop-filter: blur(18px) saturate(160%);
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .detail-head { background: var(--bg); backdrop-filter: none; }
+  }
+  .back {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 4px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .back:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.16); }
+  .detail-name { font-weight: 600; letter-spacing: -0.01em; }
+  .detail-role { color: var(--muted); font-size: 0.85rem; }
+  .detail-body { flex: 1; display: flex; min-height: 0; }
+  .term { flex: 1 1 auto; min-width: 0; padding: 8px 10px; background: #0F1319; overflow: hidden; }
+  .detail-side {
+    flex: 0 0 clamp(220px, 28%, 360px);
+    border-left: 1px solid var(--line);
+    padding: 18px;
+  }
+  .side-note { color: var(--muted); font-size: 0.9rem; }
+
   .empty {
     grid-column: 1 / -1;
     text-align: center;
@@ -250,5 +300,19 @@
 </header>
 
 <main id="roster" aria-live="polite"></main>
+
+<section id="detail" class="detail" hidden aria-hidden="true" aria-label="Colleague detail">
+  <div class="detail-head">
+    <button id="detail-back" class="back" type="button">Back to roster</button>
+    <span id="detail-name" class="detail-name"></span>
+    <span id="detail-role" class="detail-role"></span>
+  </div>
+  <div class="detail-body">
+    <div id="term" class="term"></div>
+    <div class="detail-side">
+      <p class="side-note">A box to reply is coming next.</p>
+    </div>
+  </div>
+</section>
 
 <script type="module" src="./roster.ts"></script>

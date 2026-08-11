@@ -53,19 +53,26 @@ function fakeStore(map: Record<string, HireBinding>): {
     };
 }
 
-/** A stub pty that records writes and lets a test fire its exit. */
-function stubPty(pid = 4242): PtyLike & { fireExit: (code: number) => void; writes: string[] } {
+/** A stub pty that records writes and resizes and lets a test fire exit and data. */
+function stubPty(pid = 4242): PtyLike & {
+    fireExit: (code: number) => void; emit: (data: string) => void;
+    writes: string[]; resizes: Array<{ cols: number; rows: number }>;
+} {
     let onExit: (info: { exitCode: number; signal?: number }) => void = () => {};
+    let onData: (data: string) => void = () => {};
     const writes: string[] = [];
+    const resizes: Array<{ cols: number; rows: number }> = [];
     return {
         pid,
-        onData: () => {},
+        onData: (listener) => { onData = listener; },
         onExit: (listener) => { onExit = listener; },
         write: (d) => { writes.push(d); },
-        resize: () => {},
+        resize: (cols, rows) => { resizes.push({ cols, rows }); },
         kill: () => {},
         fireExit: (code) => onExit({ exitCode: code }),
-        writes
+        emit: (data) => onData(data),
+        writes,
+        resizes
     };
 }
 
@@ -357,6 +364,53 @@ test('a resumed session registers a real pid and is reaped by the drain, zero su
     assert.equal(killed.length, 1, 'reaped once');
     assert.equal(rows.length, 1);
     assert.equal(registry.drainables().length, 0, 'zero survivors');
+});
+
+test('subscribe replays a live session then streams, and is a no-op for an unknown hire', () => {
+    const pty = stubPty();
+    const { lifecycle } = buildDeps({ spawn: pty });
+    lifecycle.sendMessage('h1', 'hi');
+
+    // The session produced output before the card opened.
+    pty.emit('EARLIER');
+
+    const seen: string[] = [];
+    const off = lifecycle.subscribe('h1', (d) => seen.push(d));
+    assert.equal(seen[0], 'EARLIER', 'the buffer replayed first, so the terminal is not blank');
+    pty.emit('LIVE');
+    assert.equal(seen.at(-1), 'LIVE', 'then live output streams');
+    off();
+    pty.emit('AFTER OFF');
+    assert.equal(seen.includes('AFTER OFF'), false, 'unsubscribing stops the stream');
+
+    const noop = lifecycle.subscribe('nobody', () => { throw new Error('should not fire'); });
+    assert.equal(typeof noop, 'function', 'an unknown hire is a safe no-op, not an error');
+});
+
+test('resize propagates the pane size to the pty', () => {
+    const pty = stubPty();
+    const { lifecycle } = buildDeps({ spawn: pty });
+    lifecycle.sendMessage('h1', 'hi');
+    lifecycle.resize('h1', 132, 40);
+    assert.deepEqual(pty.resizes.at(-1), { cols: 132, rows: 40 });
+});
+
+test('the buffer resets on resume: a resumed session starts with an empty replay', async () => {
+    const pty = stubPty();
+    const { lifecycle } = buildDeps({
+        spawn: pty, resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    // A first session builds up scrollback, then is torn down.
+    lifecycle.sendMessage('h1', 'hi');
+    pty.emit('OLD SCROLLBACK');
+    await lifecycle.teardown('h1');
+
+    // A resume is a fresh process with a fresh buffer, so its replay is empty until
+    // it produces its own output, consistent with the context-lost note.
+    lifecycle.sendMessage('h1', 'continue');
+    const seen: string[] = [];
+    lifecycle.subscribe('h1', (d) => seen.push(d));
+    assert.equal(seen.join(''), '', 'no stale scrollback carried across the resume');
 });
 
 // The real-process proof: a fixture spawned through node-pty, driven over a real

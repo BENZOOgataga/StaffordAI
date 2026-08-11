@@ -13,7 +13,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
     isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel,
-    type HealthReport, type ProjectsList, type RosterSnapshot
+    type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -53,6 +53,19 @@ const api = Object.freeze({
     roster: Object.freeze({
         snapshot: (): Promise<RosterSnapshot> => invoke('roster:snapshot') as Promise<RosterSnapshot>,
         onChanged: (listener: () => void): (() => void) => on('roster:changed', () => listener())
+    }),
+
+    // The detail view's live terminal. open subscribes to a hire's session and
+    // returns whether it is live; onData streams the coalesced output; close stops
+    // it; resize propagates a pane resize to the pty. Ids and sizes only, no paths.
+    session: Object.freeze({
+        open: (hireId: string): Promise<SessionOpened> =>
+            invoke('session:open', { hireId }) as Promise<SessionOpened>,
+        close: (): Promise<void> => invoke('session:close') as Promise<void>,
+        resize: (hireId: string, cols: number, rows: number): Promise<void> =>
+            invoke('session:resize', { hireId, cols, rows }) as Promise<void>,
+        onData: (listener: (data: string) => void): (() => void) =>
+            on('session:data', (payload) => listener(String(payload)))
     }),
 
     // The proof window's surface, thrown away with that window when real UI
