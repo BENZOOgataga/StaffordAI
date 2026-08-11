@@ -109,19 +109,24 @@ function buildDeps(over: {
     idleMs?: number;
     timers?: Timers;
     target?: { projectId: string; cwd: string } | null;
+    resumeSessionId?: string | null;
+    sessions?: Record<string, HireBinding>;
 } = {}) {
-    const { store, sets, binds } = fakeStore({});
+    const { store, sets, binds } = fakeStore(over.sessions ?? {});
     const registry = new SessionRegistry(store);
     const secrets = new AgentSecrets();
     const pty = over.spawn ?? stubPty();
     const setStateCalls: Array<{ hireId: string; state: string }> = [];
     const killed: number[] = [];
+    const capturedArgs: string[][] = [];
     const absSocket = path.resolve(os.tmpdir(), 'x.sock');
     const lifecycle = new SessionLifecycle({
         platform: PLATFORM, socketPath: absSocket, secrets, registry,
         claudePath: path.resolve(os.tmpdir(), 'claude'), nodeDir: path.dirname(process.execPath), parentEnv: {},
-        spawn: () => pty,
-        resolveTarget: () => (over.target === undefined ? { projectId: 'p1', cwd: 'C:/repo' } : over.target),
+        spawn: (_file, args) => { capturedArgs.push([...args]); return pty; },
+        resolveTarget: () => (over.target === undefined
+            ? { projectId: 'p1', cwd: 'C:/repo', resumeSessionId: over.resumeSessionId ?? null }
+            : over.target),
         setState: (hireId, state) => { setStateCalls.push({ hireId, state }); over.setState?.(hireId, state); },
         trustFor: () => over.trust ?? 'trusted',
         notReportingMs: over.notReportingMs ?? 30_000,
@@ -129,7 +134,7 @@ function buildDeps(over: {
         ...(over.timers ? { timers: over.timers } : {}),
         killTree: async (_p, pid) => { killed.push(pid); return noKill(); }
     });
-    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, pty };
+    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, pty };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -261,6 +266,97 @@ test('teardown is idempotent: twice does not double-kill or throw', async () => 
     assert.equal(lifecycle.has('h1'), false);
     assert.equal(registry.drainables().length, 0, 'deregistered');
     assert.equal(secrets.size, 0, 'the secret was revoked');
+});
+
+test('a message to a hire with a stored session id resumes with --resume and keeps the id', () => {
+    const { lifecycle, registry, sets, binds, capturedArgs } = buildDeps({
+        resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    lifecycle.sendMessage('h1', 'continue');
+    assert.deepEqual(capturedArgs[0], ['--resume', 's1'], 'resumed with the stored id');
+
+    // The resumed session reports under the same id it was resumed with.
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    registry.ingest(coerceHookEvent({ event: 'UserPromptSubmit', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:01Z');
+    assert.equal(sets.at(-1)?.state, 'working', 'the resume drove state');
+    assert.deepEqual(binds, [], 'the stored id is retained, not rebound');
+});
+
+test('a message to a hire with no stored session id still cold-spawns, no --resume', () => {
+    const { lifecycle, capturedArgs } = buildDeps({ resumeSessionId: null });
+    lifecycle.sendMessage('h1', 'start');
+    assert.deepEqual(capturedArgs[0], [], 'a cold spawn, unchanged');
+});
+
+test('a stale id falls back to a fresh cold spawn: works, new id, context-lost note, not stuck, not crashed', async () => {
+    const pty = stubPty();
+    const { lifecycle, registry, sets, binds, setStateCalls, capturedArgs } = buildDeps({
+        spawn: pty, resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    lifecycle.sendMessage('h1', 'continue');
+
+    // The resume exits before it ever reported: the stale-id failure.
+    pty.fireExit(1);
+    await tick();
+
+    assert.equal(lifecycle.contextLost('h1'), true, 'the person is told the context was lost');
+    assert.equal(lifecycle.has('h1'), true, 'not left stuck: a fresh session is up');
+    assert.deepEqual(capturedArgs[1], [], 'the fallback is a cold spawn, no --resume');
+    assert.equal(setStateCalls.some((c) => c.state === 'crashed' || c.state === 'needs_trust'), false,
+        'a failed resume is not crashed or needs_trust');
+
+    // The fresh session reports under a new id, which overwrites the stale one.
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's2', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    registry.ingest(coerceHookEvent({ event: 'UserPromptSubmit', sessionId: 's2', agentId: 'h1' }), '2026-08-11T00:00:01Z');
+    assert.equal(sets.at(-1)?.state, 'working', 'the colleague ends up working, freshly');
+    assert.deepEqual(binds.at(-1), { hireId: 'h1', projectId: 'p1', sessionId: 's2' },
+        'the new id was written over the stale one');
+});
+
+test('a healthy-but-slow resume attaches and is never force-fallen-back', () => {
+    const { lifecycle, registry, sets, capturedArgs } = buildDeps({
+        resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    lifecycle.sendMessage('h1', 'continue');
+    // No exit; it simply attaches a moment later.
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    registry.ingest(coerceHookEvent({ event: 'UserPromptSubmit', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:01Z');
+
+    assert.equal(sets.at(-1)?.state, 'working');
+    assert.equal(capturedArgs.length, 1, 'no second spawn: the slow resume was not force-restarted');
+    assert.equal(lifecycle.contextLost('h1'), false, 'no context lost: the resume took');
+});
+
+test('a resume that stays alive but never attaches enters not_reporting, not the fallback', () => {
+    const ft = fakeTimers();
+    const { lifecycle, setStateCalls, capturedArgs } = buildDeps({
+        timers: ft.timers, notReportingMs: 100, idleMs: 999_999,
+        resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    lifecycle.sendMessage('h1', 'continue');
+    ft.fireByMs(100); // the not-reporting bound passes while the process is still alive
+
+    assert.deepEqual(setStateCalls, [{ hireId: 'h1', state: 'not_reporting' }],
+        'alive and silent is not_reporting, not a stale-id fallback');
+    assert.equal(capturedArgs.length, 1, 'no fresh spawn was forced');
+    assert.equal(lifecycle.contextLost('h1'), false);
+});
+
+test('a resumed session registers a real pid and is reaped by the drain, zero survivors', async () => {
+    const { lifecycle, registry, killed } = buildDeps({
+        resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    const pid = lifecycle.sendMessage('h1', 'continue');
+    assert.equal(registry.drainables().some((d) => d.pid === pid), true, 'the resumed pid is drainable');
+
+    const { sink, rows } = collectingSink();
+    await runDrain({
+        agents: registry.drainables(), platform: PLATFORM, sink, drainId: 'd1',
+        now: () => '2026-08-11T00:00:00Z', forceKill: (a) => lifecycle.teardown(a.agentId)
+    });
+    assert.equal(killed.length, 1, 'reaped once');
+    assert.equal(rows.length, 1);
+    assert.equal(registry.drainables().length, 0, 'zero survivors');
 });
 
 // The real-process proof: a fixture spawned through node-pty, driven over a real

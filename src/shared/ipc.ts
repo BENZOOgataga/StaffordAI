@@ -89,6 +89,11 @@ export interface RosterCard {
     readonly queued: number;
     /** ISO time the current state began, for elapsed. Null with no live session. */
     readonly since: string | null;
+    /**
+     * True when this session started fresh after a failed resume, so the card
+     * carries a quiet note that the context was lost. A note, not an alarm.
+     */
+    readonly contextLost: boolean;
 }
 
 /** The reply to `roster:snapshot`. Bounded: one card per hire, hires are capped. */

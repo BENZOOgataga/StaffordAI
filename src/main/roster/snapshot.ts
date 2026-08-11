@@ -31,6 +31,8 @@ export interface RosterSources {
     readonly live: (hireId: string) => LiveInfo | null;
     /** The current task text for a hire, or null. Null until dispatch exists. */
     readonly currentTask: (hireId: string) => string | null;
+    /** Whether this hire's current session started fresh after a failed resume. */
+    readonly contextLost: (hireId: string) => boolean;
 }
 
 export function assembleRoster(sources: RosterSources): RosterSnapshot {
@@ -49,7 +51,8 @@ export function assembleRoster(sources: RosterSources): RosterSnapshot {
             task: sources.currentTask(hire.id),
             apprentices: live?.apprentices ?? 0,
             queued: 0,
-            since: live?.since ?? null
+            since: live?.since ?? null,
+            contextLost: sources.contextLost(hire.id)
         });
     }
     return { cards };

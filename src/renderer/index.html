@@ -216,6 +216,16 @@
     font-style: italic;
   }
 
+  /* A quiet informational note, for the context-lost line after a failed resume.
+     Slate and small, deliberately not amber: it tells the person something, it
+     does not summon them. */
+  .note {
+    margin-top: 4px;
+    font-size: 0.85rem;
+    color: var(--nosignal);
+    overflow-wrap: anywhere;
+  }
+
   .empty {
     grid-column: 1 / -1;
     text-align: center;

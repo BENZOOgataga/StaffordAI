@@ -74,6 +74,15 @@ function cardElement(card: RosterCard): HTMLElement {
         body.appendChild(task);
     }
 
+    if (card.contextLost) {
+        // A quiet note, not an alarm: the resume did not take, so this colleague
+        // started clean and remembers nothing from before.
+        const note = document.createElement('div');
+        note.className = 'note';
+        note.textContent = 'Started clean, earlier context lost';
+        body.appendChild(note);
+    }
+
     el.appendChild(body);
 
     const meta = document.createElement('div');

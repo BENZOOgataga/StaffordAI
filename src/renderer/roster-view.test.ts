@@ -13,7 +13,7 @@ const NOW = Date.parse('2026-08-11T12:00:00Z');
 
 function card(state: string, since: string | null = null): RosterCard {
     return { id: 'h1', name: 'Marion', role: 'Lead developer', state, project: null, task: null,
-        apprentices: 0, queued: 0, since };
+        apprentices: 0, queued: 0, since, contextLost: false };
 }
 
 test('not_reporting carries its own class, distinct from idle and waiting', () => {

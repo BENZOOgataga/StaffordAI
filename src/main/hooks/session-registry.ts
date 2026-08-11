@@ -186,11 +186,13 @@ export class SessionRegistry {
         const existing = this.#live.get(sessionId);
 
         // The rendezvous. A cold spawn has no session id until its first event, so
-        // it is not in any hire's sessions map. Bind it by the agent id the spawn
-        // set, which the forwarder echoes, then record the session id on the hire
-        // so every later event and every resume binds by session id as normal.
+        // it is not in any hire's sessions map, and it binds by the agent id the
+        // spawn set, which the forwarder echoes. A resume reconnects with a session
+        // id already on the hire, so it binds by that directly. Either way the pid
+        // comes from the pending spawn.
         const pending = existing ? undefined : this.#pending.get(event.agentId ?? '');
-        const binding = existing?.binding ?? this.#store.findBySession(sessionId) ?? pending?.binding ?? null;
+        const knownBinding = existing?.binding ?? this.#store.findBySession(sessionId);
+        const binding = knownBinding ?? pending?.binding ?? null;
 
         if (!binding) {
             // A session in no hire's sessions map and no pending spawn. Do not
@@ -199,11 +201,14 @@ export class SessionRegistry {
             return { handled: false, reason: 'unmapped', sessionId };
         }
 
-        const bound = pending !== undefined;
-        if (bound && pending) {
-            this.#store.bindSession(binding.hireId, binding.projectId, sessionId);
-            this.#pending.delete(pending.agentId);
-        }
+        // Bound by agent id only when there was no known binding, which is the cold
+        // spawn's first event. Then the session id is recorded on the hire. A resume
+        // already has its id on the hire, so nothing is rebound and the id is kept.
+        const bound = !knownBinding && pending !== undefined;
+        if (bound) this.#store.bindSession(binding.hireId, binding.projectId, sessionId);
+        // Either way, a pending spawn for this agent is now live, so clear it: it
+        // must not be counted as both a pending spawn and a live session.
+        if (pending) this.#pending.delete(pending.agentId);
 
         const prev = existing?.snapshot ?? emptySession(sessionId);
         const next = applyEvent(prev, event, now);
