@@ -21,7 +21,16 @@ export const AGENT_STATES = {
      * from outside it is indistinguishable from a crash. Reporting it as a
      * crash would send Benzoo looking for something that did not happen.
      */
-    NEEDS_TRUST: 'needs_trust'
+    NEEDS_TRUST: 'needs_trust',
+    /**
+     * A process that spawned, stayed alive, and never attached its hook within
+     * the bound. The absence of evidence, not a conclusion: the process may be
+     * working while its reporting channel failed to connect (the Windows
+     * AttachConsole-at-open hypothesis). Distinct from crashed, which exited, and
+     * from needs_trust, which has a dialog. Reporting either of those would send
+     * Benzoo to fix the wrong thing.
+     */
+    NOT_REPORTING: 'not_reporting'
 } as const;
 
 export type AgentState = (typeof AGENT_STATES)[keyof typeof AGENT_STATES];

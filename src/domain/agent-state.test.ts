@@ -34,6 +34,6 @@ test('only idle accepts input', () => {
 test('the union and the runtime list cannot drift apart', () => {
     // If a state is added to the object and forgotten elsewhere, this is the
     // cheapest place for it to show up.
-    assert.equal(Object.values(AGENT_STATES).length, 6);
-    assert.equal(new Set(Object.values(AGENT_STATES)).size, 6, 'states must be distinct');
+    assert.equal(Object.values(AGENT_STATES).length, 7);
+    assert.equal(new Set(Object.values(AGENT_STATES)).size, 7, 'states must be distinct');
 });

@@ -28,14 +28,23 @@ const PLATFORM = currentPlatform();
 const AT = '2026-08-11T00:00:00.000Z';
 
 function fakeStore(map: Record<string, HireBinding>): {
-    store: HireStore; sets: Array<{ hireId: string; state: string }>;
+    store: HireStore;
+    sets: Array<{ hireId: string; state: string }>;
+    binds: Array<{ hireId: string; projectId: string; sessionId: string }>;
 } {
     const sets: Array<{ hireId: string; state: string }> = [];
+    const binds: Array<{ hireId: string; projectId: string; sessionId: string }> = [];
     return {
         sets,
+        binds,
         store: {
             findBySession: (sid) => map[sid] ?? null,
-            setState: (hireId, state) => { sets.push({ hireId, state }); }
+            setState: (hireId, state) => { sets.push({ hireId, state }); },
+            bindSession: (hireId, projectId, sessionId) => {
+                binds.push({ hireId, projectId, sessionId });
+                // Once bound, a later event for this session id resolves normally.
+                map[sessionId] = { hireId, projectId };
+            }
         }
     };
 }
@@ -135,6 +144,70 @@ test('coerceHookEvent narrows the raw record and drops non-string fields', () =>
     assert.equal(e.sessionId, 's');
     assert.equal(e.agentId, 'a');
     assert.equal(e.cwd, undefined, 'a non-string field is dropped, not passed through');
+});
+
+test('the rendezvous: a pending spawn binds by agent id, and the session id lands on the hire', () => {
+    // Nothing maps the session id yet: a cold spawn has none until its first event.
+    const { store, binds, sets } = fakeStore({});
+    const registry = new SessionRegistry(store);
+    let bound: string | null = null;
+    registry.setOnBound((agentId) => { bound = agentId; });
+
+    // The lifecycle pre-registers the spawn by agent id and real pid.
+    registry.preRegister('h1', 4242, 'h1', 'p1');
+    assert.equal(registry.isPending('h1'), true);
+
+    // The first event carries the agent id, not a known session id.
+    const first = registry.ingest(ev('SessionStart', 'sess-1', { agentId: 'h1' }), AT);
+    assert.equal(first.bound, true, 'the first event bound the pending spawn');
+    assert.equal(first.hireId, 'h1');
+    assert.equal(registry.isPending('h1'), false, 'no longer pending once bound');
+    assert.deepEqual(binds, [{ hireId: 'h1', projectId: 'p1', sessionId: 'sess-1' }],
+        'the session id was recorded on the hire');
+    assert.equal(bound, 'h1', 'the lifecycle was told the spawn reported');
+
+    // A later event for that session id resolves to the same hire by session id.
+    const second = registry.ingest(ev('UserPromptSubmit', 'sess-1'), AT);
+    assert.equal(second.hireId, 'h1');
+    assert.equal(second.state, 'working');
+    assert.deepEqual(sets.at(-1), { hireId: 'h1', state: 'working' });
+});
+
+test('a pending spawn is drainable by its real pid before it reports', () => {
+    const { store } = fakeStore({});
+    const registry = new SessionRegistry(store);
+    registry.preRegister('h1', 9001, 'h1', 'p1');
+
+    const drainables = registry.drainables();
+    assert.equal(drainables.length, 1, 'the not-yet-reporting spawn is drainable');
+    assert.equal(drainables[0]?.pid, 9001, 'with its real pid, so quit reaps it');
+});
+
+test('the drainable checkpoint routes through the injected teardown', async () => {
+    const { store } = fakeStore({ 'sess-1': { hireId: 'h1', projectId: 'p1' } });
+    const registry = new SessionRegistry(store);
+    const torn: string[] = [];
+    registry.setTeardown(async (agentId) => { torn.push(agentId); });
+
+    registry.ingest(ev('SessionStart', 'sess-1', { agentId: 'h1' }), AT);
+    const result = await registry.drainables()[0]?.checkpoint();
+    assert.deepEqual(result, { committed: false, branch: null, commitId: null });
+    assert.deepEqual(torn, ['h1'], 'checkpoint tore the session down through the shared path');
+});
+
+test('deregisterByAgent removes a live or pending session and is idempotent', () => {
+    const { store } = fakeStore({ 'sess-1': { hireId: 'h1', projectId: 'p1' } });
+    const registry = new SessionRegistry(store);
+    registry.preRegister('h2', 10, 'h2', 'p1');
+    registry.ingest(ev('SessionStart', 'sess-1', { agentId: 'h1' }), AT);
+    assert.equal(registry.drainables().length, 2);
+
+    registry.deregisterByAgent('h1');
+    registry.deregisterByAgent('h2');
+    assert.equal(registry.drainables().length, 0);
+    // A second call finds nothing and does not throw.
+    registry.deregisterByAgent('h1');
+    assert.equal(registry.drainables().length, 0);
 });
 
 test('live info gives the roster the apprentice count and when the state began', () => {
