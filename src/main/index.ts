@@ -28,9 +28,14 @@ import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent } from './agents/drain.ts';
-import { SessionRegistry, hireStoreOver, coerceHookEvent } from './hooks/session-registry.ts';
+import { SessionRegistry, hireStoreOver, coerceHookEvent, type HireStore } from './hooks/session-registry.ts';
 import { assembleRoster } from './roster/snapshot.ts';
+import { SessionLifecycle } from './agents/session-lifecycle.ts';
+import { locateClaude } from './agents/claude-locator.ts';
+import { readTrust } from './agents/trust.ts';
+import fs from 'node:fs';
 import type { RosterSnapshot } from '../shared/ipc.ts';
+import type { PtyLike } from './agents/pty-session.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
@@ -40,6 +45,7 @@ let store: OpenResult | null = null;
 let repositories: Repositories | null = null;
 let transport: HookTransport | null = null;
 let registry: SessionRegistry | null = null;
+let lifecycle: SessionLifecycle | null = null;
 
 /**
  * Opens the database and brings it to the current schema, before anything a user
@@ -229,6 +235,60 @@ function notifyRosterChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('roster:changed');
 }
 
+/**
+ * Builds the session lifecycle: the owner of live Claude sessions. It is dormant
+ * until the first message (the detail view is 3b), but constructing it wires the
+ * shared teardown into the registry, so at quit the drain reaps a real session
+ * through the same path an idle shutdown will. If no Claude binary is located, the
+ * shell runs without it and a spawn would surface the error when 3b lands.
+ */
+function buildLifecycle(store: HireStore): void {
+    if (!repositories || !transport || !registry) return;
+    const platform = currentPlatform();
+    const home = os.homedir();
+
+    let claudePath: string;
+    try {
+        claudePath = locateClaude({
+            platform, home, pathValue: process.env.PATH ?? '', exists: (c) => fs.existsSync(c)
+        }).path;
+    } catch (error) {
+        smoke('lifecycle unavailable, no Claude binary located: ' +
+            (error instanceof Error ? error.message : String(error)));
+        return;
+    }
+
+    const nodePty = createRequire(import.meta.url)('node-pty') as {
+        spawn: (file: string, args: readonly string[], options: Record<string, unknown>) => PtyLike;
+    };
+
+    lifecycle = new SessionLifecycle({
+        platform,
+        socketPath: transport.socketPath,
+        secrets: transport.secrets,
+        registry,
+        claudePath,
+        nodeDir: path.dirname(process.execPath),
+        parentEnv: process.env,
+        spawn: (file, args, options) => nodePty.spawn(file, args, options),
+        resolveTarget: (hireId) => {
+            const hire = repositories?.hires.get(hireId);
+            if (!hire || !hire.activeProjectId) return null;
+            const project = repositories?.projects.get(hire.activeProjectId);
+            const cwd = project?.repos[0]?.path;
+            if (!cwd) return null;
+            return { projectId: hire.activeProjectId, cwd };
+        },
+        setState: (hireId, state) => store.setState(hireId, state),
+        trustFor: (cwd) => readTrust({
+            platform, dir: cwd, configPath: path.join(home, '.claude.json'),
+            readFile: (p) => fs.readFileSync(p, 'utf8')
+        }),
+        onStateChanged: () => notifyRosterChanged()
+    });
+    smoke('lifecycle ready, claude at ' + claudePath);
+}
+
 let proofQuitting = false;
 async function quit(): Promise<void> {
     proofQuitting = true;
@@ -256,7 +316,11 @@ async function quit(): Promise<void> {
                 platform: currentPlatform(),
                 sink: repositories.drainReports,
                 drainId: 'drain-' + new Date().toISOString(),
-                now: () => new Date().toISOString()
+                now: () => new Date().toISOString(),
+                // Force-kill through the lifecycle's one teardown, so a timed-out
+                // session is reaped the same way a checkpointed one is. When there
+                // is no lifecycle, the drain falls back to its own killTree.
+                ...(lifecycle ? { forceKill: (agent) => lifecycle!.teardown(agent.agentId) } : {})
             });
         } catch (error) {
             process.stderr.write('[warn] drain did not complete cleanly: ' +
@@ -293,7 +357,8 @@ app.whenReady().then(async () => {
     // its session into the drainable set, so the drain no longer drains nothing.
     // repositories and transport are both set above, or the app already quit.
     if (repositories && transport) {
-        registry = new SessionRegistry(hireStoreOver(repositories));
+        const store = hireStoreOver(repositories);
+        registry = new SessionRegistry(store);
         transport.listener.on('event', (raw: Record<string, unknown>) => {
             const result = registry?.ingest(coerceHookEvent(raw), new Date().toISOString());
             if (result?.changed) {
@@ -303,6 +368,7 @@ app.whenReady().then(async () => {
                 notifyRosterChanged();
             }
         });
+        buildLifecycle(store);
     }
 
     // Never register the login item during a smoke run. A smoke run launches

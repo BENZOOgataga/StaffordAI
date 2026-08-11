@@ -51,6 +51,12 @@ export interface HireStore {
     findBySession(sessionId: string): HireBinding | null;
     /** Persist a hire's state. Called only on an actual transition. */
     setState(hireId: string, state: AgentState): void;
+    /**
+     * Records the resolved session id on the hire for a project, so a resume and
+     * every later event can bind by session id. Called once, when a cold-spawned
+     * session's first event binds by agent id.
+     */
+    bindSession(hireId: string, projectId: string, sessionId: string): void;
 }
 
 export interface IngestResult {
@@ -63,6 +69,15 @@ export interface IngestResult {
     readonly changed?: boolean;
     /** True when this event ended the session and it was deregistered. */
     readonly ended?: boolean;
+    /** True when this event bound a pending cold spawn by its agent id. */
+    readonly bound?: boolean;
+}
+
+/** A spawned process that has not attached its hook yet, drainable by its real pid. */
+interface PendingSpawn {
+    readonly agentId: string;
+    readonly pid: number;
+    readonly binding: HireBinding;
 }
 
 interface LiveEntry {
@@ -101,9 +116,28 @@ export function coerceHookEvent(raw: Record<string, unknown>): HookEvent {
 export class SessionRegistry {
     readonly #store: HireStore;
     readonly #live = new Map<string, LiveEntry>();
+    /** Cold spawns awaiting their first hook event, keyed by agent id. */
+    readonly #pending = new Map<string, PendingSpawn>();
+    /** The one idempotent teardown, set by the lifecycle. Kills, deregisters, revokes. */
+    #teardown: ((agentId: string) => Promise<void>) | null = null;
+    /** Notified when a pending spawn binds, so the lifecycle can stop waiting on it. */
+    #onBound: ((agentId: string) => void) | null = null;
 
     constructor(store: HireStore) {
         this.#store = store;
+    }
+
+    /**
+     * Wires the shared teardown. The drainable checkpoint calls it, so at drain a
+     * live session is torn down through the same path an idle shutdown will use.
+     */
+    setTeardown(teardown: (agentId: string) => Promise<void>): void {
+        this.#teardown = teardown;
+    }
+
+    /** Wires the bind callback, so the lifecycle learns when a spawn reports. */
+    setOnBound(onBound: (agentId: string) => void): void {
+        this.#onBound = onBound;
     }
 
     /** Live sessions currently tracked. For proofs and diagnostics. */
@@ -113,6 +147,21 @@ export class SessionRegistry {
 
     has(sessionId: string): boolean {
         return this.#live.has(sessionId);
+    }
+
+    /** Whether a cold spawn is registered but has not reported yet. */
+    isPending(agentId: string): boolean {
+        return this.#pending.has(agentId);
+    }
+
+    /**
+     * Records a spawned process before its hook can attach, so an event that
+     * arrives fast is not dropped as unknown, and so a not-yet-reporting process
+     * is still drainable by its real pid. Keyed by the agent id the spawn set in
+     * the environment, which the forwarder echoes on every event.
+     */
+    preRegister(agentId: string, pid: number, hireId: string, projectId: string): void {
+        this.#pending.set(agentId, { agentId, pid, binding: { hireId, projectId } });
     }
 
     /**
@@ -128,25 +177,37 @@ export class SessionRegistry {
         }
 
         const existing = this.#live.get(sessionId);
-        const binding = existing?.binding ?? this.#store.findBySession(sessionId);
-        const prev = existing?.snapshot ?? emptySession(sessionId);
-        const next = applyEvent(prev, event, now);
+
+        // The rendezvous. A cold spawn has no session id until its first event, so
+        // it is not in any hire's sessions map. Bind it by the agent id the spawn
+        // set, which the forwarder echoes, then record the session id on the hire
+        // so every later event and every resume binds by session id as normal.
+        const pending = existing ? undefined : this.#pending.get(event.agentId ?? '');
+        const binding = existing?.binding ?? this.#store.findBySession(sessionId) ?? pending?.binding ?? null;
 
         if (!binding) {
-            // A session in no hire's sessions map. Do not attribute it to a hire
-            // and do not register it: a wrong hire lighting up is worse than a
-            // session the shell does not yet know. Reported as unmapped so a
-            // caller can log, never guessed.
+            // A session in no hire's sessions map and no pending spawn. Do not
+            // attribute it to a hire: a wrong hire lighting up is worse than a
+            // session the shell does not know. Reported as unmapped, never guessed.
             return { handled: false, reason: 'unmapped', sessionId };
         }
 
-        // SessionEnd ends the session. Apply its final state, then deregister so a
-        // finished session is not in the drainable set and is not force-killed on a
-        // later quit. Stop is not an end: a stopped session is idle and may resume.
+        const bound = pending !== undefined;
+        if (bound && pending) {
+            this.#store.bindSession(binding.hireId, binding.projectId, sessionId);
+            this.#pending.delete(pending.agentId);
+        }
+
+        const prev = existing?.snapshot ?? emptySession(sessionId);
+        const next = applyEvent(prev, event, now);
+
         // Persist only on a real transition. Most events do not change state, so
         // this keeps the write count to actual transitions rather than per event.
         const changed = next.state !== prev.state;
 
+        // SessionEnd ends the session. Apply its final state, then deregister so a
+        // finished session is not force-killed on a later quit. Stop is not an end:
+        // a stopped session is idle and may resume.
         const ended = next.sawSessionEnd;
         if (ended) {
             this.#live.delete(sessionId);
@@ -154,12 +215,14 @@ export class SessionRegistry {
             // stateSince advances only on a transition, or is set fresh for a new
             // session, so the roster's elapsed measures time in the current state.
             const stateSince = existing && !changed ? existing.stateSince : now;
-            this.#live.set(sessionId, { snapshot: next, binding, pid: existing?.pid ?? null, stateSince });
+            const pid = existing?.pid ?? pending?.pid ?? null;
+            this.#live.set(sessionId, { snapshot: next, binding, pid, stateSince });
         }
 
         if (changed) this.#store.setState(binding.hireId, next.state);
+        if (bound && this.#onBound) this.#onBound(binding.hireId);
 
-        return { handled: true, sessionId, hireId: binding.hireId, state: next.state, changed, ended };
+        return { handled: true, sessionId, hireId: binding.hireId, state: next.state, changed, ended, bound };
     }
 
     /**
@@ -186,26 +249,55 @@ export class SessionRegistry {
         return null;
     }
 
-    /** Every live session as a drainable, so the drain sees a real set at quit. */
+    /**
+     * Every session the shell owns as a drainable, so the drain sees a real set at
+     * quit. Both live sessions and pending spawns are included: a process that
+     * spawned but has not reported yet still has a real pid to reap, so leaving it
+     * out would let a not-reporting session survive the drain.
+     */
     drainables(): DrainableAgent[] {
         const out: DrainableAgent[] = [];
         for (const entry of this.#live.values()) {
-            out.push({
-                agentId: entry.snapshot.agentId ?? entry.binding.hireId,
-                pid: entry.pid,
-                checkpoint: () => this.#checkpoint()
-            });
+            out.push(this.#drainable(entry.snapshot.agentId ?? entry.binding.hireId, entry.pid));
+        }
+        for (const pending of this.#pending.values()) {
+            out.push(this.#drainable(pending.agentId, pending.pid));
         }
         return out;
     }
 
+    #drainable(agentId: string, pid: number | null): DrainableAgent {
+        return {
+            agentId,
+            pid,
+            checkpoint: () => this.#checkpoint(agentId)
+        };
+    }
+
     /**
-     * The git checkpoint executor is a later piece. Until it exists a live session
-     * reports no commit, so the drain records it as checkpointed with nothing
-     * committed rather than claiming a commit that did not happen.
+     * The git checkpoint executor is a later piece, so there is nothing to commit
+     * yet. What a checkpoint does now is tear the session down through the shared
+     * path, and report no commit, so the drain leaves zero survivors and records an
+     * honest checkpointed-with-nothing-committed rather than a false commit. When
+     * the executor lands, the commit happens before the teardown.
      */
-    async #checkpoint(): Promise<CheckpointResult> {
+    async #checkpoint(agentId: string): Promise<CheckpointResult> {
+        if (this.#teardown) await this.#teardown(agentId);
         return { committed: false, branch: null, commitId: null };
+    }
+
+    /**
+     * Removes a session from the registry, by agent id, whether it was live or
+     * still pending. Idempotent: a second call finds nothing and returns. Called
+     * by the lifecycle's teardown so the registry and the process go together.
+     */
+    deregisterByAgent(agentId: string): void {
+        this.#pending.delete(agentId);
+        for (const [sessionId, entry] of this.#live) {
+            if ((entry.snapshot.agentId ?? entry.binding.hireId) === agentId) {
+                this.#live.delete(sessionId);
+            }
+        }
     }
 }
 
@@ -228,6 +320,11 @@ export function hireStoreOver(repos: Repositories): HireStore {
             const hire = repos.hires.get(hireId);
             if (!hire) return;
             repos.hires.update({ ...hire, state });
+        },
+        bindSession(hireId, projectId, sessionId) {
+            const hire = repos.hires.get(hireId);
+            if (!hire) return;
+            repos.hires.update({ ...hire, sessions: { ...hire.sessions, [projectId]: sessionId } });
         }
     };
 }
