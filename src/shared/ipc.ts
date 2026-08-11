@@ -21,6 +21,9 @@ export const INVOKE_CHANNELS = [
     'health',
     'projects:list',
     'roster:snapshot',
+    'session:open',
+    'session:close',
+    'session:resize',
     'proof:spawn',
     'proof:write',
     'proof:kill'
@@ -29,6 +32,7 @@ export const INVOKE_CHANNELS = [
 /** Main pushes to the renderer. One-way, no reply. */
 export const EVENT_CHANNELS = [
     'roster:changed',
+    'session:data',
     'proof:data',
     'proof:exit'
 ] as const;
@@ -99,6 +103,23 @@ export interface RosterCard {
 /** The reply to `roster:snapshot`. Bounded: one card per hire, hires are capped. */
 export interface RosterSnapshot {
     readonly cards: readonly RosterCard[];
+}
+
+/** Opening a card's live terminal. Ids only, never a path or a session id. */
+export interface SessionOpen {
+    readonly hireId: string;
+}
+
+/** The reply to session:open: whether a live session is streaming. */
+export interface SessionOpened {
+    readonly live: boolean;
+}
+
+/** A pane resize propagated to the pty. Ids and bounded sizes only. */
+export interface SessionResize {
+    readonly hireId: string;
+    readonly cols: number;
+    readonly rows: number;
 }
 
 /** What the proof window sends to open a pty. Ids only, no paths. */

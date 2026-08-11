@@ -14,6 +14,7 @@ import type { StaffordApi } from '../preload/index.ts';
 import type { RosterCard } from '../shared/ipc.ts';
 import { RosterAlerts } from './roster-alerts.ts';
 import { cardClassName, stateLabel } from './roster-view.ts';
+import { openDetail } from './detail.ts';
 
 declare global {
     interface Window {
@@ -39,6 +40,15 @@ function chip(label: string): HTMLElement {
 function cardElement(card: RosterCard): HTMLElement {
     const el = document.createElement('article');
     el.className = cardClassName(card.state, alerts.isBadged(card.id));
+    // A card opens the colleague's detail. A real control: focusable and keyboard
+    // operable, not a click-only div.
+    el.setAttribute('role', 'button');
+    el.tabIndex = 0;
+    const open = (): void => { void openDetail(card.id, card.name, card.role); };
+    el.addEventListener('click', open);
+    el.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); }
+    });
 
     const rail = document.createElement('span');
     rail.className = 'rail';

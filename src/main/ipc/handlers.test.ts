@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHandlers } from './handlers.ts';
-import { INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot } from '../../shared/ipc.ts';
+import {
+    INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened
+} from '../../shared/ipc.ts';
 import type { ProofPty } from './proof-pty.ts';
 
 function fakeProof(open = false): ProofPty {
@@ -13,20 +15,35 @@ function fakeProof(open = false): ProofPty {
     } as unknown as ProofPty;
 }
 
+interface SessionOverrides {
+    sender?: () => { send: (channel: string, data: string) => void } | null;
+    subscribeSession?: (hireId: string, listener: (data: string) => void) => () => void;
+    resizeSession?: (hireId: string, cols: number, rows: number) => void;
+    hasSession?: (hireId: string) => boolean;
+}
+
 function deps(
     proof = fakeProof(),
     projects: ProjectsList = { projects: [] },
-    roster: RosterSnapshot = { cards: [] }
+    roster: RosterSnapshot = { cards: [] },
+    over: SessionOverrides = {}
 ) {
     return {
         startedAt: '2026-08-08T00:00:00.000Z',
         platformId: 'darwin',
         proof,
-        sender: () => null,
+        sender: (over.sender ?? (() => null)) as unknown as HandlerDepsSender,
         listProjects: () => projects,
-        rosterSnapshot: () => roster
+        rosterSnapshot: () => roster,
+        subscribeSession: over.subscribeSession ?? (() => () => {}),
+        resizeSession: over.resizeSession ?? (() => {}),
+        hasSession: over.hasSession ?? (() => false)
     };
 }
+
+// The real sender returns a WebContents; the tests only ever call .send, so a
+// narrow fake stands in and the deps builder casts to the handler's type.
+type HandlerDepsSender = Parameters<typeof buildHandlers>[0]['sender'];
 
 test('there is exactly one handler per invoke channel, no more and no fewer', () => {
     const handlers = buildHandlers(deps());
@@ -60,6 +77,76 @@ test('roster:snapshot returns the cards and takes no payload', () => {
     const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, cards));
     const result = handlers['roster:snapshot'](undefined) as RosterSnapshot;
     assert.deepEqual(result, cards);
+});
+
+const settle = () => new Promise((r) => setTimeout(r, 20));
+
+test('session:open subscribes and streams coalesced output; close stops it', async () => {
+    const sent: string[] = [];
+    let listener: (data: string) => void = () => {};
+    let unsubscribed = false;
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        sender: () => ({ send: (_ch, data) => { sent.push(data); } }),
+        subscribeSession: (_hireId, l) => { listener = l; return () => { unsubscribed = true; }; },
+        hasSession: () => true
+    }));
+
+    const opened = handlers['session:open']({ hireId: 'h1' }) as SessionOpened;
+    assert.equal(opened.live, true, 'a live session reports live');
+
+    // A burst of pty writes coalesces into one session:data message.
+    listener('a');
+    listener('b');
+    listener('c');
+    await settle();
+    assert.deepEqual(sent, ['abc'], 'the burst became one message, not three');
+
+    handlers['session:close'](undefined);
+    assert.equal(unsubscribed, true, 'closing unsubscribes from the session');
+
+    // A closed card receives no data: further pty output does not reach the renderer.
+    sent.length = 0;
+    listener('after close');
+    await settle();
+    assert.deepEqual(sent, [], 'a closed card streams nothing');
+});
+
+test('opening a second card closes the first, so only the open card streams', () => {
+    const unsubscribed: string[] = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        sender: () => ({ send: () => {} }),
+        subscribeSession: (hireId) => () => { unsubscribed.push(hireId); },
+        hasSession: () => true
+    }));
+    handlers['session:open']({ hireId: 'h1' });
+    handlers['session:open']({ hireId: 'h2' });
+    assert.deepEqual(unsubscribed, ['h1'], 'opening h2 unsubscribed h1 first');
+});
+
+test('session:open on a hire with no live session reports not live', () => {
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        sender: () => ({ send: () => {} }),
+        hasSession: () => false
+    }));
+    const opened = handlers['session:open']({ hireId: 'h1' }) as SessionOpened;
+    assert.equal(opened.live, false);
+});
+
+test('session:resize propagates the hire and bounded size to the pty', () => {
+    const resizes: Array<{ hireId: string; cols: number; rows: number }> = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        resizeSession: (hireId, cols, rows) => { resizes.push({ hireId, cols, rows }); }
+    }));
+    handlers['session:resize']({ hireId: 'h1', cols: 120, rows: 40 });
+    assert.deepEqual(resizes, [{ hireId: 'h1', cols: 120, rows: 40 }]);
+});
+
+test('session:open and session:resize refuse arguments that fail the guard', () => {
+    const handlers = buildHandlers(deps());
+    assert.throws(() => handlers['session:open']({}), /requires/);
+    assert.throws(() => handlers['session:open'](null), /requires/);
+    assert.throws(() => handlers['session:resize']({ hireId: 'h1', cols: 0, rows: 40 }), /requires/);
+    assert.throws(() => handlers['session:resize']({ cols: 80, rows: 24 }), /requires/);
 });
 
 test('proof:spawn refuses arguments that fail the guard', () => {

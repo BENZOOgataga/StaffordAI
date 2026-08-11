@@ -164,6 +164,27 @@ export class SessionLifecycle {
     }
 
     /**
+     * Subscribes to a session's terminal output for the detail view. Reuses
+     * PtySession.subscribe, which replays the capped buffer as one chunk then
+     * streams live in the same frame, so the terminal is never blank on open and
+     * never misses a byte. Returns an unsubscribe; a hire with no live session
+     * returns a no-op, so opening a card before a message shows an empty terminal
+     * rather than an error. The buffer belongs to the current PtySession, so a
+     * resume, being a fresh process, starts with an empty buffer, consistent with
+     * the context-lost note.
+     */
+    subscribe(hireId: string, listener: (data: string) => void): () => void {
+        const owned = this.#owned.get(hireId);
+        if (!owned) return () => {};
+        return owned.session.subscribe(listener);
+    }
+
+    /** Propagates a pane resize to the pty, so the TUI reflows. A no-op if no session. */
+    resize(hireId: string, cols: number, rows: number): void {
+        this.#owned.get(hireId)?.session.resize(cols, rows);
+    }
+
+    /**
      * The first message to a colleague. If no session is up, this is the cold
      * spawn; otherwise it writes to the running one. Returns the pid, or throws if
      * the hire is on no project so there is nowhere to spawn.

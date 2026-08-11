@@ -405,7 +405,12 @@ app.whenReady().then(async () => {
             smoke('projects:list served ' + projects.length + ' rows over IPC');
             return { projects };
         },
-        rosterSnapshot
+        rosterSnapshot,
+        // The detail view's live terminal, over the session the lifecycle owns.
+        // No lifecycle (no Claude located) means no session to stream or resize.
+        subscribeSession: (hireId, listener) => (lifecycle ? lifecycle.subscribe(hireId, listener) : () => {}),
+        resizeSession: (hireId, cols, rows) => { lifecycle?.resize(hireId, cols, rows); },
+        hasSession: (hireId) => (lifecycle ? lifecycle.has(hireId) : false)
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +
