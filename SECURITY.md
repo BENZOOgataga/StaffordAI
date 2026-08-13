@@ -1,7 +1,8 @@
 # Security policy
 
-Stafford is pre-release and not yet usable. It runs Claude Code agents with real permissions on the
-machine it is installed on, so its security surface is taken seriously even at this stage.
+Stafford is pre-release, and its core works and is in use. It runs Claude Code agents with real permissions on
+the machine it is installed on, so I take its security surface seriously, and I want reports as the project
+opens to contributions.
 
 ## Reporting a vulnerability
 
