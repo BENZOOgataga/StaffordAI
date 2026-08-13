@@ -405,11 +405,114 @@
 
   .empty {
     grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     text-align: center;
     color: var(--muted);
-    padding: 64px 20px;
+    padding: 72px 20px;
   }
-  .empty strong { color: var(--text); font-weight: 560; display: block; margin-bottom: 6px; }
+  .empty strong { color: var(--text); font-weight: 560; font-size: 1.15rem; display: block; margin-bottom: 8px; }
+  .empty p { margin: 0 0 22px; max-width: 30rem; line-height: 1.55; }
+
+  /* Header and empty-state actions, in the roster's quiet register. The primary
+     one carries the working accent; the secondary is a quiet outline. Labels flex
+     for longer translated text. */
+  .header-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.82rem;
+    padding: 4px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .header-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.16); }
+  .header-btn:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+
+  .btn {
+    appearance: none;
+    font: inherit;
+    font-size: 0.92rem;
+    padding: 9px 16px;
+    border-radius: 9px;
+    cursor: pointer;
+    border: 1px solid var(--line);
+  }
+  .btn:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+  .btn-primary {
+    background: var(--working);
+    border-color: transparent;
+    color: #0F1319;
+    font-weight: 560;
+  }
+  .btn-primary:hover { filter: brightness(1.06); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--muted);
+  }
+  .btn-secondary:hover { color: var(--text); border-color: rgba(255,255,255,0.16); }
+
+  /* The create sheets: a centred card over a dimmed room, same window. In the
+     roster's palette so they read as part of the app, not bolted on. */
+  .sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(12, 15, 20, 0.6);
+    backdrop-filter: blur(3px);
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .sheet-backdrop { background: rgba(12, 15, 20, 0.92); backdrop-filter: none; }
+  }
+  .sheet-backdrop[hidden] { display: none; }
+  .sheet {
+    width: 100%;
+    max-width: 440px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 22px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    box-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.7);
+  }
+  .sheet-title { margin: 0; font-size: 1.1rem; font-weight: 600; letter-spacing: -0.01em; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { color: var(--muted); font-size: 0.85rem; }
+  .field input, .field select {
+    appearance: none;
+    width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 9px 11px;
+    font: inherit;
+  }
+  .field select { cursor: pointer; }
+  .field input:focus-visible, .field select:focus-visible {
+    outline: 2px solid var(--working);
+    outline-offset: 2px;
+  }
+  .field input::placeholder { color: var(--muted); }
+  .form-hint { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
+  .form-error {
+    margin: 0;
+    color: var(--waiting);
+    font-size: 0.85rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  .form-error[hidden] { display: none; }
+  .sheet-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
   @media (prefers-reduced-motion: reduce) {
     .card { transition: background 160ms ease; transform: none !important; }
@@ -429,6 +532,8 @@
     <header>
       <span id="waiting-count" class="waiting-count"></span>
       <span class="spacer"></span>
+      <button id="add-project-header" class="header-btn" type="button">Add project</button>
+      <button id="hire-header" class="header-btn" type="button">Hire</button>
       <button id="mute" class="mute" type="button" aria-pressed="false">Mute</button>
     </header>
     <main id="roster" aria-live="polite"></main>
@@ -437,6 +542,49 @@
     </section>
   </div>
 </div>
+
+<section id="project-sheet" class="sheet-backdrop" hidden aria-label="Add a project">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="project-sheet-title">
+    <h2 id="project-sheet-title" class="sheet-title">Add a project</h2>
+    <div class="field">
+      <label id="project-name-label" for="project-name">Name</label>
+      <input id="project-name" type="text" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label id="project-repo-label" for="project-repo">Repository folder</label>
+      <input id="project-repo" type="text" autocomplete="off" spellcheck="false" />
+      <p id="project-hint" class="form-hint"></p>
+    </div>
+    <p id="project-error" class="form-error" role="alert" hidden></p>
+    <div class="sheet-actions">
+      <button id="project-cancel" class="btn btn-secondary" type="button">Cancel</button>
+      <button id="project-create" class="btn btn-primary" type="button">Add project</button>
+    </div>
+  </div>
+</section>
+
+<section id="hire-sheet" class="sheet-backdrop" hidden aria-label="Hire a colleague">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="hire-sheet-title">
+    <h2 id="hire-sheet-title" class="sheet-title">Hire a colleague</h2>
+    <div class="field">
+      <label id="hire-name-label" for="hire-name">Name</label>
+      <input id="hire-name" type="text" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label id="hire-role-label" for="hire-role">Role</label>
+      <select id="hire-role"></select>
+    </div>
+    <div class="field">
+      <label id="hire-project-label" for="hire-project">Project</label>
+      <select id="hire-project"></select>
+    </div>
+    <p id="hire-error" class="form-error" role="alert" hidden></p>
+    <div class="sheet-actions">
+      <button id="hire-cancel" class="btn btn-secondary" type="button">Cancel</button>
+      <button id="hire-submit" class="btn btn-primary" type="button">Hire</button>
+    </div>
+  </div>
+</section>
 
 <section id="detail" class="detail" hidden aria-hidden="true" aria-label="Colleague detail">
   <div class="detail-head">
