@@ -147,15 +147,39 @@ export interface PolicyLogEntry {
  * when, and an optional reference to the task or artifact that pulled a peer in.
  * Recorded as an assumption to confirm rather than a settled type.
  */
+/** The kind of a channel row: conversation text, or a colleague state event. */
+export const CHANNEL_KINDS = { MESSAGE: 'message', EVENT: 'event' } as const;
+export type ChannelKind = (typeof CHANNEL_KINDS)[keyof typeof CHANNEL_KINDS];
+
+/** What a channel message can reference: a task, a commit, or a file. */
+export const CHANNEL_REF_KINDS = { TASK: 'task', COMMIT: 'commit', FILE: 'file' } as const;
+export type ChannelRefKind = (typeof CHANNEL_REF_KINDS)[keyof typeof CHANNEL_REF_KINDS];
+
+/** A typed artifact reference: a kind plus the id or path it points at. */
+export interface ChannelRef {
+    kind: ChannelRefKind;
+    /** The task or commit id, or the file path. */
+    value: string;
+}
+
+/**
+ * One row on the channel timeline, append-only.
+ *
+ * Messages and events share one ordered stream, so `kind` discriminates human or
+ * agent text from a colleague state change. The reference is typed, a kind plus an
+ * id or path, replacing the old single nullable `taskId`, so a message or an event
+ * can point at a task, a commit, or a file.
+ */
 export interface ChannelMessage {
     id: string;
     projectId: string;
     /** Agent id, or a sentinel for Benzoo. Kept a string so the sender set is not fixed here. */
     senderId: string;
+    kind: ChannelKind;
+    /** The message text, or the rendered summary of an event. */
     body: string;
+    reference: ChannelRef | null;
     at: string;
-    /** The task this message was pulled in around, if any. */
-    taskId: string | null;
 }
 
 /**

@@ -20,9 +20,11 @@
 
 import type {
     HiredAgent, Project, ProjectPolicy, ProjectRepo, Task, TaskOrigin, Approval, PolicyLogEntry,
-    DrainReportEntry, DrainOutcome
+    DrainReportEntry, DrainOutcome, ChannelMessage, ChannelKind, ChannelRefKind
 } from '../../domain/models.ts';
-import { PUSH_POLICIES, TASK_KINDS, APPROVAL_VERDICTS, DRAIN_OUTCOMES } from '../../domain/models.ts';
+import {
+    PUSH_POLICIES, TASK_KINDS, APPROVAL_VERDICTS, DRAIN_OUTCOMES, CHANNEL_KINDS, CHANNEL_REF_KINDS
+} from '../../domain/models.ts';
 import { isAgentState } from '../../domain/agent-state.ts';
 
 export type Row = Record<string, unknown>;
@@ -192,5 +194,32 @@ export function drainReportFromRow(row: Row): DrainReportEntry {
         outcome: oneOf<DrainOutcome>(row, 'outcome', Object.values(DRAIN_OUTCOMES)),
         committed: bool(row, 'committed'), branch: nstr(row, 'branch'),
         commitId: nstr(row, 'commit_id'), at: str(row, 'at')
+    };
+}
+
+// --- channel (append-only) -------------------------------------------------
+
+export function channelMessageToRow(m: ChannelMessage): Row {
+    return {
+        id: m.id, project_id: m.projectId, sender_id: m.senderId, kind: m.kind, body: m.body,
+        // The typed reference is two columns; both null when there is none, so the
+        // ref_kind CHECK never sees a value it does not allow.
+        ref_kind: m.reference ? m.reference.kind : null,
+        ref_value: m.reference ? m.reference.value : null,
+        at: m.at
+    };
+}
+
+export function channelMessageFromRow(row: Row): ChannelMessage {
+    const refKind = nstr(row, 'ref_kind');
+    return {
+        id: str(row, 'id'), projectId: str(row, 'project_id'), senderId: str(row, 'sender_id'),
+        kind: oneOf<ChannelKind>(row, 'kind', Object.values(CHANNEL_KINDS)),
+        body: str(row, 'body'),
+        // A reference is present only when ref_kind is; then ref_value must be too.
+        reference: refKind === null
+            ? null
+            : { kind: oneOf<ChannelRefKind>(row, 'ref_kind', Object.values(CHANNEL_REF_KINDS)), value: str(row, 'ref_value') },
+        at: str(row, 'at')
     };
 }

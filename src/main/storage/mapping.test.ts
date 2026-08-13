@@ -9,9 +9,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     hireToRow, hireFromRow, projectToRow, projectFromRow, taskToRow, taskFromRow,
-    policyLogToRow, policyLogFromRow, drainReportToRow, drainReportFromRow, type Row
+    policyLogToRow, policyLogFromRow, drainReportToRow, drainReportFromRow,
+    channelMessageToRow, channelMessageFromRow, type Row
 } from './mapping.ts';
-import type { HiredAgent, Project, ProjectPolicy, Task, PolicyLogEntry, DrainReportEntry } from '../../domain/models.ts';
+import type {
+    HiredAgent, Project, ProjectPolicy, Task, PolicyLogEntry, DrainReportEntry, ChannelMessage
+} from '../../domain/models.ts';
 
 const POLICY: ProjectPolicy = {
     push: 'feature-branches',
@@ -58,6 +61,32 @@ const DRAIN_KILLED: DrainReportEntry = {
 
 test('a hire round-trips through the mapping unchanged', () => {
     assert.deepEqual(hireFromRow(hireToRow(HIRE)), HIRE);
+});
+
+const CHANNEL_MESSAGE: ChannelMessage = {
+    id: 'm1', projectId: 'p1', senderId: 'Benzoo', kind: 'message',
+    body: 'ship the parser', reference: { kind: 'task', value: 't1' }, at: '2026-08-13T00:00:00Z'
+};
+
+const CHANNEL_EVENT: ChannelMessage = {
+    id: 'e1', projectId: 'p1', senderId: 'h1', kind: 'event',
+    body: 'waiting_for_you', reference: null, at: '2026-08-13T00:00:01Z'
+};
+
+test('a channel message round-trips with a typed reference', () => {
+    assert.deepEqual(channelMessageFromRow(channelMessageToRow(CHANNEL_MESSAGE)), CHANNEL_MESSAGE);
+});
+
+test('a channel row with no reference round-trips with a null reference, both columns null', () => {
+    const row = channelMessageToRow(CHANNEL_EVENT);
+    assert.equal(row['ref_kind'], null);
+    assert.equal(row['ref_value'], null);
+    assert.deepEqual(channelMessageFromRow(row), CHANNEL_EVENT);
+});
+
+test('a channel row with a kind outside the set fails loudly', () => {
+    const row: Row = { ...channelMessageToRow(CHANNEL_EVENT), kind: 'gossip' };
+    assert.throws(() => channelMessageFromRow(row), /not one of/);
 });
 
 test('a drain report row round-trips, committed true with a branch and commit id', () => {

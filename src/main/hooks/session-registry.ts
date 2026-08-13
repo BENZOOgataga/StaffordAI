@@ -64,6 +64,7 @@ export interface IngestResult {
     readonly reason?: 'no-session-id' | 'unmapped';
     readonly sessionId?: string;
     readonly hireId?: string;
+    readonly projectId?: string;
     readonly state?: AgentState;
     /** True when the hire's persisted state changed, so a write happened. */
     readonly changed?: boolean;
@@ -237,7 +238,10 @@ export class SessionRegistry {
         // state, so the idle clock resets on it.
         if (this.#onActivity) this.#onActivity(binding.hireId);
 
-        return { handled: true, sessionId, hireId: binding.hireId, state: next.state, changed, ended, bound };
+        return {
+            handled: true, sessionId, hireId: binding.hireId, projectId: binding.projectId,
+            state: next.state, changed, ended, bound
+        };
     }
 
     /**

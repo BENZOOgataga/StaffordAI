@@ -26,11 +26,14 @@
  * ever added.
  */
 
-import type { HiredAgent, Project, Task, PolicyLogEntry, DrainReportEntry } from '../../domain/models.ts';
+import type {
+    HiredAgent, Project, Task, PolicyLogEntry, DrainReportEntry, ChannelMessage
+} from '../../domain/models.ts';
 import type { StorageDatabase, Statement } from './database.ts';
 import {
     hireToRow, hireFromRow, projectToRow, projectFromRow, taskToRow, taskFromRow,
-    policyLogToRow, policyLogFromRow, drainReportToRow, drainReportFromRow, type Row
+    policyLogToRow, policyLogFromRow, drainReportToRow, drainReportFromRow,
+    channelMessageToRow, channelMessageFromRow, type Row
 } from './mapping.ts';
 
 /** A page of a growing table. Both are required: there is no read-everything. */
@@ -191,6 +194,43 @@ export class DrainReportRepository {
     }
 }
 
+/**
+ * The channel timeline. Append and paginated read only, by design.
+ *
+ * Messages and events share one stream, ordered by time, with `id` as a stable
+ * tiebreak so a page is deterministic when two rows share a timestamp. It grows
+ * without a ceiling, so the read is paginated and there is no read-everything
+ * method. There is no update or delete method, and none that would work:
+ * migration 0002's triggers raise on UPDATE and DELETE, so the database refuses
+ * them even by raw statement.
+ */
+export class ChannelRepository {
+    readonly #append: Statement;
+    readonly #page: Statement;
+    readonly #pageByProject: Statement;
+
+    constructor(db: StorageDatabase) {
+        this.#append = db.prepare(
+            'INSERT INTO channel_messages (id, project_id, sender_id, kind, body, ref_kind, ref_value, at) ' +
+            'VALUES (@id, @project_id, @sender_id, @kind, @body, @ref_kind, @ref_value, @at)');
+        this.#page = db.prepare('SELECT * FROM channel_messages ORDER BY at, id LIMIT ? OFFSET ?');
+        this.#pageByProject = db.prepare(
+            'SELECT * FROM channel_messages WHERE project_id = ? ORDER BY at, id LIMIT ? OFFSET ?');
+    }
+
+    append(message: ChannelMessage): void { this.#append.run(channelMessageToRow(message)); }
+
+    /** A page of the whole timeline, messages and events interleaved by time. */
+    page(page: Page): ChannelMessage[] {
+        return rowsOf(this.#page, page.limit, page.offset).map(channelMessageFromRow);
+    }
+
+    /** A page of one project's timeline. */
+    pageByProject(projectId: string, page: Page): ChannelMessage[] {
+        return rowsOf(this.#pageByProject, projectId, page.limit, page.offset).map(channelMessageFromRow);
+    }
+}
+
 /** Every repository, built once over one open database. */
 export interface Repositories {
     readonly hires: HireRepository;
@@ -198,6 +238,7 @@ export interface Repositories {
     readonly tasks: TaskRepository;
     readonly policyLog: PolicyLogRepository;
     readonly drainReports: DrainReportRepository;
+    readonly channel: ChannelRepository;
 }
 
 export function createRepositories(db: StorageDatabase): Repositories {
@@ -206,6 +247,7 @@ export function createRepositories(db: StorageDatabase): Repositories {
         projects: new ProjectRepository(db),
         tasks: new TaskRepository(db),
         policyLog: new PolicyLogRepository(db),
-        drainReports: new DrainReportRepository(db)
+        drainReports: new DrainReportRepository(db),
+        channel: new ChannelRepository(db)
     };
 }

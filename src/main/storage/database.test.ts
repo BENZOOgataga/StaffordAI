@@ -42,9 +42,9 @@ test('WAL is active after open, confirmed rather than assumed', () => {
     });
 });
 
-test('migration 0001 runs and brings the database to version 1 with every table', () => {
+test('the migrations run and bring the database to the current version with every table', () => {
     withDb(({ db, migration }) => {
-        assert.deepEqual(migration, { from: 0, to: 1, applied: [1] });
+        assert.deepEqual(migration, { from: 0, to: 2, applied: [1, 2] });
         const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[])
             .map((r) => r.name);
         for (const t of ['channel_messages', 'drain_report', 'hires', 'policy_log', 'projects', 'tasks']) {
@@ -59,7 +59,7 @@ test('opening an already-migrated database applies nothing', () => {
         const first = openDatabase({ appDataDir });
         first.db.close();
         const second = openDatabase({ appDataDir });
-        assert.deepEqual(second.migration, { from: 1, to: 1, applied: [] });
+        assert.deepEqual(second.migration, { from: 2, to: 2, applied: [] });
         second.db.close();
     } finally {
         rmSync(appDataDir, { recursive: true, force: true });
@@ -84,7 +84,7 @@ test('policy_log is append-only: update and delete both raise', () => {
 });
 
 test('channel_messages is append-only: update and delete both raise', () => {
-    assertAppendOnly('channel_messages', "INSERT INTO channel_messages (id, project_id, sender_id, body, at) VALUES ('m','p','s','hi','t')");
+    assertAppendOnly('channel_messages', "INSERT INTO channel_messages (id, project_id, sender_id, kind, body, at) VALUES ('m','p','s','message','hi','t')");
 });
 
 test('drain_report is append-only: update and delete both raise', () => {

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDatabase } from './database.ts';
 import { createRepositories, type Repositories } from './repository.ts';
-import type { HiredAgent, Project, ProjectPolicy, Task, PolicyLogEntry } from '../../domain/models.ts';
+import type { HiredAgent, Project, ProjectPolicy, Task, PolicyLogEntry, ChannelMessage } from '../../domain/models.ts';
 
 function withRepos(fn: (repos: Repositories, raw: { exec(sql: string): unknown }) => void): void {
     const appDataDir = mkdtempSync(path.join(tmpdir(), 'stafford-repo-'));
@@ -126,5 +126,48 @@ test('the policy log refuses update and delete at the database even by raw state
         repos.policyLog.append({ at: 't', actor: 'Benzoo', projectId: 'p', before: {}, after: {} });
         assert.throws(() => raw.exec("UPDATE policy_log SET actor='someone'"), /append-only/);
         assert.throws(() => raw.exec('DELETE FROM policy_log'), /append-only/);
+    });
+});
+
+function channelMessage(id: string, at: string, over: Partial<ChannelMessage> = {}): ChannelMessage {
+    return { id, projectId: 'p1', senderId: 'Benzoo', kind: 'message', body: 'hi', reference: null, at, ...over };
+}
+
+test('the channel appends and reads a page of messages and events interleaved in time order', () => {
+    withRepos((repos) => {
+        // Inserted out of order; the read returns them by time.
+        repos.channel.append(channelMessage('c', '2026-08-13T00:00:02Z', { body: 'later' }));
+        repos.channel.append(channelMessage('a', '2026-08-13T00:00:00Z', { kind: 'event', body: 'waiting_for_you' }));
+        repos.channel.append(channelMessage('b', '2026-08-13T00:00:01Z', { reference: { kind: 'commit', value: 'abc123' } }));
+
+        const page = repos.channel.page({ limit: 10, offset: 0 });
+        assert.deepEqual(page.map((m) => m.id), ['a', 'b', 'c'], 'ordered by time, messages and events interleaved');
+        assert.equal(page[0]?.kind, 'event');
+        assert.deepEqual(page[1]?.reference, { kind: 'commit', value: 'abc123' });
+    });
+});
+
+test('the channel read is paginated: limit and offset, and there is no read-everything method', () => {
+    withRepos((repos) => {
+        repos.channel.append(channelMessage('a', '2026-08-13T00:00:00Z'));
+        repos.channel.append(channelMessage('b', '2026-08-13T00:00:01Z'));
+        repos.channel.append(channelMessage('c', '2026-08-13T00:00:02Z'));
+
+        assert.deepEqual(repos.channel.page({ limit: 2, offset: 0 }).map((m) => m.id), ['a', 'b']);
+        assert.deepEqual(repos.channel.page({ limit: 2, offset: 2 }).map((m) => m.id), ['c']);
+
+        const channel = repos.channel as unknown as Record<string, unknown>;
+        assert.equal(typeof channel['all'], 'undefined', 'no read-everything on an unbounded timeline');
+    });
+});
+
+test('the channel offers no update or delete, and a raw one raises at the trigger', () => {
+    withRepos((repos, raw) => {
+        repos.channel.append(channelMessage('a', '2026-08-13T00:00:00Z'));
+        const channel = repos.channel as unknown as Record<string, unknown>;
+        assert.equal(typeof channel['update'], 'undefined');
+        assert.equal(typeof channel['delete'], 'undefined');
+        assert.throws(() => raw.exec("UPDATE channel_messages SET body='changed'"), /append-only/);
+        assert.throws(() => raw.exec('DELETE FROM channel_messages'), /append-only/);
     });
 });
