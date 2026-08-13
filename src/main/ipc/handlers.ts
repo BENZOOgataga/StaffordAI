@@ -18,7 +18,7 @@ import {
 } from '../../shared/ipc.ts';
 import {
     isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite,
-    isChannelPage, isChannelSince
+    isChannelPage, isChannelSince, isChannelReply
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 import { OutputCoalescer } from './output-coalescer.ts';
@@ -62,6 +62,13 @@ export interface HandlerDeps {
     readonly channelPage: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     /** Rows newer than a cursor, for the tail append. */
     readonly channelSince: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
+    /**
+     * An inline reply to a colleague. Records it in the timeline as a message from
+     * the person, then delivers it to that hire's session through the lifecycle,
+     * which spawns, resumes, or writes to a live one. The text is already sanitised
+     * by the handler.
+     */
+    readonly channelReply: (hireId: string, text: string) => Promise<void>;
 }
 
 /**
@@ -135,6 +142,14 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'channel:since': (payload: unknown): ChannelPageReply => {
             if (!isChannelSince(payload)) throw new Error('channel:since requires {after,limit}');
             return { rows: deps.channelSince(payload.after, payload.limit) };
+        },
+
+        // An inline reply to a colleague. Sanitised here, at the trust boundary,
+        // exactly as session:write, then routed by hire id through the lifecycle,
+        // the one write path, so no second session logic is introduced.
+        'channel:reply': (payload: unknown): Promise<void> => {
+            if (!isChannelReply(payload)) throw new Error('channel:reply requires {hireId,text}');
+            return deps.channelReply(payload.hireId, sanitiseMessage(payload.text));
         },
 
         // A typed message. Scoped to the open card: the renderer names the hire, and

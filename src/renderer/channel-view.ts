@@ -9,9 +9,19 @@
  * here, which is the i18n seam piece 1 set up.
  */
 
-import type { ChannelMessageRow, ChannelCursor } from '../shared/ipc.ts';
+import { CHANNEL_SELF_SENDER, type ChannelMessageRow, type ChannelCursor } from '../shared/ipc.ts';
 
 export type Lang = 'en' | 'fr';
+
+/**
+ * The hire a row is about, so a reply targets the right colleague, or null when the
+ * row is the person's own message. A message from a hire is from that hire; an
+ * event is about that hire; both resolve to the sender id, which is the hire id. A
+ * message from the person resolves to nothing, since you do not reply to yourself.
+ */
+export function resolveReplyTarget(row: { senderId: string }): string | null {
+    return row.senderId === CHANNEL_SELF_SENDER ? null : row.senderId;
+}
 
 /**
  * The loaded window of the timeline, ascending by time. It appends the tail and

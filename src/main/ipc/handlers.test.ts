@@ -24,6 +24,7 @@ interface SessionOverrides {
     submitMessage?: (hireId: string, text: string) => Promise<void>;
     channelPage?: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     channelSince?: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
+    channelReply?: (hireId: string, text: string) => Promise<void>;
 }
 
 function deps(
@@ -44,7 +45,8 @@ function deps(
         hasSession: over.hasSession ?? (() => false),
         submitMessage: over.submitMessage ?? (() => Promise.resolve()),
         channelPage: over.channelPage ?? (() => []),
-        channelSince: over.channelSince ?? (() => [])
+        channelSince: over.channelSince ?? (() => []),
+        channelReply: over.channelReply ?? (() => Promise.resolve())
     };
 }
 
@@ -239,6 +241,25 @@ test('channel:since returns rows newer than the cursor', () => {
     }));
     const reply = handlers['channel:since']({ after: { at: 't', id: 'b' }, limit: 50 }) as ChannelPageReply;
     assert.deepEqual(reply.rows.map((r) => r.id), ['c']);
+});
+
+test('channel:reply sanitises the message and routes it by hire id through the one write path', async () => {
+    const replied: Array<{ hireId: string; text: string }> = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        channelReply: (hireId, text) => { replied.push({ hireId, text }); return Promise.resolve(); }
+    }));
+
+    const ctrlC = String.fromCharCode(0x03);
+    await handlers['channel:reply']({ hireId: 'h1', text: 'ship it' + ctrlC + ' now' });
+    assert.deepEqual(replied, [{ hireId: 'h1', text: 'ship it now' }],
+        'sanitised, and routed by hire id, the same as the detail write');
+});
+
+test('channel:reply refuses arguments that fail the guard', () => {
+    const handlers = buildHandlers(deps());
+    assert.throws(() => handlers['channel:reply']({ hireId: 'h1' }), /requires/);
+    assert.throws(() => handlers['channel:reply']({ text: 'hi' }), /requires/);
+    assert.throws(() => handlers['channel:reply']({ hireId: 'h1', text: 'x'.repeat(64 * 1024 + 1) }), /requires/);
 });
 
 test('channel:page and channel:since refuse arguments that fail the guard', () => {

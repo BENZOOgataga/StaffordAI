@@ -37,6 +37,7 @@ import { recordTransition } from './channel/channel-events.ts';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { RosterSnapshot } from '../shared/ipc.ts';
+import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 import type { PtyLike } from './agents/pty-session.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -432,7 +433,23 @@ app.whenReady().then(async () => {
         channelPage: (before, limit) => (repositories
             ? (before ? repositories.channel.before(before, limit) : repositories.channel.newest(limit))
             : []),
-        channelSince: (after, limit) => (repositories ? repositories.channel.after(after, limit) : [])
+        channelSince: (after, limit) => (repositories ? repositories.channel.after(after, limit) : []),
+        // A reply records a message from the person in the timeline, then delivers
+        // it to the colleague through the lifecycle, the same submitMessage path a
+        // first message and the 3b input use. No second session path: the lifecycle
+        // spawns, resumes, or writes to a live session, and a fresh start after a
+        // dead session surfaces the existing context-lost note.
+        channelReply: async (hireId, text) => {
+            if (repositories) {
+                const hire = repositories.hires.get(hireId);
+                repositories.channel.append({
+                    id: randomUUID(), projectId: hire?.activeProjectId ?? '', senderId: CHANNEL_SELF_SENDER,
+                    kind: 'message', body: text, reference: null, at: new Date().toISOString()
+                });
+                notifyChannelChanged();
+            }
+            await (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve());
+        }
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +

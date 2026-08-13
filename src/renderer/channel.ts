@@ -10,14 +10,14 @@
  * is the i18n seam. No reply box; that is piece 3.
  */
 
-import { eventLabel, referenceLabel, channelRowClass, Timeline, type Lang } from './channel-view.ts';
-import type { ChannelMessageRow } from '../shared/ipc.ts';
+import {
+    eventLabel, referenceLabel, channelRowClass, resolveReplyTarget, Timeline, type Lang
+} from './channel-view.ts';
+import { CHANNEL_SELF_SENDER, type ChannelMessageRow } from '../shared/ipc.ts';
 
 const timelineEl = document.getElementById('timeline') as HTMLElement;
 
 const PAGE = 50;
-/** The sender id the person's own messages carry. Piece 3 authors these. */
-const BENZOO = 'benzoo';
 
 const timeline = new Timeline();
 const names = new Map<string, string>();
@@ -28,7 +28,46 @@ let loadingOlder = false;
 const lang: Lang = typeof navigator !== 'undefined' && navigator.language.startsWith('fr') ? 'fr' : 'en';
 
 function nameFor(senderId: string): string {
-    return names.get(senderId) ?? (senderId === BENZOO ? 'You' : senderId);
+    return names.get(senderId) ?? (senderId === CHANNEL_SELF_SENDER ? 'You' : senderId);
+}
+
+/**
+ * The inline reply on a colleague row: a quiet control that reveals a one-line
+ * input. Enter sends to the colleague the row is about, Shift-Enter adds a line,
+ * consistent with the detail view. The reply lands in the timeline as a message
+ * from You through the tail append, so nothing is re-fetched.
+ */
+function replyAffordance(hireId: string): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'row-reply';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'row-reply-toggle';
+    toggle.textContent = 'Reply';
+
+    const input = document.createElement('textarea');
+    input.className = 'row-reply-input';
+    input.rows = 1;
+    input.hidden = true;
+    input.placeholder = 'Reply to ' + nameFor(hireId) + '. Enter sends, Shift-Enter adds a line.';
+
+    toggle.addEventListener('click', () => {
+        input.hidden = !input.hidden;
+        if (!input.hidden) input.focus();
+    });
+    input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' || event.shiftKey) return;
+        event.preventDefault();
+        const text = input.value;
+        if (text.trim().length === 0) return;
+        input.value = '';
+        input.hidden = true;
+        void window.stafford.channel.reply(hireId, text);
+    });
+
+    wrap.append(toggle, input);
+    return wrap;
 }
 
 function rowElement(row: ChannelMessageRow): HTMLElement {
@@ -58,6 +97,11 @@ function rowElement(row: ChannelMessageRow): HTMLElement {
         chip.textContent = ref;
         el.appendChild(chip);
     }
+
+    // A reply goes to the colleague the row is about. The person's own messages are
+    // not reply targets.
+    const target = resolveReplyTarget(row);
+    if (target) el.appendChild(replyAffordance(target));
     return el;
 }
 
