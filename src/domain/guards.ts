@@ -13,7 +13,8 @@
 
 import type {
     ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite,
-    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply
+    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply,
+    ProjectCreate, HireCreate
 } from '../shared/ipc.ts';
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -67,6 +68,29 @@ export function isChannelSince(value: unknown): value is ChannelSinceRequest {
 export function isChannelReply(value: unknown): value is ChannelReply {
     if (!isObject(value)) return false;
     return isHireId(value.hireId) && typeof value.text === 'string' && value.text.length <= 64 * 1024;
+}
+
+/**
+ * Creating a project: a bounded name and a bounded, non-empty list of bounded repo
+ * paths. The path is validated as a real directory in the create logic, not here;
+ * this only refuses a malformed shape or an unbounded string a renderer hands over.
+ */
+export function isProjectCreate(value: unknown): value is ProjectCreate {
+    if (!isObject(value)) return false;
+    if (!isBoundedString(value.name, 256)) return false;
+    if (!Array.isArray(value.repoPaths) || value.repoPaths.length === 0 || value.repoPaths.length > 64) {
+        return false;
+    }
+    return value.repoPaths.every((path) => isBoundedString(path, 4096));
+}
+
+/** Creating a hire: bounded name, type, title, and an owning project id. */
+export function isHireCreate(value: unknown): value is HireCreate {
+    if (!isObject(value)) return false;
+    return isBoundedString(value.name, 256)
+        && isBoundedString(value.type, 256)
+        && isBoundedString(value.title, 256)
+        && isBoundedString(value.projectId, 256);
 }
 
 /** A terminal size the proof window may ask for, bounded so a renderer cannot ask for nonsense. */

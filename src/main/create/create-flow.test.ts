@@ -1,0 +1,150 @@
+/**
+ * The create flow closes the /x failure. A project is created only against a real
+ * directory, and a hire created into it binds so its cold-spawn cwd resolves to
+ * that real directory rather than the bogus path the smoke fixture had. The bad
+ * path is refused at create time with no row written.
+ *
+ * The directory check runs against a real temp dir the test makes, so the
+ * load-bearing validation is exercised for real, not stubbed away.
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createProject, createHire, defaultPolicy, type CreateDeps } from './create-flow.ts';
+import type { Project, HiredAgent } from '../../domain/models.ts';
+
+function harness() {
+    const projects = new Map<string, Project>();
+    const hires: HiredAgent[] = [];
+    let n = 0;
+    const deps: CreateDeps = {
+        // The real filesystem check, so the directory validation is genuine.
+        dirExists: (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
+        insertProject: (project) => { projects.set(project.id, project); },
+        getProject: (id) => projects.get(id) ?? null,
+        insertHire: (hire) => { hires.push(hire); },
+        uuid: () => 'id-' + (++n),
+        now: () => '2026-08-13T00:00:00.000Z',
+        ownerId: 'owner',
+        labelFor: (p) => path.basename(p) || p
+    };
+    return { deps, projects, hires };
+}
+
+/**
+ * resolveTarget as index.ts builds it: a hire's active project's first repo path
+ * is the cold-spawn cwd. Reproduced here so the test proves the created hire
+ * resolves to a real cwd, which is the thing that was broken.
+ */
+function resolveCwd(projects: Map<string, Project>, hire: HiredAgent): string | null {
+    if (!hire.activeProjectId) return null;
+    const project = projects.get(hire.activeProjectId);
+    return project?.repos[0]?.path ?? null;
+}
+
+test('a hire created into a project at a real path resolves its cold-spawn cwd to that real path', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-create-'));
+    try {
+        const { deps, projects, hires } = harness();
+        const project = createProject(deps, { name: 'Stafford', repoPaths: [dir] });
+        const hire = createHire(deps, {
+            name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: project.id
+        });
+
+        const stored = hires.find((h) => h.id === hire.id);
+        assert.ok(stored, 'the hire was written');
+        assert.equal(stored?.activeProjectId, project.id, 'the hire is bound to the project');
+        const cwd = resolveCwd(projects, stored!);
+        assert.equal(cwd, dir, 'the cold-spawn cwd resolves to the real directory, not /x and not undefined');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('project:create with a nonexistent path is rejected and no project row is written', () => {
+    const { deps, projects } = harness();
+    const bogus = path.join(os.tmpdir(), 'stafford-does-not-exist-' + Math.floor(1)) + '-x';
+    assert.throws(
+        () => createProject(deps, { name: 'Stafford', repoPaths: [bogus] }),
+        /not an existing directory/
+    );
+    assert.equal(projects.size, 0, 'nothing was written for a bad path');
+});
+
+test('project:create with a path that is a file, not a directory, is rejected', () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-file-')), 'a.txt');
+    fs.writeFileSync(file, 'x');
+    try {
+        const { deps, projects } = harness();
+        assert.throws(() => createProject(deps, { name: 'p', repoPaths: [file] }), /not an existing directory/);
+        assert.equal(projects.size, 0);
+    } finally {
+        fs.rmSync(path.dirname(file), { recursive: true, force: true });
+    }
+});
+
+test('project:create with an empty name or no repo path is rejected, no row written', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-create-'));
+    try {
+        const { deps, projects } = harness();
+        assert.throws(() => createProject(deps, { name: '   ', repoPaths: [dir] }), /needs a name/);
+        assert.throws(() => createProject(deps, { name: 'p', repoPaths: [] }), /at least one repo path/);
+        assert.equal(projects.size, 0);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a created project carries a fresh id, the conservative default policy, and no sandbox field', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-create-'));
+    try {
+        const { deps, projects } = harness();
+        const view = createProject(deps, { name: 'Stafford', repoPaths: [dir] });
+        assert.equal(view.id.startsWith('smoke-'), false, 'no smoke- prefix');
+        const stored = projects.get(view.id);
+        assert.deepEqual(stored?.policy, defaultPolicy(), 'the conservative default policy');
+        assert.equal('sandbox' in (stored?.policy ?? {}), false, 'no sandbox field was added');
+        assert.equal(stored?.policy.push, 'none');
+        assert.equal(stored?.policy.maxConcurrentAgents, 1);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('hire:create into a nonexistent project, or with an unknown type, is rejected with no row written', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-create-'));
+    try {
+        const { deps, hires } = harness();
+        const project = createProject(deps, { name: 'Stafford', repoPaths: [dir] });
+        assert.throws(
+            () => createHire(deps, { name: 'X', type: 'lead-developer', title: 'Lead developer', projectId: 'nope' }),
+            /no such project/
+        );
+        assert.throws(
+            () => createHire(deps, { name: 'X', type: 'not-a-role', title: 'X', projectId: project.id }),
+            /unknown definition type/
+        );
+        assert.equal(hires.length, 0, 'no hire was written for a bad input');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a created hire takes the definition seniority and starts idle with no session', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-create-'));
+    try {
+        const { deps, hires } = harness();
+        const project = createProject(deps, { name: 'Stafford', repoPaths: [dir] });
+        createHire(deps, { name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: project.id });
+        const stored = hires[0];
+        assert.equal(stored?.seniority, 1, 'seniority comes from the definition, not the renderer');
+        assert.equal(stored?.state, 'idle', 'a fresh hire is idle');
+        assert.deepEqual(stored?.sessions, {}, 'no session yet');
+        assert.equal(stored?.id.startsWith('smoke-'), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

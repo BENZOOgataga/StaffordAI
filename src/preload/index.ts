@@ -14,7 +14,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import {
     isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel,
     type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened,
-    type ChannelCursor, type ChannelPageReply
+    type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -44,9 +44,19 @@ function on(channel: EventChannel, listener: (payload: unknown) => void): () => 
 const api = Object.freeze({
     health: (): Promise<HealthReport> => invoke('health') as Promise<HealthReport>,
 
-    // Read-only. Ids and names only; no path crosses the bridge.
+    // Projects. list is read-only; create validates the repo path is a real
+    // directory in main and returns an id and name, never a path back.
     projects: Object.freeze({
-        list: (): Promise<ProjectsList> => invoke('projects:list') as Promise<ProjectsList>
+        list: (): Promise<ProjectsList> => invoke('projects:list') as Promise<ProjectsList>,
+        create: (name: string, repoPaths: readonly string[]): Promise<ProjectCreated> =>
+            invoke('project:create', { name, repoPaths }) as Promise<ProjectCreated>
+    }),
+
+    // Hiring a colleague into a project. Returns the created hire's id and safe
+    // fields; the hire binds to the project so its cold-spawn cwd resolves.
+    hire: Object.freeze({
+        create: (name: string, type: string, title: string, projectId: string): Promise<HireCreated> =>
+            invoke('hire:create', { name, type, title, projectId }) as Promise<HireCreated>
     }),
 
     // The roster. Read-only cards, and a change signal the renderer answers by

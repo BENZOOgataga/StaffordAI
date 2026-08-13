@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { buildHandlers } from './handlers.ts';
 import {
     INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened,
-    type ChannelCursor, type ChannelMessageRow, type ChannelPageReply
+    type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
+    type ProjectCreated, type HireCreated
 } from '../../shared/ipc.ts';
 import type { ProofPty } from './proof-pty.ts';
 
@@ -25,6 +26,8 @@ interface SessionOverrides {
     channelPage?: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     channelSince?: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
     channelReply?: (hireId: string, text: string) => Promise<void>;
+    createProject?: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
+    createHire?: (payload: { name: string; type: string; title: string; projectId: string }) => HireCreated;
 }
 
 function deps(
@@ -39,6 +42,10 @@ function deps(
         proof,
         sender: (over.sender ?? (() => null)) as unknown as HandlerDepsSender,
         listProjects: () => projects,
+        createProject: over.createProject
+            ?? ((payload) => ({ id: 'proj-new', name: payload.name })),
+        createHire: over.createHire
+            ?? ((payload) => ({ id: 'hire-new', name: payload.name, title: payload.title, projectId: payload.projectId })),
         rosterSnapshot: () => roster,
         subscribeSession: over.subscribeSession ?? (() => () => {}),
         resizeSession: over.resizeSession ?? (() => {}),
@@ -74,6 +81,47 @@ test('projects:list returns the summaries and takes no payload', () => {
     const handlers = buildHandlers(deps(fakeProof(), rows));
     const result = handlers['projects:list'](undefined) as ProjectsList;
     assert.deepEqual(result, rows);
+});
+
+test('project:create is guarded and routes a valid payload to createProject', () => {
+    let seen: { name: string; repoPaths: readonly string[] } | null = null;
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        createProject: (payload) => { seen = payload; return { id: 'p9', name: payload.name }; }
+    }));
+    const result = handlers['project:create']({ name: 'Stafford', repoPaths: ['C:/repo'] }) as ProjectCreated;
+    assert.deepEqual(result, { id: 'p9', name: 'Stafford' });
+    assert.deepEqual(seen, { name: 'Stafford', repoPaths: ['C:/repo'] });
+});
+
+test('project:create refuses a malformed payload before reaching createProject', () => {
+    let called = false;
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        createProject: () => { called = true; return { id: 'x', name: 'x' }; }
+    }));
+    assert.throws(() => handlers['project:create']({ name: '', repoPaths: [] }), /project:create requires/);
+    assert.throws(() => handlers['project:create']({ name: 'ok' }), /project:create requires/);
+    assert.equal(called, false, 'a malformed payload never reaches the create logic');
+});
+
+test('hire:create is guarded and routes a valid payload to createHire', () => {
+    let seen: unknown = null;
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        createHire: (payload) => { seen = payload; return { id: 'h9', name: payload.name, title: payload.title, projectId: payload.projectId }; }
+    }));
+    const result = handlers['hire:create'](
+        { name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: 'p1' }
+    ) as HireCreated;
+    assert.deepEqual(result, { id: 'h9', name: 'Marion', title: 'Lead developer', projectId: 'p1' });
+    assert.deepEqual(seen, { name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: 'p1' });
+});
+
+test('hire:create refuses a malformed payload before reaching createHire', () => {
+    let called = false;
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        createHire: () => { called = true; return { id: 'x', name: 'x', title: 'x', projectId: 'x' }; }
+    }));
+    assert.throws(() => handlers['hire:create']({ name: 'Marion', type: 'lead-developer' }), /hire:create requires/);
+    assert.equal(called, false, 'a malformed payload never reaches the create logic');
 });
 
 test('roster:snapshot returns the cards and takes no payload', () => {
