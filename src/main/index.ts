@@ -25,6 +25,7 @@ import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
 import { ProofPty } from './ipc/proof-pty.ts';
 import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database.ts';
+import { resolveStoreBase } from './storage/store-location.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent } from './agents/drain.ts';
@@ -73,10 +74,16 @@ let lifecycle: SessionLifecycle | null = null;
  * segment (the runtime APP_ID, human-readable, deliberately not the reverse-DNS
  * packaging appId). The result is `<app data>/Stafford/stafford.db`, one Stafford
  * rather than two.
+ *
+ * Under STAFFORD_SMOKE=1 the base is a throwaway temp directory instead, so the
+ * smoke seed never writes into the real store. See store-location.ts.
  */
 function openStore(): boolean {
     try {
-        const base = path.dirname(currentPlatform().appDataDir(os.homedir(), DATA_DIR_NAME));
+        const realBase = path.dirname(currentPlatform().appDataDir(os.homedir(), DATA_DIR_NAME));
+        // A smoke run opens a throwaway store instead of the real one, so its seed
+        // never lands in user data. A normal launch is unchanged.
+        const base = resolveStoreBase({ smoke: SMOKE, realBase });
         store = openDatabase({ appDataDir: base });
         repositories = createRepositories(store.db);
         smoke('db open ' + store.path + ', migration ' + JSON.stringify(store.migration));
