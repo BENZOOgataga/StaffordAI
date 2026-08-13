@@ -16,6 +16,11 @@ import { RosterAlerts } from './roster-alerts.ts';
 import { cardClassName, stateLabel } from './roster-view.ts';
 import { openDetail } from './detail.ts';
 import { activateChannel, deactivateChannel } from './channel.ts';
+import { initCreateForms, openProjectForm, openHireForm } from './create-forms.ts';
+import { formCopy, type Lang } from './create-forms-view.ts';
+
+const lang: Lang = typeof navigator !== 'undefined' && navigator.language.startsWith('fr') ? 'fr' : 'en';
+const copy = formCopy(lang);
 
 declare global {
     interface Window {
@@ -109,12 +114,20 @@ function render(): void {
     roster.replaceChildren();
 
     if (latest.length === 0) {
+        // The first screen a new user sees. Calm, one clear next step: add a
+        // project. A hire needs a project to belong to, so that is the first action.
         const empty = document.createElement('div');
         empty.className = 'empty';
         const lead = document.createElement('strong');
-        lead.textContent = 'No colleagues yet';
-        const rest = document.createTextNode('Hire your first colleague to see them here.');
-        empty.append(lead, rest);
+        lead.textContent = copy.emptyLead;
+        const body = document.createElement('p');
+        body.textContent = copy.emptyBody;
+        const action = document.createElement('button');
+        action.className = 'btn btn-primary';
+        action.type = 'button';
+        action.textContent = copy.addProject;
+        action.addEventListener('click', () => openProjectForm());
+        empty.append(lead, body, action);
         roster.appendChild(empty);
         waitingCount.textContent = '';
         waitingCount.classList.remove('active');
@@ -211,6 +224,15 @@ function main(): void {
     for (const item of document.querySelectorAll('.rail-item')) {
         item.addEventListener('click', () => showView(item.getAttribute('data-view') ?? 'roster'));
     }
+
+    // The create forms. Creating a hire or a project does not emit a state
+    // transition, so the roster is refreshed directly on a successful create
+    // rather than waiting for a roster:changed that will not come.
+    initCreateForms({ onCreated: () => { void refresh(); } });
+    (document.getElementById('add-project-header') as HTMLButtonElement)
+        .addEventListener('click', () => openProjectForm());
+    (document.getElementById('hire-header') as HTMLButtonElement)
+        .addEventListener('click', () => { void openHireForm(); });
 
     void refresh();
 }
