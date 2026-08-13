@@ -410,7 +410,8 @@ app.whenReady().then(async () => {
         // No lifecycle (no Claude located) means no session to stream or resize.
         subscribeSession: (hireId, listener) => (lifecycle ? lifecycle.subscribe(hireId, listener) : () => {}),
         resizeSession: (hireId, cols, rows) => { lifecycle?.resize(hireId, cols, rows); },
-        hasSession: (hireId) => (lifecycle ? lifecycle.has(hireId) : false)
+        hasSession: (hireId) => (lifecycle ? lifecycle.has(hireId) : false),
+        submitMessage: (hireId, text) => (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve())
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +

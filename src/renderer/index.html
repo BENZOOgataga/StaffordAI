@@ -273,8 +273,26 @@
     flex: 0 0 clamp(220px, 28%, 360px);
     border-left: 1px solid var(--line);
     padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
-  .side-note { color: var(--muted); font-size: 0.9rem; }
+  .reply-label { color: var(--muted); font-size: 0.85rem; }
+  .reply {
+    width: 100%;
+    min-height: 96px;
+    resize: vertical;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font: inherit;
+    line-height: 1.5;
+  }
+  .reply:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+  .reply::placeholder { color: var(--muted); }
+  .reply-hint { color: var(--muted); font-size: 0.8rem; margin: 0; }
 
   .empty {
     grid-column: 1 / -1;
@@ -310,7 +328,10 @@
   <div class="detail-body">
     <div id="term" class="term"></div>
     <div class="detail-side">
-      <p class="side-note">A box to reply is coming next.</p>
+      <label class="reply-label" for="reply">Your message</label>
+      <textarea id="reply" class="reply" rows="4"
+        placeholder="Type a message. Enter sends, Shift-Enter adds a line."></textarea>
+      <p class="reply-hint">Enter sends. Shift-Enter adds a line.</p>
     </div>
   </div>
 </section>

@@ -64,6 +64,8 @@ const api = Object.freeze({
         close: (): Promise<void> => invoke('session:close') as Promise<void>,
         resize: (hireId: string, cols: number, rows: number): Promise<void> =>
             invoke('session:resize', { hireId, cols, rows }) as Promise<void>,
+        write: (hireId: string, text: string): Promise<void> =>
+            invoke('session:write', { hireId, text }) as Promise<void>,
         onData: (listener: (data: string) => void): (() => void) =>
             on('session:data', (payload) => listener(String(payload)))
     }),

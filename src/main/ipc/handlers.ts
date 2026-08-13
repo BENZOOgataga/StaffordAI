@@ -16,7 +16,10 @@ import {
     INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot,
     type SessionOpened
 } from '../../shared/ipc.ts';
-import { isProofSpawn, isProofWrite, isSessionOpen, isSessionResize } from '../../domain/guards.ts';
+import {
+    isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite
+} from '../../domain/guards.ts';
+import { sanitiseMessage } from '../../domain/message-input.ts';
 import { OutputCoalescer } from './output-coalescer.ts';
 import type { ProofPty } from './proof-pty.ts';
 
@@ -49,6 +52,11 @@ export interface HandlerDeps {
     readonly resizeSession: (hireId: string, cols: number, rows: number) => void;
     /** Whether a live session is up for a hire, so the renderer knows to expect output. */
     readonly hasSession: (hireId: string) => boolean;
+    /**
+     * Submits a sanitised message to a hire's session, spawning or resuming if
+     * none is up. The handler sanitises and scopes; this delivers it.
+     */
+    readonly submitMessage: (hireId: string, text: string) => Promise<void>;
 }
 
 /**
@@ -108,6 +116,19 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'session:resize': (payload: unknown): void => {
             if (!isSessionResize(payload)) throw new Error('session:resize requires {hireId,cols,rows}');
             deps.resizeSession(payload.hireId, payload.cols, payload.rows);
+        },
+
+        // A typed message. Scoped to the open card: the renderer names the hire, and
+        // main only writes to the session whose card is currently open, so a stale
+        // write from a card no longer open cannot land on the previous session and
+        // the renderer cannot reach a process it does not have open. The text is
+        // sanitised here, at the trust boundary, before it reaches stdin.
+        'session:write': (payload: unknown): Promise<void> => {
+            if (!isSessionWrite(payload)) throw new Error('session:write requires {hireId,text}');
+            if (!open || open.hireId !== payload.hireId) {
+                throw new Error('session:write refused: that session is not the open card');
+            }
+            return deps.submitMessage(open.hireId, sanitiseMessage(payload.text));
         },
 
         'proof:spawn': (payload: unknown): { ok: boolean } => {
