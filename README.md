@@ -44,8 +44,33 @@ There is no code signing yet, so the binaries are unsigned. macOS Gatekeeper and
 warn you the first time you open the app, and you approve it once. This is expected for an unsigned build, not
 a sign anything is wrong.
 
-The signed installers and the exact per-platform steps land with the first tagged release. Until then, build
-from source (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+Download the zip for your platform from the [latest release](https://github.com/BENZOOgataga/StaffordAI/releases/latest),
+unzip it, and follow the steps below. There is no installer; you run the app from the unzipped folder.
+
+### Windows
+
+1. Unzip `Stafford-0.1.0-win-x64.zip`. You get a `Stafford-0.1.0-win-x64` folder.
+2. Open the folder and run `Stafford.exe`.
+3. Windows SmartScreen will stop it with "Windows protected your PC" and say it prevented an unrecognized app
+   from starting, because the app is unsigned.
+4. Click **More info**, then **Run anyway**.
+5. Stafford starts in the tray. It runs from the tray with no window until you open it.
+
+You approve it once. Windows remembers the choice for that copy.
+
+### macOS
+
+1. Unzip `Stafford-0.1.0-darwin-arm64.zip` and move `Stafford.app` to Applications.
+2. Open it. Because the app is unsigned and not notarized, macOS Gatekeeper blocks the first launch and says it
+   cannot verify the developer.
+3. On recent macOS, open **System Settings > Privacy & Security**, scroll to the message about Stafford being
+   blocked, and click **Open Anyway**, then confirm. On older macOS, right-click the app, choose **Open**, and
+   confirm **Open** in the dialog.
+4. Stafford starts in the menu bar.
+
+You approve it once per copy.
+
+If you would rather build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
