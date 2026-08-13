@@ -26,6 +26,7 @@ import { registerHandlers } from './ipc/handlers.ts';
 import { ProofPty } from './ipc/proof-pty.ts';
 import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
+import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent } from './agents/drain.ts';
@@ -97,6 +98,33 @@ function openStore(): boolean {
         app.quit();
         return false;
     }
+}
+
+/** True iff the path is an existing directory. The create flow's load-bearing check. */
+function dirExists(p: string): boolean {
+    try {
+        return fs.statSync(p).isDirectory();
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The create flow's dependencies over the real store and filesystem. The
+ * validation and the shapes live in create-flow.ts; this binds them to the real
+ * repository inserts, the real directory check, and a fresh randomUUID id.
+ */
+function createDeps(repositories: Repositories): CreateDeps {
+    return {
+        dirExists,
+        insertProject: (project) => repositories.projects.insert(project),
+        getProject: (id) => repositories.projects.get(id),
+        insertHire: (hire) => repositories.hires.insert(hire),
+        uuid: () => randomUUID(),
+        now: () => new Date().toISOString(),
+        ownerId: 'owner',
+        labelFor: (p) => path.basename(p) || p
+    };
 }
 
 /**
@@ -427,6 +455,19 @@ app.whenReady().then(async () => {
                 : [];
             smoke('projects:list served ' + projects.length + ' rows over IPC');
             return { projects };
+        },
+        // The create flow's backend. The repository inserts already exist; this
+        // validates (a repo path must be a real directory, a hire's type must be a
+        // known definition) and writes through the repository, never raw SQL. A
+        // fresh randomUUID id, no smoke- prefix. Throws on a bad input, which the
+        // handler turns into a rejected invoke.
+        createProject: (payload) => {
+            if (!repositories) throw new Error('project:create: the store is not open');
+            return createProjectService(createDeps(repositories), payload);
+        },
+        createHire: (payload) => {
+            if (!repositories) throw new Error('hire:create: the store is not open');
+            return createHireService(createDeps(repositories), payload);
         },
         rosterSnapshot,
         // The detail view's live terminal, over the session the lifecycle owns.

@@ -20,6 +20,8 @@
 export const INVOKE_CHANNELS = [
     'health',
     'projects:list',
+    'project:create',
+    'hire:create',
     'roster:snapshot',
     'session:open',
     'session:close',
@@ -73,6 +75,41 @@ export interface ProjectSummary {
 /** The reply to `projects:list`. Bounded: projects are capped by user creation. */
 export interface ProjectsList {
     readonly projects: readonly ProjectSummary[];
+}
+
+/**
+ * Creating a project. A name and one or more repo paths the renderer names for
+ * validation. The paths cross main-ward only to be checked and stored; what comes
+ * back is an id and a name, never a path or an internal handle.
+ */
+export interface ProjectCreate {
+    readonly name: string;
+    readonly repoPaths: readonly string[];
+}
+
+/** The reply to `project:create`: the created project's id and name. */
+export interface ProjectCreated {
+    readonly id: string;
+    readonly name: string;
+}
+
+/**
+ * Creating a hire. A name, a definition type, a display title, and the owning
+ * project's id. The hire binds to that project so its cold-spawn cwd resolves.
+ */
+export interface HireCreate {
+    readonly name: string;
+    readonly type: string;
+    readonly title: string;
+    readonly projectId: string;
+}
+
+/** The reply to `hire:create`: the created hire's id and safe fields, no path. */
+export interface HireCreated {
+    readonly id: string;
+    readonly name: string;
+    readonly title: string;
+    readonly projectId: string;
 }
 
 /**

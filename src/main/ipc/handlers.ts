@@ -14,11 +14,12 @@
 import type { IpcMain, WebContents } from 'electron';
 import {
     INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot,
-    type SessionOpened, type ChannelCursor, type ChannelMessageRow, type ChannelPageReply
+    type SessionOpened, type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
+    type ProjectCreated, type HireCreated
 } from '../../shared/ipc.ts';
 import {
     isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite,
-    isChannelPage, isChannelSince, isChannelReply
+    isChannelPage, isChannelSince, isChannelReply, isProjectCreate, isHireCreate
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 import { OutputCoalescer } from './output-coalescer.ts';
@@ -36,6 +37,21 @@ export interface HandlerDeps {
      * injectable and testable and never reaches for the store directly.
      */
     readonly listProjects: () => ProjectsList;
+    /**
+     * Creates a project from a name and repo paths, returning its id and name.
+     * Validation (the repo path is a real directory, the name is non-empty) lives
+     * in the create logic and throws on a bad input, which becomes a rejected
+     * invoke. Ids and names cross back, never a path.
+     */
+    readonly createProject: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
+    /**
+     * Creates a hire bound to a project, returning its id and safe fields. Throws
+     * on an unknown definition type or a missing project, which becomes a rejected
+     * invoke.
+     */
+    readonly createHire: (
+        payload: { name: string; type: string; title: string; projectId: string }
+    ) => HireCreated;
     /**
      * The roster as cards, read-only and bounded (one per hire). A function, so
      * the handler stays injectable and never reaches into the store or the
@@ -103,6 +119,29 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         // mapping and query path on every run rather than only under the smoke
         // flag.
         'projects:list': (): ProjectsList => deps.listProjects(),
+
+        // Creating a project. The renderer names repo paths for validation; the
+        // create logic refuses any that is not a real directory, so a bad path
+        // fails here rather than as a dead terminal after a first message. Only an
+        // id and a name cross back.
+        'project:create': (payload: unknown): ProjectCreated => {
+            if (!isProjectCreate(payload)) {
+                throw new Error('project:create requires {name,repoPaths}');
+            }
+            return deps.createProject({ name: payload.name, repoPaths: payload.repoPaths });
+        },
+
+        // Creating a hire, bound to an owning project so its cold-spawn cwd
+        // resolves to that project's real directory. Refuses an unknown definition
+        // type or a missing project.
+        'hire:create': (payload: unknown): HireCreated => {
+            if (!isHireCreate(payload)) {
+                throw new Error('hire:create requires {name,type,title,projectId}');
+            }
+            return deps.createHire({
+                name: payload.name, type: payload.type, title: payload.title, projectId: payload.projectId
+            });
+        },
 
         // Read-only, no payload. One card per hire, bounded by how many hires
         // exist. The renderer re-requests this on a roster:changed signal rather
