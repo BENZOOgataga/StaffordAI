@@ -24,6 +24,7 @@ export const INVOKE_CHANNELS = [
     'session:open',
     'session:close',
     'session:resize',
+    'session:write',
     'proof:spawn',
     'proof:write',
     'proof:kill'
@@ -120,6 +121,12 @@ export interface SessionResize {
     readonly hireId: string;
     readonly cols: number;
     readonly rows: number;
+}
+
+/** A typed message to the open card's session. A hire id and bounded text, no path. */
+export interface SessionWrite {
+    readonly hireId: string;
+    readonly text: string;
 }
 
 /** What the proof window sends to open a pty. Ids only, no paths. */

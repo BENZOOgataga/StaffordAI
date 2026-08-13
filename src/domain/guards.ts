@@ -11,7 +11,7 @@
  * nothing usable until the guard has run.
  */
 
-import type { ProofSpawn, ProofWrite, SessionOpen, SessionResize } from '../shared/ipc.ts';
+import type { ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite } from '../shared/ipc.ts';
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -31,6 +31,12 @@ export function isSessionOpen(value: unknown): value is SessionOpen {
 export function isSessionResize(value: unknown): value is SessionResize {
     if (!isObject(value)) return false;
     return isHireId(value.hireId) && isBoundedInt(value.cols, 1, 1000) && isBoundedInt(value.rows, 1, 1000);
+}
+
+/** A typed message. A hire id and a bounded string; a renderer cannot hand over an unbounded one. */
+export function isSessionWrite(value: unknown): value is SessionWrite {
+    if (!isObject(value)) return false;
+    return isHireId(value.hireId) && typeof value.text === 'string' && value.text.length <= 64 * 1024;
 }
 
 /** A terminal size the proof window may ask for, bounded so a renderer cannot ask for nonsense. */

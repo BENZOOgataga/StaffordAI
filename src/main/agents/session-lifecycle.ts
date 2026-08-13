@@ -118,9 +118,17 @@ interface Owned {
     tornDown: boolean;
 }
 
+/** A terminal subscriber, attached to the current session or waiting for the next spawn. */
+interface Sub {
+    readonly listener: (data: string) => void;
+    off: (() => void) | null;
+}
+
 export class SessionLifecycle {
     readonly #deps: LifecycleDeps;
     readonly #owned = new Map<string, Owned>();
+    /** Terminal subscribers per hire, so a card opened before a session survives the spawn. */
+    readonly #subscribers = new Map<string, Set<Sub>>();
     /** Hires whose current session started fresh after a failed resume, for the note. */
     readonly #contextLost = new Set<string>();
     readonly #notReportingMs: number;
@@ -174,9 +182,37 @@ export class SessionLifecycle {
      * the context-lost note.
      */
     subscribe(hireId: string, listener: (data: string) => void): () => void {
+        const sub: Sub = { listener, off: null };
+        let set = this.#subscribers.get(hireId);
+        if (!set) { set = new Set(); this.#subscribers.set(hireId, set); }
+        set.add(sub);
+
+        // Attach to the live session now if there is one; otherwise stay pending
+        // and the next spawn attaches it, so opening a card and then typing the
+        // first message streams that session's output into the terminal.
         const owned = this.#owned.get(hireId);
-        if (!owned) return () => {};
-        return owned.session.subscribe(listener);
+        if (owned) sub.off = owned.session.subscribe(listener);
+
+        return () => {
+            sub.off?.();
+            sub.off = null;
+            set.delete(sub);
+            if (set.size === 0) this.#subscribers.delete(hireId);
+        };
+    }
+
+    /** Attaches the hire's pending subscribers to a freshly spawned session. */
+    #attachSubscribers(hireId: string, session: PtySession): void {
+        const set = this.#subscribers.get(hireId);
+        if (!set) return;
+        for (const sub of set) { if (!sub.off) sub.off = session.subscribe(sub.listener); }
+    }
+
+    /** Detaches the hire's subscribers on teardown; they re-attach on the next spawn. */
+    #detachSubscribers(hireId: string): void {
+        const set = this.#subscribers.get(hireId);
+        if (!set) return;
+        for (const sub of set) { sub.off?.(); sub.off = null; }
     }
 
     /** Propagates a pane resize to the pty, so the TUI reflows. A no-op if no session. */
@@ -196,6 +232,21 @@ export class SessionLifecycle {
         // A message is activity, so it resets the idle clock too.
         this.#resetIdle(hireId);
         return (existing ?? this.#owned.get(hireId))?.pid ?? 0;
+    }
+
+    /**
+     * Submits a person's message to a colleague. Cold-spawns or resumes if no
+     * session is up, then submits through PtySession.submit, which sends the text
+     * and the Enter as two writes so a multi-line message is content rather than
+     * being taken as a paste that swallows the newline. The text is expected to be
+     * sanitised by the caller, which is the IPC boundary, before it reaches here.
+     * Returns nothing to write to when the hire is on no project.
+     */
+    async submitMessage(hireId: string, text: string): Promise<void> {
+        const existing = this.#owned.get(hireId);
+        const session = existing ? existing.session : this.#spawn(hireId).session;
+        this.#resetIdle(hireId);
+        await session.submit(text);
     }
 
     #spawn(hireId: string, options: { cold?: boolean } = {}): Owned {
@@ -251,6 +302,9 @@ export class SessionLifecycle {
             reported: false, tornDown: false
         };
         this.#owned.set(agentId, owned);
+        // A card opened before this spawn is waiting for output; attach it now so
+        // its terminal streams from this session.
+        this.#attachSubscribers(hireId, session);
 
         session.once('exit', (info: { exitCode: number | null }) => this.#onExit(agentId, info));
         return owned;
@@ -402,5 +456,8 @@ export class SessionLifecycle {
         this.#deps.registry.deregisterByAgent(agentId);
         this.#deps.secrets.revoke(agentId);
         this.#owned.delete(agentId);
+        // The session is gone, so its subscribers detach; they re-attach if the
+        // colleague is resumed, so an open card comes back to life on the next spawn.
+        this.#detachSubscribers(agentId);
     }
 }

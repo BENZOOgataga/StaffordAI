@@ -32,6 +32,7 @@ const nodePty = require('node-pty') as {
 
 const PLATFORM = currentPlatform();
 const FIXTURE = path.resolve(process.cwd(), 'runner', 'fixtures', 'hook-forwarder-child.js');
+const ECHO_FIXTURE = path.resolve(process.cwd(), 'runner', 'fixtures', 'stdin-echo-child.js');
 
 function fakeStore(map: Record<string, HireBinding>): {
     store: HireStore;
@@ -366,6 +367,39 @@ test('a resumed session registers a real pid and is reaped by the drain, zero su
     assert.equal(registry.drainables().length, 0, 'zero survivors');
 });
 
+test('a submitted message reaches the session stdin, spawning if none is up', () => {
+    const pty = stubPty();
+    const { lifecycle } = buildDeps({ spawn: pty });
+    void lifecycle.submitMessage('h1', 'hello there');
+    assert.equal(lifecycle.has('h1'), true, 'the first message spawned the session');
+    assert.equal(pty.writes.includes('hello there'), true, 'the message was written to stdin');
+});
+
+test('a message after teardown reaches a fresh session, never the dead one', async () => {
+    const ptys: Array<ReturnType<typeof stubPty>> = [];
+    const { store } = fakeStore({});
+    const registry = new SessionRegistry(store);
+    const secrets = new AgentSecrets();
+    const lifecycle = new SessionLifecycle({
+        platform: PLATFORM, socketPath: path.resolve(os.tmpdir(), 'x.sock'), secrets, registry,
+        claudePath: path.resolve(os.tmpdir(), 'claude'), nodeDir: path.dirname(process.execPath), parentEnv: {},
+        spawn: () => { const p = stubPty(); ptys.push(p); return p; },
+        resolveTarget: () => ({ projectId: 'p1', cwd: 'C:/repo' }),
+        setState: () => {}, trustFor: () => 'trusted',
+        killTree: async () => noKill()
+    });
+
+    void lifecycle.submitMessage('h1', 'first');
+    const dead = ptys[0];
+    await lifecycle.teardown('h1');
+    void lifecycle.submitMessage('h1', 'second');
+    const fresh = ptys[1];
+
+    assert.notEqual(dead, fresh, 'a new session was spawned for the second message');
+    assert.equal(dead?.writes.includes('second'), false, 'the torn-down session received nothing');
+    assert.equal(fresh?.writes.includes('second'), true, 'the message went to the fresh session');
+});
+
 test('subscribe replays a live session then streams, and is a no-op for an unknown hire', () => {
     const pty = stubPty();
     const { lifecycle } = buildDeps({ spawn: pty });
@@ -483,6 +517,53 @@ test('a real spawned session drives state, and the drain reaps it with zero surv
         assert.ok(summary.total >= 1);
         assert.equal(await isGone(pid), true, 'the real process tree has zero survivors after the drain');
     } finally {
+        await lifecycle.teardown('h1').catch(() => {});
+        await stopHookTransport(transport).catch(() => {});
+        fs.rmSync(home, { recursive: true, force: true });
+        fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+});
+
+// @real-machine
+test('the loop closes: a submitted message reaches a real session and it answers', async () => {
+    const home = shortHome();
+    const transport = await startHookTransport({ platform: PLATFORM, home, appId: 'Echo' + process.pid });
+    const { store } = fakeStore({});
+    const registry = new SessionRegistry(store);
+    transport.listener.on('event', (raw: Record<string, unknown>) => {
+        registry.ingest(coerceHookEvent(raw), new Date().toISOString());
+    });
+
+    const repoDir = shortHome();
+    const lifecycle = new SessionLifecycle({
+        platform: PLATFORM, socketPath: transport.socketPath, secrets: transport.secrets, registry,
+        claudePath: 'unused', nodeDir: path.dirname(process.execPath), parentEnv: process.env,
+        // A fixture that reads stdin and echoes, so a typed message can be seen to
+        // reach the session and come back through the terminal stream.
+        spawn: (_file, _args, opts) => nodePty.spawn(process.execPath, [ECHO_FIXTURE], opts),
+        resolveTarget: () => ({ projectId: 'p1', cwd: repoDir }),
+        setState: () => {}, trustFor: () => 'trusted'
+    });
+
+    // A card is open, streaming the terminal, before any message is sent.
+    const streamed: string[] = [];
+    const off = lifecycle.subscribe('h1', (d) => streamed.push(d));
+
+    try {
+        // Type and send, the write-half path, with a control byte the boundary
+        // would strip in the shell; here the raw text is delivered to prove the pty
+        // receives and answers.
+        await lifecycle.submitMessage('h1', 'run the tests');
+
+        // The colleague answers: ECHO comes back through the terminal stream.
+        const deadline = Date.now() + 8000;
+        while (!streamed.join('').includes('ECHO:run the tests') && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 50));
+        }
+        assert.equal(streamed.join('').includes('ECHO:run the tests'), true,
+            'the message reached the session stdin and the colleague answered into the terminal');
+    } finally {
+        off();
         await lifecycle.teardown('h1').catch(() => {});
         await stopHookTransport(transport).catch(() => {});
         fs.rmSync(home, { recursive: true, force: true });

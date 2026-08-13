@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isProofSpawn, isProofWrite, isSessionOpen, isSessionResize } from './guards.ts';
+import { isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite } from './guards.ts';
 
 test('a proof spawn needs bounded integer cols and rows', () => {
     assert.equal(isProofSpawn({ cols: 80, rows: 24 }), true);
@@ -40,4 +40,13 @@ test('a session resize needs a hire id and a bounded terminal size', () => {
     assert.equal(isSessionResize({ hireId: '', cols: 80, rows: 24 }), false, 'empty hire id');
     assert.equal(isSessionResize({ cols: 80, rows: 24 }), false, 'no hire id');
     assert.equal(isSessionResize(null), false);
+});
+
+test('a session write needs a hire id and a bounded string', () => {
+    assert.equal(isSessionWrite({ hireId: 'h1', text: 'do the thing' }), true);
+    assert.equal(isSessionWrite({ hireId: 'h1', text: '' }), true, 'empty text is a valid shape');
+    assert.equal(isSessionWrite({ hireId: 'h1', text: 42 }), false, 'text must be a string');
+    assert.equal(isSessionWrite({ hireId: 'h1', text: 'x'.repeat(64 * 1024 + 1) }), false, 'over the cap');
+    assert.equal(isSessionWrite({ text: 'hi' }), false, 'no hire id');
+    assert.equal(isSessionWrite(null), false);
 });

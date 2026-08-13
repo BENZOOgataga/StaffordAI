@@ -20,6 +20,7 @@ interface SessionOverrides {
     subscribeSession?: (hireId: string, listener: (data: string) => void) => () => void;
     resizeSession?: (hireId: string, cols: number, rows: number) => void;
     hasSession?: (hireId: string) => boolean;
+    submitMessage?: (hireId: string, text: string) => Promise<void>;
 }
 
 function deps(
@@ -37,7 +38,8 @@ function deps(
         rosterSnapshot: () => roster,
         subscribeSession: over.subscribeSession ?? (() => () => {}),
         resizeSession: over.resizeSession ?? (() => {}),
-        hasSession: over.hasSession ?? (() => false)
+        hasSession: over.hasSession ?? (() => false),
+        submitMessage: over.submitMessage ?? (() => Promise.resolve())
     };
 }
 
@@ -139,6 +141,74 @@ test('session:resize propagates the hire and bounded size to the pty', () => {
     }));
     handlers['session:resize']({ hireId: 'h1', cols: 120, rows: 40 });
     assert.deepEqual(resizes, [{ hireId: 'h1', cols: 120, rows: 40 }]);
+});
+
+test('session:write routes a sanitised message to the open card and strips control bytes', async () => {
+    const submitted: Array<{ hireId: string; text: string }> = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        sender: () => ({ send: () => {} }),
+        hasSession: () => true,
+        submitMessage: (hireId, text) => { submitted.push({ hireId, text }); return Promise.resolve(); }
+    }));
+    handlers['session:open']({ hireId: 'h1' });
+
+    const ctrlC = String.fromCharCode(0x03);
+    const esc = String.fromCharCode(0x1b);
+    await handlers['session:write']({ hireId: 'h1', text: 'stop' + ctrlC + esc + '[31m now' });
+
+    assert.deepEqual(submitted, [{ hireId: 'h1', text: 'stop[31m now' }],
+        'the message reached the open session with the Ctrl-C and ESC removed');
+});
+
+test('session:write is scoped to the open card: a write to another session is refused', () => {
+    const submitted: string[] = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        sender: () => ({ send: () => {} }),
+        hasSession: () => true,
+        submitMessage: (hireId) => { submitted.push(hireId); return Promise.resolve(); }
+    }));
+    handlers['session:open']({ hireId: 'h1' });
+
+    assert.throws(() => handlers['session:write']({ hireId: 'h2', text: 'hi' }), /not the open card/,
+        'a write naming a different session is refused, not misrouted');
+    assert.deepEqual(submitted, [], 'nothing was written to the wrong session');
+});
+
+test('session:write with no card open is refused, so a stale write lands nowhere', () => {
+    const submitted: string[] = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        sender: () => ({ send: () => {} }),
+        submitMessage: (hireId) => { submitted.push(hireId); return Promise.resolve(); }
+    }));
+    assert.throws(() => handlers['session:write']({ hireId: 'h1', text: 'hi' }), /not the open card/);
+
+    // Opening then closing means no open card, so a write after close is refused.
+    handlers['session:open']({ hireId: 'h1' });
+    handlers['session:close'](undefined);
+    assert.throws(() => handlers['session:write']({ hireId: 'h1', text: 'hi' }), /not the open card/);
+    assert.deepEqual(submitted, []);
+});
+
+test('switching cards rebinds the write target', async () => {
+    const submitted: string[] = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        sender: () => ({ send: () => {} }),
+        hasSession: () => true,
+        submitMessage: (hireId) => { submitted.push(hireId); return Promise.resolve(); }
+    }));
+    handlers['session:open']({ hireId: 'h1' });
+    handlers['session:open']({ hireId: 'h2' });         // switch cards
+    assert.throws(() => handlers['session:write']({ hireId: 'h1', text: 'stale' }), /not the open card/,
+        'a write to the previous card is refused');
+    await handlers['session:write']({ hireId: 'h2', text: 'fresh' });
+    assert.deepEqual(submitted, ['h2'], 'the write went to the now-open card');
+});
+
+test('session:write refuses arguments that fail the guard', () => {
+    const handlers = buildHandlers(deps());
+    assert.throws(() => handlers['session:write']({ hireId: 'h1' }), /requires/);
+    assert.throws(() => handlers['session:write']({ text: 'hi' }), /requires/);
+    assert.throws(() => handlers['session:write']({ hireId: 'h1', text: 'x'.repeat(64 * 1024 + 1) }), /requires/);
 });
 
 test('session:open and session:resize refuse arguments that fail the guard', () => {

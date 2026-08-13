@@ -30,6 +30,7 @@ const nameEl = document.getElementById('detail-name') as HTMLElement;
 const roleEl = document.getElementById('detail-role') as HTMLElement;
 const termHost = document.getElementById('term') as HTMLElement;
 const backButton = document.getElementById('detail-back') as HTMLButtonElement;
+const reply = document.getElementById('reply') as HTMLTextAreaElement;
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -94,3 +95,16 @@ export async function closeDetail(): Promise<void> {
 }
 
 backButton.addEventListener('click', () => { void closeDetail(); });
+
+// Enter sends the message to the open colleague; Shift-Enter adds a line. The
+// write is scoped to the open card: it targets openHireId, and main only writes to
+// the session whose card is open, so a message never lands on the wrong colleague.
+reply.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    event.preventDefault();
+    const text = reply.value;
+    if (text.trim().length === 0 || !openHireId) return;
+    reply.value = '';
+    void window.stafford.session.write(openHireId, text);
+    term?.focus();
+});
