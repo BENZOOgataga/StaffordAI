@@ -17,6 +17,7 @@
 import '@xterm/xterm/css/xterm.css';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { fitToContainer } from './terminal-fit.ts';
 import type { StaffordApi } from '../preload/index.ts';
 
 declare global {
@@ -38,17 +39,27 @@ let offData: (() => void) | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let openHireId: string | null = null;
 
-/** Fits the terminal to its pane and propagates the new size to the pty. */
+/**
+ * Fits the terminal to its pane and propagates the size to the pty, but only once
+ * the pane has a real layout. Fitting a zero-sized pane on the raw mount hands the
+ * pty a bogus size and garbles the paint; the ResizeObserver calls this again on
+ * the first real size, which is when the fit measures correctly. See terminal-fit.
+ */
 function fitAndResize(): void {
     if (!term || !fit || !openHireId) return;
+    const hireId = openHireId;
+    const activeTerm = term;
+    const activeFit = fit;
     try {
-        fit.fit();
+        fitToContainer(
+            termHost,
+            { fit: () => activeFit.fit(), get cols() { return activeTerm.cols; }, get rows() { return activeTerm.rows; } },
+            (cols, rows) => void window.stafford.session.resize(hireId, cols, rows)
+        );
     } catch {
-        // The pane can be zero-sized for a frame during open or close; a failed
-        // fit there is harmless and the next observer tick fixes it.
-        return;
+        // A transient degenerate layout during open or close; the observer refits
+        // on the next real size.
     }
-    void window.stafford.session.resize(openHireId, term.cols, term.rows);
 }
 
 export async function openDetail(hireId: string, name: string, role: string): Promise<void> {
@@ -71,6 +82,16 @@ export async function openDetail(hireId: string, name: string, role: string): Pr
     overlay.hidden = false;
     overlay.setAttribute('aria-hidden', 'false');
     term.open(termHost);
+
+    // Fit on the first real layout and every later resize through one path. The
+    // observer fires when the pane has a real size, which is exactly when a fit
+    // measures correctly, so the pty gets the right dimensions before the first
+    // output paints rather than a manual resize later. Attached before the open so
+    // the replay renders at the fitted size, not the raw-mount size. A guarded
+    // immediate call covers a reopen whose pane is already laid out; it is a no-op
+    // while the pane is still zero-sized.
+    resizeObserver = new ResizeObserver(() => fitAndResize());
+    resizeObserver.observe(termHost);
     fitAndResize();
 
     // Stream first, then open, so no byte between subscribing and the first paint
@@ -78,8 +99,6 @@ export async function openDetail(hireId: string, name: string, role: string): Pr
     offData = window.stafford.session.onData((data) => term?.write(data));
     await window.stafford.session.open(hireId);
 
-    resizeObserver = new ResizeObserver(() => fitAndResize());
-    resizeObserver.observe(termHost);
     term.focus();
 }
 
