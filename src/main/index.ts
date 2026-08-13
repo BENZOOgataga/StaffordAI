@@ -28,6 +28,7 @@ import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database
 import { resolveStoreBase } from './storage/store-location.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import { preTrustDirectory } from './agents/pre-trust.ts';
+import { buildCommand, hookShellFor, merge, addExcludeEntry, type Settings } from './hooks/registration.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent } from './agents/drain.ts';
@@ -109,6 +110,67 @@ function writeConfigAtomic(target: string, data: string): void {
     const tmp = target + '.stafford-' + process.pid + '.tmp';
     fs.writeFileSync(tmp, data);
     fs.renameSync(tmp, target);
+}
+
+/**
+ * A real on-disk path to the hook forwarder that the hook can read.
+ *
+ * The forwarder is bundled next to the built main (`out/main/claude-hook.cjs`),
+ * which in a packaged app is inside `app.asar`. The hook launches the forwarder
+ * with `ELECTRON_RUN_AS_NODE`, where Electron's asar support is off, so a path
+ * inside the asar would not be readable. This process is asar-aware, so it reads
+ * the bundled copy and writes it once to a real path under userData, and the hook
+ * points at that. In development the bundled copy is already a real file, but the
+ * same copy keeps the two paths identical. Falls back to the source tree if the
+ * bundled copy is somehow absent.
+ */
+function resolveForwarder(): string {
+    const bundled = path.join(dir, 'claude-hook.cjs');
+    try {
+        const source = fs.readFileSync(bundled);
+        const target = path.join(app.getPath('userData'), 'claude-hook.cjs');
+        let current: Buffer | null = null;
+        try { current = fs.readFileSync(target); } catch { current = null; }
+        if (!current || !current.equals(source)) fs.writeFileSync(target, source);
+        return target;
+    } catch {
+        return path.join(process.cwd(), 'hooks', 'claude-hook.cjs');
+    }
+}
+
+/**
+ * Registers Stafford's hooks in a project's own `.claude/settings.local.json`,
+ * merging with whatever is there, and keeps the file out of the user's git via
+ * `.git/info/exclude`. Runs before each spawn; merge is idempotent, so a
+ * re-registration cannot double an entry. This is what makes a spawned colleague's
+ * state actually reach Stafford.
+ */
+function registerHooksInProject(cwd: string): void {
+    const command = buildCommand(process.execPath, resolveForwarder(), hookShellFor(currentPlatform().id));
+    const settingsDir = path.join(cwd, '.claude');
+    const settingsPath = path.join(settingsDir, 'settings.local.json');
+
+    let existing: Settings = {};
+    try {
+        existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Settings;
+    } catch {
+        existing = {};
+    }
+    fs.mkdirSync(settingsDir, { recursive: true });
+    writeConfigAtomic(settingsPath, JSON.stringify(merge(existing, command), null, 2) + '\n');
+
+    // Local to this clone, never committed, so an agent running git status in the
+    // project cannot commit Stafford's config into the user's repository.
+    try {
+        if (!fs.existsSync(path.join(cwd, '.git'))) return;
+        const excludePath = path.join(cwd, '.git', 'info', 'exclude');
+        fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+        const content = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
+        const next = addExcludeEntry(content);
+        if (next !== content) fs.writeFileSync(excludePath, next);
+    } catch {
+        // Best effort: a missing or unwritable .git is not worth failing the spawn.
+    }
 }
 
 /** True iff the path is an existing directory. The create flow's load-bearing check. */
@@ -359,6 +421,9 @@ function buildLifecycle(store: HireStore): void {
             },
             warn: (message) => process.stderr.write('[pre-trust] ' + message + '\n')
         }, cwd),
+        // Register the state-reporting hooks in the project, so Claude Code runs
+        // the forwarder and the roster hears what the colleague is doing.
+        registerHooks: (cwd) => registerHooksInProject(cwd),
         onStateChanged: () => notifyRosterChanged()
     });
     smoke('lifecycle ready, claude at ' + claudePath);

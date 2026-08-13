@@ -67,9 +67,32 @@ export function isStaffordCommand(command: unknown): boolean {
     return typeof command === 'string' && command.includes(HOOK_MARKER);
 }
 
-/** Quoted for a shell that may see spaces in either path. */
-export function buildCommand(runtime: string, forwarder: string): string {
-    return '"' + runtime + '" "' + forwarder + '" ' + HOOK_MARKER;
+/** Which shell Claude Code runs a command hook through, per platform. */
+export type HookShell = 'powershell' | 'posix';
+
+/** Claude Code runs hooks through PowerShell on Windows and a POSIX shell elsewhere. */
+export function hookShellFor(platformId: string): HookShell {
+    return platformId === 'win32' ? 'powershell' : 'posix';
+}
+
+/**
+ * The hook command, quoted for the shell Claude Code runs it through and carrying
+ * the runtime that needs no global Node.
+ *
+ * `ELECTRON_RUN_AS_NODE=1` lets the packaged Electron binary run the forwarder as
+ * Node, so a user with no global `node` still gets working hooks (the forwarder is
+ * pure Node and never needs bash). On Windows Claude Code runs the command through
+ * PowerShell, where a quoted executable path must be invoked with the call
+ * operator `&` and a bare `"exe" "arg"` is a parse error; on POSIX it runs through
+ * a shell where the env-prefix form and a quoted path both work. Getting this
+ * wrong is the failure a real Windows session showed: the hook ran under
+ * PowerShell and could not launch.
+ */
+export function buildCommand(runtime: string, forwarder: string, shell: HookShell): string {
+    const invocation = '"' + runtime + '" "' + forwarder + '" ' + HOOK_MARKER;
+    return shell === 'powershell'
+        ? '$env:ELECTRON_RUN_AS_NODE=1; & ' + invocation
+        : 'ELECTRON_RUN_AS_NODE=1 ' + invocation;
 }
 
 export function desiredHooks(command: string): HookSettings {

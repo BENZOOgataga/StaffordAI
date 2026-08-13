@@ -1,12 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    buildCommand, desiredHooks, merge, unregister, inspect,
+    buildCommand, hookShellFor, desiredHooks, merge, unregister, inspect,
     hasExcludeEntry, addExcludeEntry, isStaffordCommand,
     HOOK_MARKER, REGISTERED_EVENTS, EXCLUDE_ENTRY, type Settings
 } from './registration.ts';
 
-const COMMAND = buildCommand('C:\\Program Files\\nodejs\\node.exe', 'C:\\Stafford\\hooks\\claude-hook.js');
+const COMMAND = buildCommand('C:\\Program Files\\nodejs\\node.exe', 'C:\\Stafford\\hooks\\claude-hook.js', 'powershell');
+
+test('the Windows hook command is PowerShell-valid and runs the forwarder as node without global node', () => {
+    const command = buildCommand('C:\\App\\Stafford.exe', 'C:\\App\\claude-hook.cjs', 'powershell');
+    // The call operator, or PowerShell parses "exe" "arg" as two expressions and
+    // the hook cannot launch, which is the real Windows failure.
+    assert.match(command, /^\$env:ELECTRON_RUN_AS_NODE=1; & "/);
+    assert.ok(command.includes('"C:\\App\\Stafford.exe"'));
+    assert.ok(command.includes(HOOK_MARKER));
+});
+
+test('the POSIX hook command prefixes the env and needs no call operator', () => {
+    const command = buildCommand('/Applications/Stafford.app/x', '/Applications/Stafford.app/claude-hook.cjs', 'posix');
+    assert.match(command, /^ELECTRON_RUN_AS_NODE=1 "/);
+    assert.equal(command.includes('& '), false, 'the call operator is PowerShell-only');
+    assert.ok(command.includes(HOOK_MARKER));
+});
+
+test('the hook shell is PowerShell on Windows and POSIX elsewhere', () => {
+    assert.equal(hookShellFor('win32'), 'powershell');
+    assert.equal(hookShellFor('darwin'), 'posix');
+    assert.equal(hookShellFor('linux'), 'posix');
+});
 const OTHERS: Settings = {
     hooks: {
         SessionStart: [{ hooks: [{ type: 'command', command: '"C:\\tools\\someone-else.exe"' }] }]
@@ -73,7 +95,7 @@ test('the sweep sees a correct registration, a missing one, and a stale path', (
 
     // The case the marker exists for: the forwarder moved, so every hook in
     // this project is failing silently and no card would show it.
-    const moved = buildCommand('C:\\Program Files\\nodejs\\node.exe', 'C:\\Stafford\\resources\\stafford-hook.exe');
+    const moved = buildCommand('C:\\Program Files\\nodejs\\node.exe', 'C:\\Stafford\\resources\\stafford-hook.exe', 'powershell');
     const finding = inspect(merge({}, COMMAND), moved);
     assert.equal(finding.reason, 'stale-path');
     assert.match(finding.detail, /failing silently/);
