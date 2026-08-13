@@ -25,6 +25,8 @@ export const INVOKE_CHANNELS = [
     'session:close',
     'session:resize',
     'session:write',
+    'channel:page',
+    'channel:since',
     'proof:spawn',
     'proof:write',
     'proof:kill'
@@ -33,6 +35,7 @@ export const INVOKE_CHANNELS = [
 /** Main pushes to the renderer. One-way, no reply. */
 export const EVENT_CHANNELS = [
     'roster:changed',
+    'channel:changed',
     'session:data',
     'proof:data',
     'proof:exit'
@@ -127,6 +130,47 @@ export interface SessionResize {
 export interface SessionWrite {
     readonly hireId: string;
     readonly text: string;
+}
+
+/**
+ * A point in the timeline, for cursor pagination: a row's ordering key. Ids and a
+ * timestamp, never a path. The renderer passes back cursors it received, so it
+ * never invents a position.
+ */
+export interface ChannelCursor {
+    readonly at: string;
+    readonly id: string;
+}
+
+/** Read a page of the timeline. `before` null loads the newest page; else scroll-back. */
+export interface ChannelPageRequest {
+    readonly before: ChannelCursor | null;
+    readonly limit: number;
+}
+
+/** Read rows newer than a cursor, for appending the tail without a full re-read. */
+export interface ChannelSinceRequest {
+    readonly after: ChannelCursor;
+    readonly limit: number;
+}
+
+/** The reply to channel:page and channel:since: rows in ascending time order. */
+export interface ChannelPageReply {
+    readonly rows: readonly ChannelMessageRow[];
+}
+
+/**
+ * One timeline row as the renderer sees it. The channel's ChannelMessage, ids and
+ * text and a typed reference, never a filesystem handle the renderer could act on.
+ */
+export interface ChannelMessageRow {
+    readonly id: string;
+    readonly projectId: string;
+    readonly senderId: string;
+    readonly kind: string;
+    readonly body: string;
+    readonly reference: { readonly kind: string; readonly value: string } | null;
+    readonly at: string;
 }
 
 /** What the proof window sends to open a pty. Ids only, no paths. */

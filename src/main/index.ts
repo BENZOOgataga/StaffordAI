@@ -238,6 +238,11 @@ function notifyRosterChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('roster:changed');
 }
 
+/** Tells the channel view a row landed, so it fetches the tail, not the whole timeline. */
+function notifyChannelChanged(): void {
+    if (window && !window.isDestroyed()) window.webContents.send('channel:changed');
+}
+
 /**
  * Builds the session lifecycle: the owner of live Claude sessions. It is dormant
  * until the first message (the detail view is 3b), but constructing it wires the
@@ -384,6 +389,8 @@ app.whenReady().then(async () => {
                 // the state earns one. A card-only state writes nothing.
                 if (repositories && recordTransition(repositories.channel, result, now, randomUUID())) {
                     smoke('channel event for ' + result.hireId + ' ' + result.state);
+                    // A row landed, so the channel view fetches the new tail.
+                    notifyChannelChanged();
                 }
             }
         });
@@ -419,7 +426,13 @@ app.whenReady().then(async () => {
         subscribeSession: (hireId, listener) => (lifecycle ? lifecycle.subscribe(hireId, listener) : () => {}),
         resizeSession: (hireId, cols, rows) => { lifecycle?.resize(hireId, cols, rows); },
         hasSession: (hireId) => (lifecycle ? lifecycle.has(hireId) : false),
-        submitMessage: (hireId, text) => (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve())
+        submitMessage: (hireId, text) => (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve()),
+        // The timeline reads: the newest page, older rows for scroll-back, and the
+        // tail after a cursor for the append on channel:changed.
+        channelPage: (before, limit) => (repositories
+            ? (before ? repositories.channel.before(before, limit) : repositories.channel.newest(limit))
+            : []),
+        channelSince: (after, limit) => (repositories ? repositories.channel.after(after, limit) : [])
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHandlers } from './handlers.ts';
 import {
-    INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened
+    INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened,
+    type ChannelCursor, type ChannelMessageRow, type ChannelPageReply
 } from '../../shared/ipc.ts';
 import type { ProofPty } from './proof-pty.ts';
 
@@ -21,6 +22,8 @@ interface SessionOverrides {
     resizeSession?: (hireId: string, cols: number, rows: number) => void;
     hasSession?: (hireId: string) => boolean;
     submitMessage?: (hireId: string, text: string) => Promise<void>;
+    channelPage?: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
+    channelSince?: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
 }
 
 function deps(
@@ -39,7 +42,9 @@ function deps(
         subscribeSession: over.subscribeSession ?? (() => () => {}),
         resizeSession: over.resizeSession ?? (() => {}),
         hasSession: over.hasSession ?? (() => false),
-        submitMessage: over.submitMessage ?? (() => Promise.resolve())
+        submitMessage: over.submitMessage ?? (() => Promise.resolve()),
+        channelPage: over.channelPage ?? (() => []),
+        channelSince: over.channelSince ?? (() => [])
     };
 }
 
@@ -209,6 +214,39 @@ test('session:write refuses arguments that fail the guard', () => {
     assert.throws(() => handlers['session:write']({ hireId: 'h1' }), /requires/);
     assert.throws(() => handlers['session:write']({ text: 'hi' }), /requires/);
     assert.throws(() => handlers['session:write']({ hireId: 'h1', text: 'x'.repeat(64 * 1024 + 1) }), /requires/);
+});
+
+function chRow(id: string): ChannelMessageRow {
+    return { id, projectId: 'p1', senderId: 'h1', kind: 'event', body: 'waiting_for_you', reference: null, at: 't' };
+}
+
+test('channel:page returns rows and passes the cursor and limit through', () => {
+    const calls: Array<{ before: ChannelCursor | null; limit: number }> = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        channelPage: (before, limit) => { calls.push({ before, limit }); return [chRow('a'), chRow('b')]; }
+    }));
+    const newest = handlers['channel:page']({ before: null, limit: 50 }) as ChannelPageReply;
+    assert.deepEqual(newest.rows.map((r) => r.id), ['a', 'b']);
+    assert.deepEqual(calls[0], { before: null, limit: 50 }, 'null before loads the newest page');
+
+    handlers['channel:page']({ before: { at: 't', id: 'a' }, limit: 20 });
+    assert.deepEqual(calls[1], { before: { at: 't', id: 'a' }, limit: 20 }, 'a cursor loads older rows');
+});
+
+test('channel:since returns rows newer than the cursor', () => {
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        channelSince: () => [chRow('c')]
+    }));
+    const reply = handlers['channel:since']({ after: { at: 't', id: 'b' }, limit: 50 }) as ChannelPageReply;
+    assert.deepEqual(reply.rows.map((r) => r.id), ['c']);
+});
+
+test('channel:page and channel:since refuse arguments that fail the guard', () => {
+    const handlers = buildHandlers(deps());
+    assert.throws(() => handlers['channel:page']({ limit: 50 }), /requires/, 'before is required, even if null');
+    assert.throws(() => handlers['channel:page']({ before: null, limit: 0 }), /requires/);
+    assert.throws(() => handlers['channel:since']({ limit: 50 }), /requires/, 'after cursor is required');
+    assert.throws(() => handlers['channel:since']({ after: { at: 't' }, limit: 50 }), /requires/, 'cursor needs id');
 });
 
 test('session:open and session:resize refuse arguments that fail the guard', () => {

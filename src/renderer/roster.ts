@@ -15,6 +15,7 @@ import type { RosterCard } from '../shared/ipc.ts';
 import { RosterAlerts } from './roster-alerts.ts';
 import { cardClassName, stateLabel } from './roster-view.ts';
 import { openDetail } from './detail.ts';
+import { activateChannel, deactivateChannel } from './channel.ts';
 
 declare global {
     interface Window {
@@ -192,6 +193,24 @@ function main(): void {
     // Elapsed labels drift without a repaint, so tick them on a slow timer. This
     // reads no new data and fires no alert; it only re-renders the times.
     setInterval(() => { if (latest.length > 0) render(); }, 30_000);
+
+    // The left rail switches the main area between Roster and Channel. The detail
+    // overlay sits on top of whichever is active, so it is not a rail entry.
+    const rosterMain = document.getElementById('roster') as HTMLElement;
+    const channelView = document.getElementById('channel') as HTMLElement;
+    const showView = (view: string): void => {
+        const isChannel = view === 'channel';
+        rosterMain.hidden = isChannel;
+        channelView.hidden = !isChannel;
+        for (const item of document.querySelectorAll('.rail-item')) {
+            item.classList.toggle('active', item.getAttribute('data-view') === view);
+        }
+        if (isChannel) void activateChannel();
+        else deactivateChannel();
+    };
+    for (const item of document.querySelectorAll('.rail-item')) {
+        item.addEventListener('click', () => showView(item.getAttribute('data-view') ?? 'roster'));
+    }
 
     void refresh();
 }

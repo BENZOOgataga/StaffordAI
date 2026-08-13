@@ -13,7 +13,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
     isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel,
-    type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened
+    type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened,
+    type ChannelCursor, type ChannelPageReply
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -53,6 +54,17 @@ const api = Object.freeze({
     roster: Object.freeze({
         snapshot: (): Promise<RosterSnapshot> => invoke('roster:snapshot') as Promise<RosterSnapshot>,
         onChanged: (listener: () => void): (() => void) => on('roster:changed', () => listener())
+    }),
+
+    // The channel timeline. Read-only and paginated: page loads the newest or an
+    // older page, since fetches the tail after a cursor, onChanged signals a row
+    // landed. Ids and text only, no path.
+    channel: Object.freeze({
+        page: (before: ChannelCursor | null, limit: number): Promise<ChannelPageReply> =>
+            invoke('channel:page', { before, limit }) as Promise<ChannelPageReply>,
+        since: (after: ChannelCursor, limit: number): Promise<ChannelPageReply> =>
+            invoke('channel:since', { after, limit }) as Promise<ChannelPageReply>,
+        onChanged: (listener: () => void): (() => void) => on('channel:changed', () => listener())
     }),
 
     // The detail view's live terminal. open subscribes to a hire's session and

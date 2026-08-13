@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite } from './guards.ts';
+import {
+    isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite,
+    isChannelPage, isChannelSince
+} from './guards.ts';
 
 test('a proof spawn needs bounded integer cols and rows', () => {
     assert.equal(isProofSpawn({ cols: 80, rows: 24 }), true);
@@ -49,4 +52,21 @@ test('a session write needs a hire id and a bounded string', () => {
     assert.equal(isSessionWrite({ hireId: 'h1', text: 'x'.repeat(64 * 1024 + 1) }), false, 'over the cap');
     assert.equal(isSessionWrite({ text: 'hi' }), false, 'no hire id');
     assert.equal(isSessionWrite(null), false);
+});
+
+test('a channel page read takes a null-or-cursor before and a bounded limit', () => {
+    assert.equal(isChannelPage({ before: null, limit: 50 }), true, 'null before is the newest page');
+    assert.equal(isChannelPage({ before: { at: 't', id: 'a' }, limit: 20 }), true, 'a cursor is scroll-back');
+    assert.equal(isChannelPage({ limit: 50 }), false, 'before is required, even if null');
+    assert.equal(isChannelPage({ before: { at: 't' }, limit: 50 }), false, 'a cursor needs an id');
+    assert.equal(isChannelPage({ before: null, limit: 0 }), false, 'limit out of bounds');
+    assert.equal(isChannelPage({ before: null, limit: 5000 }), false, 'over the cap');
+    assert.equal(isChannelPage(null), false);
+});
+
+test('a channel since read takes a cursor and a bounded limit', () => {
+    assert.equal(isChannelSince({ after: { at: 't', id: 'a' }, limit: 50 }), true);
+    assert.equal(isChannelSince({ after: null, limit: 50 }), false, 'after is required');
+    assert.equal(isChannelSince({ after: { id: 'a' }, limit: 50 }), false, 'the cursor needs a timestamp');
+    assert.equal(isChannelSince({ after: { at: 't', id: 'a' }, limit: 0 }), false);
 });
