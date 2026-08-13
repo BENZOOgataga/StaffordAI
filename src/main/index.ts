@@ -27,6 +27,7 @@ import { ProofPty } from './ipc/proof-pty.ts';
 import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
+import { preTrustDirectory } from './agents/pre-trust.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent } from './agents/drain.ts';
@@ -98,6 +99,16 @@ function openStore(): boolean {
         app.quit();
         return false;
     }
+}
+
+/**
+ * Writes to a path atomically: a temp file in the same directory, then a rename,
+ * so a concurrent reader of Claude Code's config never sees a half-written file.
+ */
+function writeConfigAtomic(target: string, data: string): void {
+    const tmp = target + '.stafford-' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, data);
+    fs.renameSync(tmp, target);
 }
 
 /** True iff the path is an existing directory. The create flow's load-bearing check. */
@@ -332,6 +343,22 @@ function buildLifecycle(store: HireStore): void {
             platform, dir: cwd, configPath: path.join(home, '.claude.json'),
             readFile: (p) => fs.readFileSync(p, 'utf8')
         }),
+        // Pre-trust the project directory the user chose, so the spawn skips the
+        // startup trust prompt. Directory-trust only, scoped to this cwd. The key
+        // is the path Claude matches its cwd to: real case, forward slashes.
+        preTrust: (cwd) => preTrustDirectory({
+            configPath: path.join(home, '.claude.json'),
+            readFile: (p) => fs.readFileSync(p, 'utf8'),
+            writeFile: writeConfigAtomic,
+            resolveKey: (dir) => {
+                try {
+                    return fs.realpathSync.native(dir).replace(/\\/g, '/');
+                } catch {
+                    return dir.replace(/\\/g, '/');
+                }
+            },
+            warn: (message) => process.stderr.write('[pre-trust] ' + message + '\n')
+        }, cwd),
         onStateChanged: () => notifyRosterChanged()
     });
     smoke('lifecycle ready, claude at ' + claudePath);
