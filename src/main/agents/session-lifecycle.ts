@@ -94,6 +94,13 @@ export interface LifecycleDeps {
     readonly setState: (hireId: string, state: AgentState) => void;
     /** Claude Code's trust for a directory, for classifying an exit before any hook. */
     readonly trustFor: (cwd: string) => TrustState;
+    /**
+     * Pre-trusts the project directory before the spawn, so Claude Code does not
+     * stop at the startup trust prompt the sanitised message box cannot answer.
+     * Scoped to the one cwd, directory-trust only, never a permission blanket.
+     * Optional so a test can spawn without touching any config.
+     */
+    readonly preTrust?: (cwd: string) => void;
     /** Notified when a state changes here, so the roster can be told. */
     readonly onStateChanged?: (hireId: string) => void;
     readonly notReportingMs?: number;
@@ -252,6 +259,11 @@ export class SessionLifecycle {
     #spawn(hireId: string, options: { cold?: boolean } = {}): Owned {
         const target = this.#deps.resolveTarget(hireId);
         if (!target) throw new Error('cannot spawn ' + hireId + ': the hire is on no project');
+
+        // Pre-trust the project directory before Claude Code reads its config, so
+        // the spawn does not stop at the startup trust prompt. Scoped to this one
+        // cwd, the directory the user chose at create time.
+        this.#deps.preTrust?.(target.cwd);
 
         // A stored session id resumes; nothing, or a forced-cold fallback, spawns
         // fresh. Resume reuses everything else about the cold spawn below: the env,

@@ -127,11 +127,13 @@ function buildDeps(over: {
     const setStateCalls: Array<{ hireId: string; state: string }> = [];
     const killed: number[] = [];
     const capturedArgs: string[][] = [];
+    const preTrustCalls: string[] = [];
     const absSocket = path.resolve(os.tmpdir(), 'x.sock');
     const lifecycle = new SessionLifecycle({
         platform: PLATFORM, socketPath: absSocket, secrets, registry,
         claudePath: path.resolve(os.tmpdir(), 'claude'), nodeDir: path.dirname(process.execPath), parentEnv: {},
         spawn: (_file, args) => { capturedArgs.push([...args]); return pty; },
+        preTrust: (cwd) => { preTrustCalls.push(cwd); },
         resolveTarget: () => (over.target === undefined
             ? { projectId: 'p1', cwd: 'C:/repo', resumeSessionId: over.resumeSessionId ?? null }
             : over.target),
@@ -142,7 +144,7 @@ function buildDeps(over: {
         ...(over.timers ? { timers: over.timers } : {}),
         killTree: async (_p, pid) => { killed.push(pid); return noKill(); }
     });
-    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, pty };
+    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, preTrustCalls, pty };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -153,6 +155,13 @@ test('the first message cold-spawns a session and pre-registers it as drainable 
     assert.equal(lifecycle.has('h1'), true);
     assert.equal(registry.isPending('h1'), true, 'pre-registered before any hook');
     assert.equal(registry.drainables()[0]?.pid, pid, 'drainable by its real pid');
+});
+
+test('a cold spawn pre-trusts the project cwd it resolved, and only that cwd', () => {
+    const { lifecycle, preTrustCalls } = buildDeps({ target: { projectId: 'p1', cwd: 'C:/Users/me/repo' } });
+    lifecycle.sendMessage('h1', 'hello');
+    assert.deepEqual(preTrustCalls, ['C:/Users/me/repo'],
+        'the spawn pre-trusts exactly the project directory, nothing wider');
 });
 
 test('the attached hook drives the hire to working and stops the not-reporting clock', () => {
