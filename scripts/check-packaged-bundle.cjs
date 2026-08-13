@@ -86,22 +86,30 @@ function main() {
     if (!asarPath) {
         fail('no app.asar found in dist. Cannot verify the migrations shipped.');
     }
-    // The runtime path openDatabase resolves, out/main/migrations/0001_init.sql.
-    // listPackage returns OS-separated paths, so compare after normalising to
-    // forward slashes rather than assuming a separator.
-    const MIGRATION_IN_ASAR = 'out/main/migrations/0001_init.sql';
+    // Every migration in the source tree must survive into the bundle, not just
+    // the first one. The list is read from the source so a new migration is checked
+    // automatically and none can be forgotten. listPackage returns OS-separated
+    // paths, so compare after normalising to forward slashes.
+    const migrationsSrc = path.join(ROOT, 'src', 'main', 'storage', 'migrations');
+    const migrationFiles = require('fs').readdirSync(migrationsSrc).filter((f) => f.endsWith('.sql')).sort();
+    if (migrationFiles.length === 0) {
+        fail('no migration .sql files found in ' + migrationsSrc + '; the guard has nothing to verify.');
+    }
     const inAsar = asar.listPackage(asarPath)
         .map((p) => p.replace(/\\/g, '/').replace(/^\//, ''));
-    if (!inAsar.includes(MIGRATION_IN_ASAR)) {
-        fail('migration ' + MIGRATION_IN_ASAR + ' is not in app.asar at the path openDatabase resolves ' +
-            'at runtime. electron-vite did not copy the .sql next to the main bundle, so the packaged app ' +
-            'would throw at first launch trying to read its schema.');
+    for (const file of migrationFiles) {
+        const runtimePath = 'out/main/migrations/' + file;
+        if (!inAsar.includes(runtimePath)) {
+            fail('migration ' + runtimePath + ' is not in app.asar at the path openDatabase resolves ' +
+                'at runtime. electron-vite did not copy the .sql next to the main bundle, so the packaged app ' +
+                'would throw at first launch trying to read its schema.');
+        }
+        const stat = asar.statFile(asarPath, ['out', 'main', 'migrations', file].join(path.sep));
+        if (!stat || stat.size === 0) {
+            fail('migration ' + runtimePath + ' is present in the asar but empty.');
+        }
+        console.log('  OK    migration in asar at runtime path: ' + runtimePath + ' (' + stat.size + ' bytes)');
     }
-    const stat = asar.statFile(asarPath, ['out', 'main', 'migrations', '0001_init.sql'].join(path.sep));
-    if (!stat || stat.size === 0) {
-        fail('migration ' + MIGRATION_IN_ASAR + ' is present in the asar but empty.');
-    }
-    console.log('  OK    migration in asar at runtime path: ' + MIGRATION_IN_ASAR + ' (' + stat.size + ' bytes)');
 
     const darwinHelpers = unpacked.filter((f) =>
         path.basename(f) === 'spawn-helper' && !f.includes('win32'));

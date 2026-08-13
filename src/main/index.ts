@@ -33,7 +33,9 @@ import { assembleRoster } from './roster/snapshot.ts';
 import { SessionLifecycle } from './agents/session-lifecycle.ts';
 import { locateClaude } from './agents/claude-locator.ts';
 import { readTrust } from './agents/trust.ts';
+import { recordTransition } from './channel/channel-events.ts';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { RosterSnapshot } from '../shared/ipc.ts';
 import type { PtyLike } from './agents/pty-session.ts';
 
@@ -371,12 +373,18 @@ app.whenReady().then(async () => {
         const store = hireStoreOver(repositories);
         registry = new SessionRegistry(store);
         transport.listener.on('event', (raw: Record<string, unknown>) => {
-            const result = registry?.ingest(coerceHookEvent(raw), new Date().toISOString());
+            const now = new Date().toISOString();
+            const result = registry?.ingest(coerceHookEvent(raw), now);
             if (result?.changed) {
                 smoke('hook drove ' + result.hireId + ' to ' + result.state);
                 // A transition, so the roster changed. The renderer re-reads on
                 // this signal rather than being pushed a card per hook event.
                 notifyRosterChanged();
+                // The same real-change signal drives a channel timeline row, when
+                // the state earns one. A card-only state writes nothing.
+                if (repositories && recordTransition(repositories.channel, result, now, randomUUID())) {
+                    smoke('channel event for ' + result.hireId + ' ' + result.state);
+                }
             }
         });
         buildLifecycle(store);
