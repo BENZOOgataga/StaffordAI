@@ -13,7 +13,7 @@
 
 import type {
     ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite,
-    ChannelCursor, ChannelPageRequest, ChannelSinceRequest
+    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply
 } from '../shared/ipc.ts';
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -61,6 +61,12 @@ export function isChannelPage(value: unknown): value is ChannelPageRequest {
 /** A tail read: rows after a cursor, capped. */
 export function isChannelSince(value: unknown): value is ChannelSinceRequest {
     return isObject(value) && isChannelCursor(value.after) && isBoundedInt(value.limit, 1, 500);
+}
+
+/** An inline reply: a hire id and a bounded string, the same shape a session write takes. */
+export function isChannelReply(value: unknown): value is ChannelReply {
+    if (!isObject(value)) return false;
+    return isHireId(value.hireId) && typeof value.text === 'string' && value.text.length <= 64 * 1024;
 }
 
 /** A terminal size the proof window may ask for, bounded so a renderer cannot ask for nonsense. */

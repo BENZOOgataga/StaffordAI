@@ -305,6 +305,39 @@
     padding: 1px 6px;
   }
 
+  .row-reply { margin-top: 6px; }
+  .row-reply-toggle {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.82rem;
+    padding: 2px 0;
+    cursor: pointer;
+  }
+  .row-reply-toggle:hover { color: var(--text); }
+  .row-reply-toggle:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+  .row-reply-input {
+    display: block;
+    width: 100%;
+    max-width: 560px;
+    margin-top: 6px;
+    resize: vertical;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 8px 11px;
+    font: inherit;
+    line-height: 1.5;
+  }
+  .row-reply-input:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+  .row-reply-input::placeholder { color: var(--muted); }
+  /* An explicit display beats the [hidden] default, so hide the collapsed input
+     explicitly until its Reply toggle opens it. */
+  .row-reply-input[hidden] { display: none; }
+
   /* The detail view, same window, two panes: the colleague's terminal and, later,
      the input box the write half adds. It fills the window over the roster and
      hands back with a clear control. */

@@ -6,8 +6,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { eventLabel, referenceLabel, channelRowClass, Timeline } from './channel-view.ts';
-import type { ChannelMessageRow } from '../shared/ipc.ts';
+import { eventLabel, referenceLabel, channelRowClass, resolveReplyTarget, Timeline } from './channel-view.ts';
+import { CHANNEL_SELF_SENDER, type ChannelMessageRow } from '../shared/ipc.ts';
 
 function row(id: string, at: string): ChannelMessageRow {
     return { id, projectId: 'p1', senderId: 'h1', kind: 'message', body: 'hi', reference: null, at };
@@ -43,6 +43,13 @@ test('a waiting event carries the weight the roster gives waiting; a message and
     assert.equal(channelRowClass('event', 'waiting_for_you'), 'row event waiting');
     assert.equal(channelRowClass('event', 'crashed'), 'row event');
     assert.equal(channelRowClass('message', 'hello'), 'row message');
+});
+
+test('a reply resolves a message row and an event row to the colleague, and a You row to nothing', () => {
+    // A message from a hire and an event about a hire both resolve to that hire.
+    assert.equal(resolveReplyTarget({ senderId: 'h1' }), 'h1', 'a colleague message targets that colleague');
+    // The person\'s own message is not a reply target.
+    assert.equal(resolveReplyTarget({ senderId: CHANNEL_SELF_SENDER }), null, 'you do not reply to yourself');
 });
 
 test('the timeline appends the tail without dropping or re-fetching what it holds', () => {

@@ -27,6 +27,7 @@ export const INVOKE_CHANNELS = [
     'session:write',
     'channel:page',
     'channel:since',
+    'channel:reply',
     'proof:spawn',
     'proof:write',
     'proof:kill'
@@ -157,6 +158,18 @@ export interface ChannelSinceRequest {
 /** The reply to channel:page and channel:since: rows in ascending time order. */
 export interface ChannelPageReply {
     readonly rows: readonly ChannelMessageRow[];
+}
+
+/**
+ * The sender id the person's own messages carry, so a row from them renders as
+ * "You" and is not a reply target. A sentinel, not a hire id.
+ */
+export const CHANNEL_SELF_SENDER = 'benzoo';
+
+/** An inline reply from the timeline: to the hire a row is about, sanitised. */
+export interface ChannelReply {
+    readonly hireId: string;
+    readonly text: string;
 }
 
 /**
