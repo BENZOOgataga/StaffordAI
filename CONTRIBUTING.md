@@ -14,6 +14,10 @@ PRs. Because this is a personal project with a direction I hold in my head, a PR
 declined even when it is correct, if it does not fit where I am taking Stafford. That is not a judgement on the
 work. If you want to be sure a change is wanted before you build it, open an issue first and ask.
 
+This is enforced, not just stated. The `main` branch requires a review approval before any pull request can
+merge, and my own account is the only bypass. So my branches still merge once CI is green, and a pull request
+from a fork stays blocked until I review and approve it.
+
 ## Build and run
 
 You need Node 22 or newer and Claude Code installed.
