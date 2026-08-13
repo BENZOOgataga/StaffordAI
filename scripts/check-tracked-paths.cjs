@@ -45,6 +45,10 @@ const ALLOWED_TOP_LEVEL = new Set([
     '.github',
     '.gitignore',
     '.npmrc',
+    // Public-repo hygiene docs, added when the repo opened to contributions.
+    'CHANGELOG.md',
+    'CODE_OF_CONDUCT.md',
+    'CONTRIBUTING.md',
     'LICENSE',
     'README.md',
     'SECURITY.md',
@@ -84,7 +88,8 @@ const ALLOWED_EXTENSIONS = {
     // type: module, and anything still using require() had to say so in its
     // extension rather than rely on the root. The guard caught the rename,
     // which is what it is for.
-    '.github': ['.cjs', '.yml'],
+    // .md added for PULL_REQUEST_TEMPLATE.md, the GitHub-conventional location.
+    '.github': ['.cjs', '.md', '.yml'],
     data: ['.json', '.md'],
     docs: ['.md', '.svg'],
     hooks: ['.cjs', '.md', '.ps1'],

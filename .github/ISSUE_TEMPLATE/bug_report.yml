@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in Stafford is broken or behaves wrong.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing. Platform and environment details matter a lot here: Stafford drives real
+        `claude` processes inside a pseudo-terminal, so many bugs are specific to an OS or an install.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: For example, macOS 15.1 or Windows 11 23H2.
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: Stafford version
+      description: The app version, or the commit SHA if you built from source.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: What area does this touch?
+      description: Best guess is fine.
+      options:
+        - Terminal or ConPTY (a session, typing, the pty itself)
+        - Native module or install (node-pty, better-sqlite3, npm ci, packaging)
+        - Colleague state (working, idle, waiting, rate limited, crashed showing wrong)
+        - Roster or channel UI
+        - Other or not sure
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What you did, step by step.
+      placeholder: |
+        1. Hire an agent
+        2. Send a message
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual
+      description: What you expected to happen, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Any relevant terminal output or error text. Redact anything private first.
+      render: text
+    validations:
+      required: false
