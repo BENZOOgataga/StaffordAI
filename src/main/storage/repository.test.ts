@@ -161,6 +161,29 @@ test('the channel read is paginated: limit and offset, and there is no read-ever
     });
 });
 
+test('the channel newest, before and after cursor reads page the timeline in time order', () => {
+    withRepos((repos) => {
+        for (let i = 0; i < 5; i++) {
+            repos.channel.append(channelMessage('m' + i, '2026-08-13T00:00:0' + i + 'Z'));
+        }
+        // newest: the tail, oldest-first.
+        const newest = repos.channel.newest(2);
+        assert.deepEqual(newest.map((m) => m.id), ['m3', 'm4'], 'the newest page, in ascending order');
+
+        // before the oldest of that page: the older rows, oldest-first.
+        const older = repos.channel.before({ at: newest[0]!.at, id: newest[0]!.id }, 2);
+        assert.deepEqual(older.map((m) => m.id), ['m1', 'm2'], 'the page just before the cursor');
+
+        // after the newest: nothing yet, then a fresh row appears.
+        assert.deepEqual(repos.channel.after({ at: newest[1]!.at, id: newest[1]!.id }, 10), [], 'no rows after the tail');
+        repos.channel.append(channelMessage('m5', '2026-08-13T00:00:05Z'));
+        assert.deepEqual(
+            repos.channel.after({ at: newest[1]!.at, id: newest[1]!.id }, 10).map((m) => m.id), ['m5'],
+            'only the new tail row, not the whole timeline'
+        );
+    });
+});
+
 test('the channel offers no update or delete, and a raw one raises at the trigger', () => {
     withRepos((repos, raw) => {
         repos.channel.append(channelMessage('a', '2026-08-13T00:00:00Z'));

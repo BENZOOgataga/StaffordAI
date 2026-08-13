@@ -103,6 +103,9 @@
   @media (min-width: 720px) {
     main { grid-template-columns: 1fr 1fr; }
   }
+  /* An explicit display beats the [hidden] user-agent rule, so hide it explicitly
+     when the channel view is active. */
+  main[hidden] { display: none; }
 
   .card {
     position: relative;
@@ -229,6 +232,79 @@
   .card[role="button"] { cursor: pointer; }
   .card[role="button"]:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
 
+  /* The left navigation rail: the first top-level navigation, Roster and Channel
+     as siblings, the detail overlay sitting on top of whichever is active. Quiet
+     and native, and the labels flex for longer translated words. */
+  .app { display: flex; min-height: 100vh; }
+  .rail {
+    flex: 0 0 clamp(140px, 16%, 200px);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 16px 12px;
+    border-right: 1px solid var(--line);
+    background: rgba(20, 24, 31, 0.4);
+  }
+  @media (prefers-reduced-transparency: reduce) { .rail { background: var(--bg); } }
+  .rail-brand { font-weight: 620; letter-spacing: -0.015em; padding: 4px 10px 12px; }
+  .rail-item {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .rail-item:hover { color: var(--text); background: var(--surface); }
+  .rail-item.active { color: var(--text); background: var(--surface); font-weight: 560; }
+  .rail-item:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+  .content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
+
+  .channel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .channel[hidden] { display: none; }
+  .timeline {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 22px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .row { max-width: 760px; overflow-wrap: anywhere; }
+  .row.message {
+    padding: 9px 13px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 11px;
+  }
+  .row.message .who { font-weight: 600; margin-right: 8px; }
+  .row.message .body { color: var(--text); opacity: 0.9; }
+  .row.event { color: var(--muted); font-size: 0.95rem; padding: 4px 6px; }
+  /* The one about the person, given the roster's amber weight so a question does
+     not read like an ambient notice. */
+  .row.event.waiting {
+    color: var(--waiting);
+    font-weight: 560;
+    padding: 8px 13px;
+    border-left: 3px solid var(--waiting-edge);
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--waiting-soft), transparent 45%);
+  }
+  .ref {
+    display: inline-block;
+    margin-left: 8px;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1px 6px;
+  }
+
   /* The detail view, same window, two panes: the colleague's terminal and, later,
      the input box the write half adds. It fills the window over the roster and
      hands back with a clear control. */
@@ -310,14 +386,24 @@
   :focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
 </style>
 
-<header>
-  <span class="wordmark">Stafford</span>
-  <span id="waiting-count" class="waiting-count"></span>
-  <span class="spacer"></span>
-  <button id="mute" class="mute" type="button" aria-pressed="false">Mute</button>
-</header>
-
-<main id="roster" aria-live="polite"></main>
+<div class="app">
+  <nav class="rail" aria-label="Sections">
+    <span class="rail-brand">Stafford</span>
+    <button class="rail-item active" type="button" data-view="roster">Roster</button>
+    <button class="rail-item" type="button" data-view="channel">Channel</button>
+  </nav>
+  <div class="content">
+    <header>
+      <span id="waiting-count" class="waiting-count"></span>
+      <span class="spacer"></span>
+      <button id="mute" class="mute" type="button" aria-pressed="false">Mute</button>
+    </header>
+    <main id="roster" aria-live="polite"></main>
+    <section id="channel" class="channel" hidden aria-label="Channel timeline">
+      <div id="timeline" class="timeline" aria-live="polite"></div>
+    </section>
+  </div>
+</div>
 
 <section id="detail" class="detail" hidden aria-hidden="true" aria-label="Colleague detail">
   <div class="detail-head">

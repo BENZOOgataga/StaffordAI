@@ -29,6 +29,7 @@
 import type {
     HiredAgent, Project, Task, PolicyLogEntry, DrainReportEntry, ChannelMessage
 } from '../../domain/models.ts';
+import type { ChannelCursor } from '../../shared/ipc.ts';
 import type { StorageDatabase, Statement } from './database.ts';
 import {
     hireToRow, hireFromRow, projectToRow, projectFromRow, taskToRow, taskFromRow,
@@ -208,6 +209,9 @@ export class ChannelRepository {
     readonly #append: Statement;
     readonly #page: Statement;
     readonly #pageByProject: Statement;
+    readonly #newest: Statement;
+    readonly #before: Statement;
+    readonly #after: Statement;
 
     constructor(db: StorageDatabase) {
         this.#append = db.prepare(
@@ -216,6 +220,17 @@ export class ChannelRepository {
         this.#page = db.prepare('SELECT * FROM channel_messages ORDER BY at, id LIMIT ? OFFSET ?');
         this.#pageByProject = db.prepare(
             'SELECT * FROM channel_messages WHERE project_id = ? ORDER BY at, id LIMIT ? OFFSET ?');
+        // The newest page: the tail, for the initial load. Read descending, then
+        // reversed to oldest-first so the timeline is one ascending order.
+        this.#newest = db.prepare('SELECT * FROM channel_messages ORDER BY at DESC, id DESC LIMIT @limit');
+        // Older than a cursor, for scroll-back. Row-value comparison on (at, id).
+        this.#before = db.prepare(
+            'SELECT * FROM channel_messages WHERE at < @at OR (at = @at AND id < @id) ' +
+            'ORDER BY at DESC, id DESC LIMIT @limit');
+        // Newer than a cursor, for the tail append when a row lands. Already ascending.
+        this.#after = db.prepare(
+            'SELECT * FROM channel_messages WHERE at > @at OR (at = @at AND id > @id) ' +
+            'ORDER BY at ASC, id ASC LIMIT @limit');
     }
 
     append(message: ChannelMessage): void { this.#append.run(channelMessageToRow(message)); }
@@ -223,6 +238,22 @@ export class ChannelRepository {
     /** A page of the whole timeline, messages and events interleaved by time. */
     page(page: Page): ChannelMessage[] {
         return rowsOf(this.#page, page.limit, page.offset).map(channelMessageFromRow);
+    }
+
+    /** The newest `limit` rows, oldest-first, for the initial timeline load. */
+    newest(limit: number): ChannelMessage[] {
+        return (this.#newest.all({ limit }) as Row[]).map(channelMessageFromRow).reverse();
+    }
+
+    /** Up to `limit` rows older than the cursor, oldest-first, for scroll-back. */
+    before(cursor: ChannelCursor, limit: number): ChannelMessage[] {
+        return (this.#before.all({ at: cursor.at, id: cursor.id, limit }) as Row[])
+            .map(channelMessageFromRow).reverse();
+    }
+
+    /** Rows newer than the cursor, oldest-first, for appending the tail. */
+    after(cursor: ChannelCursor, limit: number): ChannelMessage[] {
+        return (this.#after.all({ at: cursor.at, id: cursor.id, limit }) as Row[]).map(channelMessageFromRow);
     }
 
     /** A page of one project's timeline. */

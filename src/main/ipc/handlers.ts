@@ -14,10 +14,11 @@
 import type { IpcMain, WebContents } from 'electron';
 import {
     INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot,
-    type SessionOpened
+    type SessionOpened, type ChannelCursor, type ChannelMessageRow, type ChannelPageReply
 } from '../../shared/ipc.ts';
 import {
-    isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite
+    isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite,
+    isChannelPage, isChannelSince
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 import { OutputCoalescer } from './output-coalescer.ts';
@@ -57,6 +58,10 @@ export interface HandlerDeps {
      * none is up. The handler sanitises and scopes; this delivers it.
      */
     readonly submitMessage: (hireId: string, text: string) => Promise<void>;
+    /** A page of the timeline: the newest when `before` is null, else older rows. */
+    readonly channelPage: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
+    /** Rows newer than a cursor, for the tail append. */
+    readonly channelSince: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
 }
 
 /**
@@ -116,6 +121,20 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'session:resize': (payload: unknown): void => {
             if (!isSessionResize(payload)) throw new Error('session:resize requires {hireId,cols,rows}');
             deps.resizeSession(payload.hireId, payload.cols, payload.rows);
+        },
+
+        // The timeline, read-only and paginated. `before` null loads the newest
+        // page; a cursor loads older rows for scroll-back. Never a read-everything.
+        'channel:page': (payload: unknown): ChannelPageReply => {
+            if (!isChannelPage(payload)) throw new Error('channel:page requires {before,limit}');
+            return { rows: deps.channelPage(payload.before, payload.limit) };
+        },
+
+        // Rows newer than a cursor. The renderer calls this on channel:changed to
+        // append the tail rather than re-reading the whole timeline.
+        'channel:since': (payload: unknown): ChannelPageReply => {
+            if (!isChannelSince(payload)) throw new Error('channel:since requires {after,limit}');
+            return { rows: deps.channelSince(payload.after, payload.limit) };
         },
 
         // A typed message. Scoped to the open card: the renderer names the hire, and

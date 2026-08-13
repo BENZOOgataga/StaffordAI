@@ -11,7 +11,10 @@
  * nothing usable until the guard has run.
  */
 
-import type { ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite } from '../shared/ipc.ts';
+import type {
+    ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite,
+    ChannelCursor, ChannelPageRequest, ChannelSinceRequest
+} from '../shared/ipc.ts';
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -37,6 +40,27 @@ export function isSessionResize(value: unknown): value is SessionResize {
 export function isSessionWrite(value: unknown): value is SessionWrite {
     if (!isObject(value)) return false;
     return isHireId(value.hireId) && typeof value.text === 'string' && value.text.length <= 64 * 1024;
+}
+
+function isBoundedString(value: unknown, max: number): boolean {
+    return typeof value === 'string' && value.length > 0 && value.length <= max;
+}
+
+/** A timeline cursor: a bounded timestamp and id, never a path. */
+function isChannelCursor(value: unknown): value is ChannelCursor {
+    return isObject(value) && isBoundedString(value.at, 64) && isBoundedString(value.id, 256);
+}
+
+/** A page read. `before` is null for the newest page, or a cursor for scroll-back. */
+export function isChannelPage(value: unknown): value is ChannelPageRequest {
+    if (!isObject(value)) return false;
+    const okBefore = value.before === null || isChannelCursor(value.before);
+    return okBefore && isBoundedInt(value.limit, 1, 500);
+}
+
+/** A tail read: rows after a cursor, capped. */
+export function isChannelSince(value: unknown): value is ChannelSinceRequest {
+    return isObject(value) && isChannelCursor(value.after) && isBoundedInt(value.limit, 1, 500);
 }
 
 /** A terminal size the proof window may ask for, bounded so a renderer cannot ask for nonsense. */
