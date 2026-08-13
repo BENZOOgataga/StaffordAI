@@ -101,6 +101,13 @@ export interface LifecycleDeps {
      * Optional so a test can spawn without touching any config.
      */
     readonly preTrust?: (cwd: string) => void;
+    /**
+     * Registers Stafford's state-reporting hooks in the project before the spawn,
+     * so Claude Code runs the forwarder and the roster and channel are not blind.
+     * Scoped to the one project. Optional so a test can spawn without touching a
+     * settings file.
+     */
+    readonly registerHooks?: (cwd: string) => void;
     /** Notified when a state changes here, so the roster can be told. */
     readonly onStateChanged?: (hireId: string) => void;
     readonly notReportingMs?: number;
@@ -264,6 +271,10 @@ export class SessionLifecycle {
         // the spawn does not stop at the startup trust prompt. Scoped to this one
         // cwd, the directory the user chose at create time.
         this.#deps.preTrust?.(target.cwd);
+
+        // Register the state-reporting hooks in the project before the spawn, so
+        // Claude Code runs the forwarder and the roster is not silently blind.
+        this.#deps.registerHooks?.(target.cwd);
 
         // A stored session id resumes; nothing, or a forced-cold fallback, spawns
         // fresh. Resume reuses everything else about the cold spawn below: the env,

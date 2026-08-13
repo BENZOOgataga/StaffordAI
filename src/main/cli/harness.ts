@@ -44,7 +44,7 @@ import { assertStartable } from '../startup/self-check.ts';
 import { prepareSocketFor } from '../hooks/socket-setup.ts';
 import { HookListener } from '../hooks/hook-listener.ts';
 import { AgentSecrets } from '../hooks/agent-secrets.ts';
-import { buildCommand, merge, type Settings } from '../hooks/registration.ts';
+import { buildCommand, hookShellFor, merge, type Settings } from '../hooks/registration.ts';
 import { locateClaude } from '../agents/claude-locator.ts';
 import { buildAgentEnv } from '../agents/agent-env.ts';
 import { readTrust, TRUST } from '../agents/trust.ts';
@@ -199,7 +199,7 @@ export function createScratchProject(socketPath: string): { dir: string; command
     // normalises. Observed 2026-08-08 in this harness's first run.
     const dir = fs.realpathSync(base);
     const forwarder = path.resolve(process.cwd(), 'hooks', 'claude-hook.cjs');
-    const command = buildCommand(process.execPath, forwarder);
+    const command = buildCommand(process.execPath, forwarder, hookShellFor(currentPlatform().id));
 
     const settings: Settings = merge({}, command);
 

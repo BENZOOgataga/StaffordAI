@@ -128,12 +128,14 @@ function buildDeps(over: {
     const killed: number[] = [];
     const capturedArgs: string[][] = [];
     const preTrustCalls: string[] = [];
+    const registerHooksCalls: string[] = [];
     const absSocket = path.resolve(os.tmpdir(), 'x.sock');
     const lifecycle = new SessionLifecycle({
         platform: PLATFORM, socketPath: absSocket, secrets, registry,
         claudePath: path.resolve(os.tmpdir(), 'claude'), nodeDir: path.dirname(process.execPath), parentEnv: {},
         spawn: (_file, args) => { capturedArgs.push([...args]); return pty; },
         preTrust: (cwd) => { preTrustCalls.push(cwd); },
+        registerHooks: (cwd) => { registerHooksCalls.push(cwd); },
         resolveTarget: () => (over.target === undefined
             ? { projectId: 'p1', cwd: 'C:/repo', resumeSessionId: over.resumeSessionId ?? null }
             : over.target),
@@ -144,7 +146,7 @@ function buildDeps(over: {
         ...(over.timers ? { timers: over.timers } : {}),
         killTree: async (_p, pid) => { killed.push(pid); return noKill(); }
     });
-    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, preTrustCalls, pty };
+    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, preTrustCalls, registerHooksCalls, pty };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -162,6 +164,13 @@ test('a cold spawn pre-trusts the project cwd it resolved, and only that cwd', (
     lifecycle.sendMessage('h1', 'hello');
     assert.deepEqual(preTrustCalls, ['C:/Users/me/repo'],
         'the spawn pre-trusts exactly the project directory, nothing wider');
+});
+
+test('a cold spawn registers the state-reporting hooks in the project it resolved', () => {
+    const { lifecycle, registerHooksCalls } = buildDeps({ target: { projectId: 'p1', cwd: 'C:/Users/me/repo' } });
+    lifecycle.sendMessage('h1', 'hello');
+    assert.deepEqual(registerHooksCalls, ['C:/Users/me/repo'],
+        'the spawn registers hooks in exactly the project directory, so state reporting is not blind');
 });
 
 test('the attached hook drives the hire to working and stops the not-reporting clock', () => {
