@@ -13,13 +13,14 @@
  * Task 7a. No packaging, no update checker, no drain. Those are 7b and Task 8.
  */
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog, screen } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { currentPlatform } from './platform/index.ts';
 import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './window/security.ts';
+import { resolveWindowBounds, readWindowState, saveWindowState, WINDOW_DEFAULTS, type Rect } from './window/window-state.ts';
 import { installTray } from './tray.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
@@ -220,6 +221,27 @@ function rendererEntry(): string {
     return devUrl ?? 'file://' + path.join(dir, '../renderer/index.html');
 }
 
+/** The remembered window bounds live beside the DB, in userData, never committed. */
+function windowStatePath(): string {
+    return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+/**
+ * The bounds to open at. On first launch, a fraction of the current display's
+ * work area, clamped and centred. Otherwise the user's saved size and position,
+ * clamped to the display it now lands on so it always opens fully visible.
+ */
+function resolveOpenBounds(): { bounds: Rect; min: { width: number; height: number } } {
+    const saved = readWindowState((p) => fs.readFileSync(p, 'utf8'), windowStatePath());
+    // Clamp against the display the saved window lands on, or the primary on a
+    // first launch, using the work area so it never sits under the taskbar.
+    const display = saved
+        ? screen.getDisplayMatching({ x: saved.x, y: saved.y, width: saved.width, height: saved.height })
+        : screen.getPrimaryDisplay();
+    const bounds = resolveWindowBounds(display.workArea, saved, WINDOW_DEFAULTS);
+    return { bounds, min: WINDOW_DEFAULTS.min };
+}
+
 function openWindow(): void {
     if (window && !window.isDestroyed()) {
         window.show();
@@ -227,9 +249,14 @@ function openWindow(): void {
         return;
     }
 
+    const { bounds, min } = resolveOpenBounds();
     const win = new BrowserWindow({
-        width: 720,
-        height: 520,
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        minWidth: min.width,
+        minHeight: min.height,
         show: false,
         title: 'Stafford',
         webPreferences: {
@@ -242,6 +269,25 @@ function openWindow(): void {
     const entry = rendererEntry();
     applyWindowSecurity(win, entry);
     win.once('ready-to-show', () => win.show());
+
+    // Remember the user's size and position after they adjust it. Debounced, and
+    // only a normal window (not minimised or maximised) is worth saving, so a
+    // restore opens at a real size rather than a zero or a maximised sentinel.
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    const rememberBounds = (): void => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+            if (win.isDestroyed() || win.isMinimized() || win.isMaximized()) return;
+            try {
+                saveWindowState((p, data) => fs.writeFileSync(p, data), windowStatePath(), win.getBounds());
+            } catch {
+                // A window-state write is best effort: a failure loses the memory,
+                // never a launch.
+            }
+        }, 400);
+    };
+    win.on('resize', rememberBounds);
+    win.on('move', rememberBounds);
 
     // Closing returns to the tray rather than quitting.
     win.on('close', (event) => {
