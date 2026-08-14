@@ -15,27 +15,34 @@
 -->
 <style>
   :root {
-    --bg: #14181F;
-    --surface: #1E242E;
-    --surface-hover: #232B38;
-    --text: #E7EAF0;
-    --muted: #98A2B3;
-    --line: rgba(255, 255, 255, 0.07);
+    /* Geist register: near-black neutral base, high-contrast text, hairline lines.
+       One accent, amber, spent only on waiting. Everything else grayscale-quiet. */
+    --bg: #0A0A0A;
+    --surface: #141414;
+    --surface-hover: #1C1C1C;
+    --text: #EDEDED;
+    --muted: #8F8F8F;
+    --line: rgba(255, 255, 255, 0.09);
+    --focus: rgba(255, 255, 255, 0.55);
 
-    --working: #57B6A3;
+    /* The non-waiting states are grayscale-quiet, not coloured. */
+    --working: #C9C9C9;
     --waiting: #E8A13A;
-    --waiting-soft: rgba(232, 161, 58, 0.16);
+    --waiting-soft: rgba(232, 161, 58, 0.14);
     --waiting-edge: rgba(232, 161, 58, 0.55);
-    --limited: #9B8CC4;
-    --danger: #C4735A;
-    --nosignal: #7C8AA0;
+    --limited: #9A9A9A;
+    --danger: #B5B5B5;
+    --nosignal: #6E6E6E;
 
-    --radius: 13px;
-    --gap: 14px;
-    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --radius: 10px;
+    --gap: 12px;
+    /* Critically damped, no overshoot: an ease-out settle, ~0.32s. */
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --settle: 320ms;
 
-    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    font: 14px/1.5 "Geist", "Geist Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.006em;
+    --mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
   }
 
   * { box-sizing: border-box; }
@@ -46,6 +53,7 @@
     color: var(--text);
     -webkit-font-smoothing: antialiased;
     min-height: 100vh;
+    overflow-x: hidden;
   }
 
   header {
@@ -93,19 +101,31 @@
   .mute:hover { color: var(--text); border-color: rgba(255,255,255,0.16); }
   .mute:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
 
-  main {
-    padding: 16px 22px 28px;
+  /* The three-pane workspace: the roster in the centre, the detail pane on the
+     right, a hairline between. The nav rail is the third pane, to the left. */
+  .workspace { flex: 1 1 auto; min-height: 0; display: flex; }
+  .workspace[hidden] { display: none; }
+
+  /* The three-pane workspace never scrolls sideways: each pane scrolls its own. */
+  .workspace { overflow: hidden; }
+
+  /* The roster, centre pane: a single column of cards, its own scroll. It may
+     shrink so the detail pane always has room. */
+  .roster {
+    flex: 1 1 clamp(300px, 38%, 440px);
+    min-width: 0;
+    overflow-y: auto;
+    padding: 16px 18px 28px;
     display: grid;
     gap: var(--gap);
     grid-template-columns: 1fr;
-    max-width: 1100px;
+    align-content: start;
+    border-right: 1px solid var(--line);
   }
-  @media (min-width: 720px) {
-    main { grid-template-columns: 1fr 1fr; }
-  }
-  /* An explicit display beats the [hidden] user-agent rule, so hide it explicitly
-     when the channel view is active. */
-  main[hidden] { display: none; }
+  .roster[hidden] { display: none; }
+
+  /* The detail pane, right: fills the rest, shows the empty state or a colleague. */
+  .detail-pane { flex: 1 1 auto; min-width: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 
   .card {
     position: relative;
@@ -120,9 +140,12 @@
                 background 200ms var(--ease);
   }
   .card:hover { background: var(--surface-hover); }
+  /* The card whose detail fills the right pane reads selected, quietly. */
+  .card.selected { background: var(--surface-hover); border-color: rgba(255, 255, 255, 0.18); }
 
-  /* The rail dot: the state colour, quiet for ambient states. */
-  .rail {
+  /* The card's state dot: the state colour, quiet for ambient states. Named
+     card-rail so it does not collide with the nav rail's own .rail rules. */
+  .card-rail {
     flex: 0 0 auto;
     width: 9px;
     height: 9px;
@@ -130,9 +153,9 @@
     border-radius: 50%;
     background: var(--muted);
   }
-  .card.working .rail { background: var(--working); }
-  .card.rate_limited .rail { background: var(--limited); }
-  .card.crashed .rail { background: var(--danger); }
+  .card.working .card-rail { background: var(--working); }
+  .card.rate_limited .card-rail { background: var(--limited); }
+  .card.crashed .card-rail { background: var(--danger); }
 
   .body { flex: 1 1 auto; min-width: 0; }
 
@@ -181,7 +204,7 @@
     box-shadow: 0 0 0 1px var(--waiting-soft), 0 8px 24px -12px rgba(232, 161, 58, 0.5);
     transform: translateY(-2px);
   }
-  .card.waiting_for_you .rail { background: var(--waiting); }
+  .card.waiting_for_you .card-rail { background: var(--waiting); }
   .card.waiting_for_you .state-line { color: var(--waiting); font-weight: 560; }
 
   /* The unseen badge: a small amber dot that clears when the person looks. */
@@ -210,7 +233,7 @@
     border-left-style: dashed;
     border-left-color: var(--nosignal);
   }
-  .card.not_reporting .rail {
+  .card.not_reporting .card-rail {
     background: transparent;
     box-shadow: inset 0 0 0 1.5px var(--nosignal);
   }
@@ -338,70 +361,122 @@
      explicitly until its Reply toggle opens it. */
   .row-reply-input[hidden] { display: none; }
 
-  /* The detail view, same window, two panes: the colleague's terminal and, later,
-     the input box the write half adds. It fills the window over the roster and
-     hands back with a clear control. */
-  .detail {
-    position: fixed;
-    inset: 0;
-    z-index: 5;
+  /* The detail pane's empty state: calm, one line, when no colleague is selected. */
+  .detail-empty {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
-    background: var(--bg);
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 8px;
+    padding: 40px;
+    color: var(--muted);
   }
+  .detail-empty[hidden] { display: none; }
+  .detail-empty strong { color: var(--text); font-weight: 560; font-size: 1.05rem; letter-spacing: -0.01em; }
+  .detail-empty p { margin: 0; max-width: 26rem; line-height: 1.55; }
+
+  /* The selected colleague's detail, filling the right pane: a head, the tab bar,
+     and the panels. A settle-in cross-fade when a colleague is picked. */
+  .detail { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .detail[hidden] { display: none; }
+  .detail:not([hidden]) { animation: settle-in var(--settle) var(--ease); }
+  @keyframes settle-in { from { opacity: 0; } to { opacity: 1; } }
   .detail-head {
     display: flex;
     align-items: baseline;
-    gap: 12px;
-    padding: 14px 22px;
+    gap: 10px;
+    padding: 14px 20px 10px;
+  }
+  .detail-name { font-weight: 600; letter-spacing: -0.012em; font-size: 1.02rem; }
+  .detail-role { color: var(--muted); font-size: 0.85rem; }
+
+  /* The tab bar: Conversation, Activity, Terminal. A quiet underline marks the
+     active tab, no pill, no colour. Instant feedback on pointer-down. */
+  .tabbar {
+    display: flex;
+    gap: 2px;
+    padding: 0 12px;
     border-bottom: 1px solid var(--line);
-    background: rgba(20, 24, 31, 0.72);
-    backdrop-filter: blur(18px) saturate(160%);
+    overflow-x: auto;
+    scrollbar-width: none;
   }
-  @media (prefers-reduced-transparency: reduce) {
-    .detail-head { background: var(--bg); backdrop-filter: none; }
-  }
-  .back {
+  .tabbar::-webkit-scrollbar { display: none; }
+  .tab { flex: 0 0 auto; }
+  .tab {
     appearance: none;
     background: transparent;
-    border: 1px solid var(--line);
+    border: none;
+    border-bottom: 2px solid transparent;
     color: var(--muted);
     font: inherit;
-    font-size: 0.85rem;
-    padding: 4px 10px;
-    border-radius: 8px;
+    font-size: 0.9rem;
+    padding: 8px 12px;
+    margin-bottom: -1px;
     cursor: pointer;
+    transition: color var(--settle) var(--ease);
   }
-  .back:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.16); }
-  .detail-name { font-weight: 600; letter-spacing: -0.01em; }
-  .detail-role { color: var(--muted); font-size: 0.85rem; }
-  .detail-body { flex: 1; display: flex; min-height: 0; }
-  .term { flex: 1 1 auto; min-width: 0; padding: 8px 10px; background: #0F1319; overflow: hidden; }
-  .detail-side {
-    flex: 0 0 clamp(220px, 28%, 360px);
-    border-left: 1px solid var(--line);
-    padding: 18px;
+  .tab:hover { color: var(--text); }
+  .tab:active { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--text); }
+  .tab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 4px; }
+
+  .panels { flex: 1 1 auto; min-height: 0; display: flex; }
+  .panel { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .panel[hidden] { display: none; }
+  .panel:not([hidden]) { animation: settle-in var(--settle) var(--ease); }
+
+  /* Conversation: the transcript scrolls, the composer sits at the bottom. */
+  .conversation {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 16px 20px;
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
-  .reply-label { color: var(--muted); font-size: 0.85rem; }
+  .conversation .row { max-width: 680px; overflow-wrap: anywhere; }
+  .composer { border-top: 1px solid var(--line); padding: 12px 20px; display: flex; flex-direction: column; gap: 6px; }
   .reply {
     width: 100%;
-    min-height: 96px;
     resize: vertical;
+    min-height: 44px;
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 12px;
+    border-radius: 9px;
+    padding: 9px 12px;
     font: inherit;
     line-height: 1.5;
   }
-  .reply:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+  .reply:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .reply::placeholder { color: var(--muted); }
-  .reply-hint { color: var(--muted); font-size: 0.8rem; margin: 0; }
+  .reply-hint { color: var(--muted); font-size: 0.78rem; margin: 0; }
+
+  /* The Terminal tab: the existing xterm, unchanged, filling its panel. */
+  .panel-terminal { padding: 6px 8px; }
+  .term { flex: 1 1 auto; min-width: 0; background: #0A0A0A; overflow: hidden; }
+
+  /* A placeholder tab's calm empty state, for Activity this piece. */
+  .tab-empty {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 8px;
+    padding: 40px;
+    color: var(--muted);
+  }
+  .tab-empty strong { color: var(--text); font-weight: 560; letter-spacing: -0.01em; }
+  .tab-empty p { margin: 0; max-width: 26rem; line-height: 1.55; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .detail:not([hidden]), .panel:not([hidden]) { animation: none; }
+    .tab { transition: none; }
+  }
 
   .empty {
     grid-column: 1 / -1;
@@ -536,7 +611,45 @@
       <button id="hire-header" class="header-btn" type="button">Hire</button>
       <button id="mute" class="mute" type="button" aria-pressed="false">Mute</button>
     </header>
-    <main id="roster" aria-live="polite"></main>
+    <div id="workspace" class="workspace">
+      <main id="roster" class="roster" aria-live="polite"></main>
+      <section id="detail-pane" class="detail-pane" aria-label="Colleague detail">
+        <div id="detail-empty" class="detail-empty">
+          <strong id="detail-empty-lead">Select a colleague</strong>
+          <p id="detail-empty-body">Pick a card to see their conversation, activity, and terminal.</p>
+        </div>
+        <div id="detail" class="detail" hidden>
+          <div class="detail-head">
+            <span id="detail-name" class="detail-name"></span>
+            <span id="detail-role" class="detail-role"></span>
+          </div>
+          <div class="tabbar" role="tablist" aria-label="Colleague detail tabs">
+            <button class="tab active" type="button" role="tab" data-tab="conversation" id="tab-conversation" aria-selected="true">Conversation</button>
+            <button class="tab" type="button" role="tab" data-tab="activity" id="tab-activity" aria-selected="false">Activity</button>
+            <button class="tab" type="button" role="tab" data-tab="terminal" id="tab-terminal" aria-selected="false">Terminal</button>
+          </div>
+          <div class="panels">
+            <div id="panel-conversation" class="panel" role="tabpanel" aria-labelledby="tab-conversation">
+              <div id="conversation" class="conversation" aria-live="polite"></div>
+              <div class="composer">
+                <textarea id="reply" class="reply" rows="2"
+                  placeholder="Type a message. Enter sends, Shift-Enter adds a line."></textarea>
+                <p id="reply-hint" class="reply-hint">Enter sends. Shift-Enter adds a line.</p>
+              </div>
+            </div>
+            <div id="panel-activity" class="panel" role="tabpanel" aria-labelledby="tab-activity" hidden>
+              <div class="tab-empty">
+                <strong id="activity-lead">Activity is coming soon</strong>
+                <p id="activity-body">This tab will show what a colleague is doing, built from its hook events, so you do not have to read the terminal.</p>
+              </div>
+            </div>
+            <div id="panel-terminal" class="panel panel-terminal" role="tabpanel" aria-labelledby="tab-terminal" hidden>
+              <div id="term" class="term"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
     <section id="channel" class="channel" hidden aria-label="Channel timeline">
       <div id="timeline" class="timeline" aria-live="polite"></div>
     </section>
@@ -582,23 +695,6 @@
     <div class="sheet-actions">
       <button id="hire-cancel" class="btn btn-secondary" type="button">Cancel</button>
       <button id="hire-submit" class="btn btn-primary" type="button">Hire</button>
-    </div>
-  </div>
-</section>
-
-<section id="detail" class="detail" hidden aria-hidden="true" aria-label="Colleague detail">
-  <div class="detail-head">
-    <button id="detail-back" class="back" type="button">Back to roster</button>
-    <span id="detail-name" class="detail-name"></span>
-    <span id="detail-role" class="detail-role"></span>
-  </div>
-  <div class="detail-body">
-    <div id="term" class="term"></div>
-    <div class="detail-side">
-      <label class="reply-label" for="reply">Your message</label>
-      <textarea id="reply" class="reply" rows="4"
-        placeholder="Type a message. Enter sends, Shift-Enter adds a line."></textarea>
-      <p class="reply-hint">Enter sends. Shift-Enter adds a line.</p>
     </div>
   </div>
 </section>

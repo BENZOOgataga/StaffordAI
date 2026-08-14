@@ -35,6 +35,8 @@ const muteButton = document.getElementById('mute') as HTMLButtonElement;
 const alerts = new RosterAlerts();
 let muted = false;
 let latest: readonly RosterCard[] = [];
+/** The colleague whose detail fills the right pane, so its card reads selected. */
+let selectedId: string | null = null;
 
 function chip(label: string): HTMLElement {
     const el = document.createElement('span');
@@ -50,14 +52,15 @@ function cardElement(card: RosterCard): HTMLElement {
     // operable, not a click-only div.
     el.setAttribute('role', 'button');
     el.tabIndex = 0;
-    const open = (): void => { void openDetail(card.id, card.name, card.role); };
+    if (card.id === selectedId) el.classList.add('selected');
+    const open = (): void => { selectedId = card.id; render(); void openDetail(card.id, card.name, card.role); };
     el.addEventListener('click', open);
     el.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); }
     });
 
     const rail = document.createElement('span');
-    rail.className = 'rail';
+    rail.className = 'card-rail';
     rail.setAttribute('aria-hidden', 'true');
     el.appendChild(rail);
 
@@ -207,13 +210,14 @@ function main(): void {
     // reads no new data and fires no alert; it only re-renders the times.
     setInterval(() => { if (latest.length > 0) render(); }, 30_000);
 
-    // The left rail switches the main area between Roster and Channel. The detail
-    // overlay sits on top of whichever is active, so it is not a rail entry.
-    const rosterMain = document.getElementById('roster') as HTMLElement;
+    // The left rail switches between the Roster workspace (roster plus the selected
+    // colleague's detail) and the Channel timeline. The detail is a pane inside the
+    // workspace now, not an overlay, so hiding the workspace hides both together.
+    const workspace = document.getElementById('workspace') as HTMLElement;
     const channelView = document.getElementById('channel') as HTMLElement;
     const showView = (view: string): void => {
         const isChannel = view === 'channel';
-        rosterMain.hidden = isChannel;
+        workspace.hidden = isChannel;
         channelView.hidden = !isChannel;
         for (const item of document.querySelectorAll('.rail-item')) {
             item.classList.toggle('active', item.getAttribute('data-view') === view);
