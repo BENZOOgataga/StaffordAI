@@ -151,6 +151,22 @@ export class SessionLifecycle {
     readonly #subscribers = new Map<string, Set<Sub>>();
     /** Hires whose current session started fresh after a failed resume, for the note. */
     readonly #contextLost = new Set<string>();
+    /**
+     * The last terminal size the open card reported per hire, so a session spawned
+     * while a card is open starts at the pane's size rather than the default. The
+     * fallback respawn is the case this exists for: the card is already open and
+     * fitted, but a resize event does not refire for the fresh session, so without
+     * this the fresh session runs at the default width and the pane renders garbled.
+     */
+    readonly #lastSize = new Map<string, { cols: number; rows: number }>();
+    /**
+     * The last message submitted to a hire, held so it can be re-delivered to the
+     * fresh session if a resume of a stale id fails and falls back. Without this the
+     * message that triggered the resume is written to the session that then dies, so
+     * the fresh colleague sits idle and never answers. Cleared once a session reports
+     * it is working, so a later unrelated fallback cannot replay an old message.
+     */
+    readonly #pendingMessage = new Map<string, string>();
     readonly #notReportingMs: number;
     readonly #idleMs: number;
     readonly #timers: Timers;
@@ -235,8 +251,14 @@ export class SessionLifecycle {
         for (const sub of set) { sub.off?.(); sub.off = null; }
     }
 
-    /** Propagates a pane resize to the pty, so the TUI reflows. A no-op if no session. */
+    /**
+     * Propagates a pane resize to the live pty, and records the size so the next
+     * spawn for this hire starts at it. Recording even with no live session is the
+     * point: the card is often open, and fitted, before its first session exists,
+     * and the fallback respawn has no resize event of its own.
+     */
     resize(hireId: string, cols: number, rows: number): void {
+        this.#lastSize.set(hireId, { cols, rows });
         this.#owned.get(hireId)?.session.resize(cols, rows);
     }
 
@@ -265,6 +287,10 @@ export class SessionLifecycle {
     async submitMessage(hireId: string, text: string): Promise<void> {
         const existing = this.#owned.get(hireId);
         const session = existing ? existing.session : this.#spawn(hireId).session;
+        // Held until the session reports it is working, so a resume that fails and
+        // falls back can re-deliver this message to the fresh session rather than
+        // lose it to the dead one.
+        this.#pendingMessage.set(hireId, text);
         this.#resetIdle(hireId);
         await session.submit(text);
     }
@@ -308,6 +334,10 @@ export class SessionLifecycle {
         // which is what agent-env's contract requires.
         const env = { ...built.env, STAFFORD_AGENT_SECRET: secret };
 
+        // Spawn at the open card's last-known size, so a session started while the
+        // detail is open (a first message, or the fallback respawn) renders at the
+        // pane width from its first frame rather than the default and garbled.
+        const size = this.#lastSize.get(hireId);
         const session = new PtySession({
             agentId,
             platform: this.#deps.platform,
@@ -315,7 +345,8 @@ export class SessionLifecycle {
             args,
             cwd: target.cwd,
             env,
-            spawn: this.#deps.spawn
+            spawn: this.#deps.spawn,
+            ...(size ? { cols: size.cols, rows: size.rows } : {})
         });
         session.start();
         const pid = session.pid ?? 0;
@@ -383,6 +414,9 @@ export class SessionLifecycle {
         if (!owned.reported) {
             owned.reported = true;
             if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
+            // The session is working, so its message was delivered: drop the pending
+            // copy, or a much-later fallback could replay it.
+            this.#pendingMessage.delete(agentId);
         }
         this.#resetIdle(agentId);
     }
@@ -449,7 +483,12 @@ export class SessionLifecycle {
         this.#deps.clearStoredSession?.(agentId);
         this.#contextLost.add(agentId);
         try {
-            this.#spawn(agentId, { cold: true });
+            const fresh = this.#spawn(agentId, { cold: true });
+            // Re-deliver the message that triggered the failed resume, so the fresh
+            // colleague acts on it rather than sitting idle. It was written to the
+            // dead resume session and lost otherwise.
+            const pending = this.#pendingMessage.get(agentId);
+            if (pending) void fresh.session.submit(pending);
         } catch {
             // No project to spawn into, or the hire is gone. The teardown already
             // cleared the failed session; there is nothing to leave stuck.

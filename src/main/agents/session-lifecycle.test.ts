@@ -127,6 +127,7 @@ function buildDeps(over: {
     const setStateCalls: Array<{ hireId: string; state: string }> = [];
     const killed: number[] = [];
     const capturedArgs: string[][] = [];
+    const capturedSizes: Array<{ cols: number; rows: number }> = [];
     const preTrustCalls: string[] = [];
     const registerHooksCalls: string[] = [];
     const clearStoredSessionCalls: string[] = [];
@@ -134,7 +135,7 @@ function buildDeps(over: {
     const lifecycle = new SessionLifecycle({
         platform: PLATFORM, socketPath: absSocket, secrets, registry,
         claudePath: path.resolve(os.tmpdir(), 'claude'), nodeDir: path.dirname(process.execPath), parentEnv: {},
-        spawn: (_file, args) => { capturedArgs.push([...args]); return pty; },
+        spawn: (_file, args, opts) => { capturedArgs.push([...args]); capturedSizes.push({ cols: opts.cols, rows: opts.rows }); return pty; },
         preTrust: (cwd) => { preTrustCalls.push(cwd); },
         registerHooks: (cwd) => { registerHooksCalls.push(cwd); },
         clearStoredSession: (hireId) => { clearStoredSessionCalls.push(hireId); },
@@ -148,7 +149,7 @@ function buildDeps(over: {
         ...(over.timers ? { timers: over.timers } : {}),
         killTree: async (_p, pid) => { killed.push(pid); return noKill(); }
     });
-    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, preTrustCalls, registerHooksCalls, clearStoredSessionCalls, pty };
+    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, capturedSizes, preTrustCalls, registerHooksCalls, clearStoredSessionCalls, pty };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -341,6 +342,27 @@ test('a stale id falls back to a fresh cold spawn: works, new id, context-lost n
         'the new id was written over the stale one');
 });
 
+test('a session spawns at the open card size, so the fallback fresh session is not garbled', async () => {
+    const pty = stubPty();
+    const { lifecycle, capturedSizes } = buildDeps({
+        spawn: pty, resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    // The detail card is open and fitted to its pane before the first session.
+    lifecycle.resize('h1', 100, 30);
+    lifecycle.sendMessage('h1', 'continue'); // the resume
+    pty.fireExit(1);                         // the resume fails
+    await tick();                            // the fallback cold spawn
+
+    assert.deepEqual(capturedSizes, [{ cols: 100, rows: 30 }, { cols: 100, rows: 30 }],
+        'both the resume and the fallback fresh session spawn at the pane size, not the default width');
+});
+
+test('a spawn with no card open yet uses the default size', () => {
+    const { lifecycle, capturedSizes } = buildDeps();
+    lifecycle.sendMessage('h1', 'hello');
+    assert.deepEqual(capturedSizes, [{ cols: 120, rows: 34 }], 'no recorded size means the default');
+});
+
 test('a failed resume that fires only SessionEnd before exit still falls back, not stuck', async () => {
     // The regression: Claude fires SessionEnd on a failed resume even though it
     // never started. If that end counted as the session reporting, the exit path
@@ -466,6 +488,31 @@ test('a message after teardown reaches a fresh session, never the dead one', asy
     assert.notEqual(dead, fresh, 'a new session was spawned for the second message');
     assert.equal(dead?.writes.includes('second'), false, 'the torn-down session received nothing');
     assert.equal(fresh?.writes.includes('second'), true, 'the message went to the fresh session');
+});
+
+test('a failed resume re-delivers the triggering message to the fresh session, so the colleague answers', async () => {
+    const ptys: Array<ReturnType<typeof stubPty>> = [];
+    const { store } = fakeStore({ s1: { hireId: 'h1', projectId: 'p1' } });
+    const registry = new SessionRegistry(store);
+    const secrets = new AgentSecrets();
+    const lifecycle = new SessionLifecycle({
+        platform: PLATFORM, socketPath: path.resolve(os.tmpdir(), 'x.sock'), secrets, registry,
+        claudePath: path.resolve(os.tmpdir(), 'claude'), nodeDir: path.dirname(process.execPath), parentEnv: {},
+        spawn: () => { const p = stubPty(); ptys.push(p); return p; },
+        resolveTarget: () => ({ projectId: 'p1', cwd: 'C:/repo', resumeSessionId: 's1' }),
+        setState: () => {}, trustFor: () => 'trusted',
+        killTree: async () => noKill()
+    });
+
+    void lifecycle.submitMessage('h1', 'run the tests'); // the resume, with the stale id
+    const resumeSession = ptys[0]!;
+    resumeSession.fireExit(1);                            // the resume fails
+    await tick();                                         // the fallback cold spawns
+    const fresh = ptys[1]!;
+
+    assert.notEqual(resumeSession, fresh, 'the fallback spawned a fresh session');
+    assert.equal(fresh.writes.includes('run the tests'), true,
+        'the message that triggered the failed resume is re-delivered to the fresh session, not lost to the dead one');
 });
 
 test('subscribe replays a live session then streams, and is a no-op for an unknown hire', () => {
