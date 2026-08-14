@@ -13,7 +13,7 @@
 import type { StaffordApi } from '../preload/index.ts';
 import type { RosterCard } from '../shared/ipc.ts';
 import { RosterAlerts } from './roster-alerts.ts';
-import { cardClassName, stateLabel } from './roster-view.ts';
+import { cardClassName, stateLabel, groupCardsByState, groupLabel } from './roster-view.ts';
 import { openDetail } from './detail.ts';
 import { activateChannel, deactivateChannel } from './channel.ts';
 import { initCreateForms, openProjectForm, openHireForm } from './create-forms.ts';
@@ -137,7 +137,23 @@ function render(): void {
         return;
     }
 
-    for (const card of latest) roster.appendChild(cardElement(card));
+    // Grouped by state so the team reads as who is doing what, waiting first. The
+    // grouping runs on each render, and a render happens on the roster:changed
+    // transition signal, so a colleague changing state moves to its group without
+    // any per-event re-render.
+    for (const group of groupCardsByState(latest)) {
+        const header = document.createElement('div');
+        header.className = 'group-header';
+        const label = document.createElement('span');
+        label.className = 'group-label';
+        label.textContent = groupLabel(group.state, lang);
+        const count = document.createElement('span');
+        count.className = 'group-count';
+        count.textContent = String(group.cards.length);
+        header.append(label, count);
+        roster.appendChild(header);
+        for (const card of group.cards) roster.appendChild(cardElement(card));
+    }
 
     const unseen = alerts.unseenCount;
     if (unseen > 0) {

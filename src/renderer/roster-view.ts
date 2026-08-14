@@ -33,6 +33,58 @@ export function stateLabel(card: RosterCard, now: number): string {
     }
 }
 
+export interface CardGroup {
+    readonly state: string;
+    readonly cards: readonly RosterCard[];
+}
+
+/**
+ * The order the roster groups states in: the one that needs the person first, then
+ * the other states that also need attention, then the active ones, then the quiet.
+ * The spec names waiting, working, idle, not_reporting in that relative order; the
+ * three attention states (needs_trust, crashed, rate_limited) sit just after
+ * waiting, since they also need the person, rather than at the bottom below idle.
+ */
+export const GROUP_ORDER: readonly string[] = [
+    'waiting_for_you', 'needs_trust', 'crashed', 'rate_limited', 'working', 'idle', 'not_reporting'
+];
+
+/**
+ * Groups the cards by state in GROUP_ORDER, dropping empty groups so a state with
+ * no colleagues shows no header. A state not in the order keeps its cards visible,
+ * appended, so a new state can never make a colleague vanish.
+ */
+export function groupCardsByState(cards: readonly RosterCard[]): CardGroup[] {
+    const byState = new Map<string, RosterCard[]>();
+    for (const card of cards) {
+        const list = byState.get(card.state) ?? [];
+        list.push(card);
+        byState.set(card.state, list);
+    }
+    const groups: CardGroup[] = [];
+    for (const state of GROUP_ORDER) {
+        const list = byState.get(state);
+        if (list && list.length > 0) { groups.push({ state, cards: list }); byState.delete(state); }
+    }
+    for (const [state, list] of byState) {
+        if (list.length > 0) groups.push({ state, cards: list });
+    }
+    return groups;
+}
+
+/** The state name for a group header, in plain language, localized. */
+export function groupLabel(state: string, lang: 'en' | 'fr'): string {
+    const en: Record<string, string> = {
+        waiting_for_you: 'Waiting for you', needs_trust: 'Needs trust', crashed: 'Crashed',
+        rate_limited: 'Rate limited', working: 'Working', idle: 'Idle', not_reporting: 'Not reporting'
+    };
+    const fr: Record<string, string> = {
+        waiting_for_you: 'En attente de vous', needs_trust: 'Confiance requise', crashed: 'Planté',
+        rate_limited: 'Limite atteinte', working: 'Au travail', idle: 'Inactif', not_reporting: 'Sans signal'
+    };
+    return (lang === 'fr' ? fr : en)[state] ?? state;
+}
+
 /** Turns an ISO start time into a quiet "for 12m" suffix, or nothing. */
 export function elapsedLabel(base: string, since: string | null, now: number): string {
     if (!since) return base;

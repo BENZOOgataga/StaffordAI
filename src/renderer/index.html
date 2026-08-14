@@ -124,6 +124,23 @@
   }
   .roster[hidden] { display: none; }
 
+  /* Group headers: a quiet state name and a count, grayscale. Only the waiting
+     cards carry the amber accent, never the header. */
+  .group-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 4px 6px 2px;
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.01em;
+  }
+  .group-header:first-child { margin-top: 0; }
+  .group-label { font-weight: 560; overflow-wrap: anywhere; }
+  .group-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
+
   /* The detail pane, right: fills the rest, shows the empty state or a colleague. */
   .detail-pane { flex: 1 1 auto; min-width: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 
