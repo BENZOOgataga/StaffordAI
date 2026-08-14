@@ -3,6 +3,72 @@
 A single accounting of everything parked, taken from the plan and the tree rather than memory, so the
 next build is chosen against the whole board. Read-only: this decides nothing and builds nothing.
 
+## Update, 2026-08-14, machine switch to the MacBook
+
+I am moving from the work PC to the MacBook, which has none of this session's chat context. This block is
+the current state so the Mac-side work, and any fresh agent, picks up from reality rather than the stale
+review below. Read this first; everything under it is older.
+
+### Done since the last update, all merged
+
+The whole people-centric surface is built now. The create flow: `project:create` and `hire:create` over the
+existing repository inserts, with real "add a project" and "hire a colleague" forms, so a real colleague can
+be brought into being from the UI (the piece that was between Stafford and real use). Pre-trust on spawn: the
+project directory the user chose is marked trusted in Claude Code's own config before the spawn, so the
+startup trust prompt the sanitised box cannot answer never fires. The hook state-reporting fix: the Electron
+spawn now registers Stafford's own hooks in the project, using the bundled Electron as node through
+PowerShell on Windows, so a colleague's state actually reaches the roster on a clean machine. The resume
+stale-id fallback: a failed resume falls back to a fresh session, clears the stale id, resets the terminal,
+and re-delivers the message that triggered it, so a stale colleague recovers and answers instead of sitting
+stuck. The terminal fit-on-open fix, so a colleague's terminal is not garbled on first paint. The three-pane
+shell: nav rail, roster in the centre, the selected colleague's detail on the right, with the detail tabs
+inverted so Conversation leads and Terminal is the last, advanced tab. Window sizing: the app opens at a
+fraction of the display's work area and remembers the user's size and position. Roster grouping by state:
+the centre pane groups colleagues by what they are doing, waiting first.
+
+Earlier in the same arc, also merged: the smoke seed no longer pollutes the real store, the public-repo
+hygiene docs, and the enforced two-tier merge rule (own branches merge on green, external PRs need my
+approval).
+
+### The design direction is decided
+
+It lives in `docs/plans/design-spec.md`: one screen, three panes, the detail pane's tabs in priority order
+Conversation / Activity / Terminal, and the Vercel Geist visual register (near-black, hairline borders, one
+amber accent spent only on waiting, quiet everything else). The three-pane shell and the roster grouping are
+built to it. Read the spec before the next UI piece.
+
+### Next pieces, in order
+
+1. The Activity tab feed. Render the hook events Stafford already receives (SessionStart, a tool run, a stop,
+   and so on) as clean rows in the detail pane's Activity tab, so a person sees what a colleague is doing
+   without reading the terminal. This is the genuinely new piece, and it is the practical resolution of the
+   terminal-versus-structured-output question: it uses the events I already have rather than parsing the
+   terminal. Confirm the fields the forwarder captures first (`hooks/claude-hook.cjs` summarises event,
+   sessionId, cwd, toolName, message, subagentType) so the rows are the honest subset the data can fill.
+2. A finer per-component Geist re-skin. The shell and pane chrome are in the Geist register, but the cards,
+   the create and hire sheets, and the Channel view inherited the new base palette without an individual
+   pass. Tighten those to match, one component at a time.
+
+Roster grouping by state, which the machine-switch prompt listed as the next piece, is done and merged; it
+was the last place the shell diverged from the spec's structure.
+
+### Still deferred
+
+The git executor: checkpoints are still placeholders and the drain records committed as false, so a real
+commit-on-quit is not there yet. Task dispatch and a kanban or tasks board. A project-centric view. Settings.
+The `ProjectPolicy.sandbox` shape decision, still parked (the create flow ships a conservative default policy
+without it). Apple Developer enrolment, which is only needed for silent in-place macOS updates; the update
+model chosen is click-to-update, so this is not a release blocker. The deeper terminal-versus-structured
+investigation is now optional, because the Activity feed uses existing hook events rather than needing it.
+
+### The release
+
+v0.1.0 is prepared but not cut. It waits on two things. One, a real Claude spawn verified on macOS: the POSIX
+hook path was proven structurally and unit-tested, never with a real Claude binary on a Mac, so the
+first-message-spawns-hooks-report loop needs one real run there before I trust it. Two, the Windows signing
+cert issue in the known-issues note below: the packaged Windows build is auto-signed, and a public release
+must not ship signed with a work-issued cert. The by-hand release checklist is in the release-piece-2 PR.
+
 ## Update, 2026-08-10, since the review below
 
 The review below is a snapshot. Two of the four ready-now items are now built, so read this first.

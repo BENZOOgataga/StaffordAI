@@ -533,3 +533,21 @@ not to exist on Node 26; the reasoning is in `docs/stack-migration-verification.
 node-pty itself loads from its bundled prebuild without its own install script, verified, so nothing
 else regresses under `ignore-scripts`. The two prebuild guards above still assume every native dep is
 Node-API with a shipped prebuild, which is also what `npmRebuild: false` in packaging depends on.
+
+## An explicit `display` beats `[hidden]`, so pair them in the same rule
+
+The browser hides `[hidden]` elements with a user-agent `display: none`, but that rule has the weakest
+specificity, so any author rule that sets `display` on the same element overrides it and the element stays
+visible even with the `hidden` attribute set. A toggled element (`el.hidden = true` in the renderer) then
+does not hide.
+
+The fix is one line: whenever a rule sets `display` on a class that is also toggled with `hidden`, add the
+guard `.thing[hidden] { display: none; }` in the same place. Do not rely on the UA default once you have set
+`display` yourself.
+
+This has bitten more than once and each time only a packaged screenshot caught it, never a unit test:
+`main[hidden]` when the channel view toggled the roster, `.row-reply-input[hidden]` when a reply box opened
+for every row at once, and the three-pane restructure where a `.rail` rule for the nav sidebar bled onto the
+card's state dot (a name collision, same class of bug: a broad rule overriding a narrow element). When a
+toggled element renders wrong, suspect a `display` or a shared class name winning over the default, and check
+it in a real packaged render, not only in the tests.
