@@ -234,9 +234,14 @@ export class SessionRegistry {
 
         if (changed) this.#store.setState(binding.hireId, next.state);
         if (bound && this.#onBound) this.#onBound(binding.hireId);
-        // Any event for a known session is activity, whether or not it changed
-        // state, so the idle clock resets on it.
-        if (this.#onActivity) this.#onActivity(binding.hireId);
+        // Any event for a known session is activity and resets the idle clock,
+        // except a SessionEnd. A session that just ended is not reporting that it is
+        // alive and working; it is finishing. Counting its end as activity marks the
+        // session "reported", and a failed resume fires only a SessionEnd (no
+        // SessionStart) before it exits, so treating that as reported would defeat
+        // the stale-id fallback, which fires only on an unreported exit. The end is
+        // handled by the exit path instead.
+        if (this.#onActivity && !ended) this.#onActivity(binding.hireId);
 
         return {
             handled: true, sessionId, hireId: binding.hireId, projectId: binding.projectId,

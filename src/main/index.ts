@@ -424,6 +424,16 @@ function buildLifecycle(store: HireStore): void {
         // Register the state-reporting hooks in the project, so Claude Code runs
         // the forwarder and the roster hears what the colleague is doing.
         registerHooks: (cwd) => registerHooksInProject(cwd),
+        // Drop a stale session id whose resume failed, so the next open does not
+        // resume it again. The fresh session records its own id through the rendezvous.
+        clearStoredSession: (hireId) => {
+            const hire = repositories?.hires.get(hireId);
+            if (!hire || !hire.activeProjectId) return;
+            if (!(hire.activeProjectId in hire.sessions)) return;
+            const sessions = { ...hire.sessions };
+            delete sessions[hire.activeProjectId];
+            repositories?.hires.update({ ...hire, sessions });
+        },
         onStateChanged: () => notifyRosterChanged()
     });
     smoke('lifecycle ready, claude at ' + claudePath);
