@@ -28,7 +28,7 @@
  */
 
 import { buildAgentEnv } from './agent-env.ts';
-import { PtySession, type PtyLike } from './pty-session.ts';
+import { PtySession, RESET, type PtyLike } from './pty-session.ts';
 import { killTree as defaultKillTree, type KillTreeReport } from './kill-tree.ts';
 import { classifyExit, type TrustState } from './trust.ts';
 import { AGENT_STATES, type AgentState } from '../../domain/agent-state.ts';
@@ -108,6 +108,12 @@ export interface LifecycleDeps {
      * settings file.
      */
     readonly registerHooks?: (cwd: string) => void;
+    /**
+     * Clears a hire's stored session id for its active project, called when a
+     * resume of that id failed. So a stale id that Claude Code cannot find is not
+     * re-attempted on the next open; the fresh session records its own id anyway.
+     */
+    readonly clearStoredSession?: (hireId: string) => void;
     /** Notified when a state changes here, so the roster can be told. */
     readonly onStateChanged?: (hireId: string) => void;
     readonly notReportingMs?: number;
@@ -433,6 +439,14 @@ export class SessionLifecycle {
      */
     async #fallbackToFresh(agentId: string): Promise<void> {
         await this.teardown(agentId);
+        // Clear the dead resume's frame from any open terminal at once, so the
+        // person is not left staring at "No conversation found" for the seconds it
+        // takes the fresh session to spawn and paint over it.
+        this.#resetSubscribers(agentId);
+        // Drop the stale session id so it is not resumed again on the next open. The
+        // fresh session's first event records its own id, but clearing it here stops
+        // a re-resume in the window before that, and if the fresh session never binds.
+        this.#deps.clearStoredSession?.(agentId);
         this.#contextLost.add(agentId);
         try {
             this.#spawn(agentId, { cold: true });
@@ -442,6 +456,18 @@ export class SessionLifecycle {
             this.#contextLost.delete(agentId);
         }
         this.#deps.onStateChanged?.(agentId);
+    }
+
+    /**
+     * Sends a terminal reset to any open subscribers, clearing a dead frame such as
+     * a failed resume's "No conversation found" before a fresh session repaints. The
+     * subscribers stay pending across the fallback teardown, so this reaches the open
+     * card even though its session was just torn down.
+     */
+    #resetSubscribers(hireId: string): void {
+        const set = this.#subscribers.get(hireId);
+        if (!set) return;
+        for (const sub of set) sub.listener(RESET);
     }
 
     /**

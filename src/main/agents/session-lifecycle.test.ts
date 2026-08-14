@@ -21,7 +21,7 @@ import { AgentSecrets } from '../hooks/agent-secrets.ts';
 import { startHookTransport, stopHookTransport } from '../hooks/transport.ts';
 import { runDrain, type DrainSink } from './drain.ts';
 import { currentPlatform } from '../platform/index.ts';
-import type { PtyLike } from './pty-session.ts';
+import { RESET, type PtyLike } from './pty-session.ts';
 import type { KillTreeReport } from './kill-tree.ts';
 import type { DrainReportEntry } from '../../domain/models.ts';
 
@@ -129,6 +129,7 @@ function buildDeps(over: {
     const capturedArgs: string[][] = [];
     const preTrustCalls: string[] = [];
     const registerHooksCalls: string[] = [];
+    const clearStoredSessionCalls: string[] = [];
     const absSocket = path.resolve(os.tmpdir(), 'x.sock');
     const lifecycle = new SessionLifecycle({
         platform: PLATFORM, socketPath: absSocket, secrets, registry,
@@ -136,6 +137,7 @@ function buildDeps(over: {
         spawn: (_file, args) => { capturedArgs.push([...args]); return pty; },
         preTrust: (cwd) => { preTrustCalls.push(cwd); },
         registerHooks: (cwd) => { registerHooksCalls.push(cwd); },
+        clearStoredSession: (hireId) => { clearStoredSessionCalls.push(hireId); },
         resolveTarget: () => (over.target === undefined
             ? { projectId: 'p1', cwd: 'C:/repo', resumeSessionId: over.resumeSessionId ?? null }
             : over.target),
@@ -146,7 +148,7 @@ function buildDeps(over: {
         ...(over.timers ? { timers: over.timers } : {}),
         killTree: async (_p, pid) => { killed.push(pid); return noKill(); }
     });
-    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, preTrustCalls, registerHooksCalls, pty };
+    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, preTrustCalls, registerHooksCalls, clearStoredSessionCalls, pty };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -337,6 +339,54 @@ test('a stale id falls back to a fresh cold spawn: works, new id, context-lost n
     assert.equal(sets.at(-1)?.state, 'working', 'the colleague ends up working, freshly');
     assert.deepEqual(binds.at(-1), { hireId: 'h1', projectId: 'p1', sessionId: 's2' },
         'the new id was written over the stale one');
+});
+
+test('a failed resume that fires only SessionEnd before exit still falls back, not stuck', async () => {
+    // The regression: Claude fires SessionEnd on a failed resume even though it
+    // never started. If that end counted as the session reporting, the exit path
+    // would skip the fallback and the colleague stays stuck on the resume error.
+    const pty = stubPty();
+    const { lifecycle, registry, capturedArgs } = buildDeps({
+        spawn: pty, resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    lifecycle.sendMessage('h1', 'continue');
+
+    // The only event the failed resume produces: a SessionEnd, no SessionStart.
+    registry.ingest(coerceHookEvent({ event: 'SessionEnd', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    pty.fireExit(1);
+    await tick();
+
+    assert.equal(lifecycle.contextLost('h1'), true, 'a SessionEnd-only resume is a stale-id failure, and it falls back');
+    assert.equal(lifecycle.has('h1'), true, 'not left stuck: a fresh session is up');
+    assert.deepEqual(capturedArgs[1], [], 'the fallback cold-spawns, so the SessionEnd did not defeat it');
+});
+
+test('a stale resume fallback clears the stored session id, so the next open does not re-resume it', async () => {
+    const pty = stubPty();
+    const { lifecycle, clearStoredSessionCalls } = buildDeps({
+        spawn: pty, resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    lifecycle.sendMessage('h1', 'continue');
+    pty.fireExit(1);
+    await tick();
+    assert.deepEqual(clearStoredSessionCalls, ['h1'],
+        'the stale id is dropped so a later open resolves to a cold spawn, not another failed resume');
+});
+
+test('a stale resume fallback resets an open terminal, so the dead frame does not linger', async () => {
+    const pty = stubPty();
+    const { lifecycle } = buildDeps({
+        spawn: pty, resumeSessionId: 's1', sessions: { s1: { hireId: 'h1', projectId: 'p1' } }
+    });
+    // The detail view subscribes before any session, the way an open card does.
+    const seen: string[] = [];
+    lifecycle.subscribe('h1', (d) => seen.push(d));
+    lifecycle.sendMessage('h1', 'continue');
+    pty.emit('No conversation found with session ID: s1');
+    pty.fireExit(1);
+    await tick();
+    assert.equal(seen.includes(RESET), true,
+        'the terminal is reset on the fallback, clearing the dead resume error before the fresh session paints');
 });
 
 test('a healthy-but-slow resume attaches and is never force-fallen-back', () => {
