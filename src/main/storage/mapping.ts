@@ -20,10 +20,10 @@
 
 import type {
     HiredAgent, Project, ProjectPolicy, ProjectRepo, Task, TaskOrigin, Approval, PolicyLogEntry,
-    DrainReportEntry, DrainOutcome, ChannelMessage, ChannelKind, ChannelRefKind
+    DrainReportEntry, DrainOutcome, ChannelMessage, ChannelKind, ChannelRefKind, ActivityRecord, ActivityStatus
 } from '../../domain/models.ts';
 import {
-    PUSH_POLICIES, TASK_KINDS, APPROVAL_VERDICTS, DRAIN_OUTCOMES, CHANNEL_KINDS, CHANNEL_REF_KINDS
+    PUSH_POLICIES, TASK_KINDS, APPROVAL_VERDICTS, DRAIN_OUTCOMES, CHANNEL_KINDS, CHANNEL_REF_KINDS, ACTIVITY_STATUSES
 } from '../../domain/models.ts';
 import { isAgentState } from '../../domain/agent-state.ts';
 
@@ -194,6 +194,24 @@ export function drainReportFromRow(row: Row): DrainReportEntry {
         outcome: oneOf<DrainOutcome>(row, 'outcome', Object.values(DRAIN_OUTCOMES)),
         committed: bool(row, 'committed'), branch: nstr(row, 'branch'),
         commitId: nstr(row, 'commit_id'), at: str(row, 'at')
+    };
+}
+
+// --- activity (append-only) ------------------------------------------------
+
+export function activityRecordToRow(a: ActivityRecord): Row {
+    return {
+        id: a.id, hire_id: a.hireId, session_id: a.sessionId,
+        tool: a.tool, target: a.target, status: a.status, at: a.at
+    };
+}
+
+export function activityRecordFromRow(row: Row): ActivityRecord {
+    return {
+        id: str(row, 'id'), hireId: str(row, 'hire_id'), sessionId: nstr(row, 'session_id'),
+        tool: str(row, 'tool'), target: nstr(row, 'target'),
+        status: oneOf<ActivityStatus>(row, 'status', Object.values(ACTIVITY_STATUSES)),
+        at: str(row, 'at')
     };
 }
 

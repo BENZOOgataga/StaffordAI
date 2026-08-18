@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDatabase } from './database.ts';
 import { createRepositories, type Repositories } from './repository.ts';
-import type { HiredAgent, Project, ProjectPolicy, Task, PolicyLogEntry, ChannelMessage } from '../../domain/models.ts';
+import type { HiredAgent, Project, ProjectPolicy, Task, PolicyLogEntry, ChannelMessage, ActivityRecord } from '../../domain/models.ts';
 
 function withRepos(fn: (repos: Repositories, raw: { exec(sql: string): unknown }) => void): void {
     const appDataDir = mkdtempSync(path.join(tmpdir(), 'stafford-repo-'));
@@ -192,5 +192,53 @@ test('the channel offers no update or delete, and a raw one raises at the trigge
         assert.equal(typeof channel['delete'], 'undefined');
         assert.throws(() => raw.exec("UPDATE channel_messages SET body='changed'"), /append-only/);
         assert.throws(() => raw.exec('DELETE FROM channel_messages'), /append-only/);
+    });
+});
+
+function activity(id: string, hireId: string, tool: string, status: 'ok' | 'error' | 'incomplete', at: string): ActivityRecord {
+    return { id, hireId, sessionId: 's1', tool, target: tool === 'Bash' ? 'git status' : 'f.ts', status, at };
+}
+
+test('activity appends coalesced rows and reads them back per hire, oldest-first', () => {
+    withRepos((repos) => {
+        repos.activity.append(activity('a3', 'marion', 'Bash', 'ok', '2026-08-18T12:02:00Z'));
+        repos.activity.append(activity('a1', 'marion', 'Edit', 'ok', '2026-08-18T12:00:00Z'));
+        repos.activity.append(activity('a2', 'marion', 'Write', 'error', '2026-08-18T12:01:00Z'));
+        const rows = repos.activity.byHire('marion', 50);
+        assert.deepEqual(rows.map((r) => [r.id, r.tool, r.status]),
+            [['a1', 'Edit', 'ok'], ['a2', 'Write', 'error'], ['a3', 'Bash', 'ok']]);
+    });
+});
+
+test('activity byHire is scoped to one colleague, not the whole team', () => {
+    withRepos((repos) => {
+        repos.activity.append(activity('a1', 'marion', 'Edit', 'ok', '2026-08-18T12:00:00Z'));
+        repos.activity.append(activity('b1', 'theo', 'Edit', 'ok', '2026-08-18T12:00:00Z'));
+        assert.deepEqual(repos.activity.byHire('marion', 50).map((r) => r.id), ['a1']);
+        assert.deepEqual(repos.activity.byHire('theo', 50).map((r) => r.id), ['b1']);
+    });
+});
+
+test('an incomplete action round-trips with its status', () => {
+    withRepos((repos) => {
+        repos.activity.append(activity('a1', 'marion', 'Edit', 'incomplete', '2026-08-18T12:00:00Z'));
+        assert.equal(repos.activity.byHire('marion', 50)[0]?.status, 'incomplete');
+    });
+});
+
+test('isolation: writing activity touches only activity_events, not the state tables', () => {
+    withRepos((repos, raw) => {
+        // A hire in a known state, the state feed's data.
+        repos.hires.insert(hire('marion', '2026-08-18T11:00:00Z'));
+        const before = repos.hires.get('marion');
+        // Writing activity for that hire must not change the hire row or write a
+        // channel/state row: the activity store is separate from the state path.
+        repos.activity.append(activity('a1', 'marion', 'Edit', 'ok', '2026-08-18T12:00:00Z'));
+        const after = repos.hires.get('marion');
+        assert.deepEqual(after, before, 'the hire state row is untouched by an activity write');
+        const channelCount = (raw as unknown as { prepare(s: string): { get(): { n: number } } })
+            .prepare('SELECT count(*) AS n FROM channel_messages').get().n;
+        assert.equal(channelCount, 0, 'no state-transition row was written by an activity write');
+        assert.equal(repos.activity.byHire('marion', 50).length, 1, 'the activity landed in its own table');
     });
 });

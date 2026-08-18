@@ -27,14 +27,14 @@
  */
 
 import type {
-    HiredAgent, Project, Task, PolicyLogEntry, DrainReportEntry, ChannelMessage
+    HiredAgent, Project, Task, PolicyLogEntry, DrainReportEntry, ChannelMessage, ActivityRecord
 } from '../../domain/models.ts';
 import type { ChannelCursor } from '../../shared/ipc.ts';
 import type { StorageDatabase, Statement } from './database.ts';
 import {
     hireToRow, hireFromRow, projectToRow, projectFromRow, taskToRow, taskFromRow,
     policyLogToRow, policyLogFromRow, drainReportToRow, drainReportFromRow,
-    channelMessageToRow, channelMessageFromRow, type Row
+    channelMessageToRow, channelMessageFromRow, activityRecordToRow, activityRecordFromRow, type Row
 } from './mapping.ts';
 
 /** A page of a growing table. Both are required: there is no read-everything. */
@@ -262,6 +262,31 @@ export class ChannelRepository {
     }
 }
 
+/**
+ * The append-only activity store: one coalesced row per action a colleague took.
+ * Append and read-by-hire only, the same shape the policy log and drain report use.
+ * The read is one colleague's actions oldest-first, for the reopen history.
+ */
+export class ActivityRepository {
+    readonly #append: Statement;
+    readonly #byHire: Statement;
+
+    constructor(db: StorageDatabase) {
+        this.#append = db.prepare(
+            'INSERT INTO activity_events (id, hire_id, session_id, tool, target, status, at) ' +
+            'VALUES (@id, @hire_id, @session_id, @tool, @target, @status, @at)');
+        this.#byHire = db.prepare(
+            'SELECT * FROM activity_events WHERE hire_id = ? ORDER BY at, id LIMIT ?');
+    }
+
+    append(record: ActivityRecord): void { this.#append.run(activityRecordToRow(record)); }
+
+    /** One colleague's actions, oldest-first, up to `limit`, for the reopen history. */
+    byHire(hireId: string, limit: number): ActivityRecord[] {
+        return (this.#byHire.all(hireId, limit) as Row[]).map(activityRecordFromRow);
+    }
+}
+
 /** Every repository, built once over one open database. */
 export interface Repositories {
     readonly hires: HireRepository;
@@ -270,6 +295,7 @@ export interface Repositories {
     readonly policyLog: PolicyLogRepository;
     readonly drainReports: DrainReportRepository;
     readonly channel: ChannelRepository;
+    readonly activity: ActivityRepository;
 }
 
 export function createRepositories(db: StorageDatabase): Repositories {
@@ -279,6 +305,7 @@ export function createRepositories(db: StorageDatabase): Repositories {
         tasks: new TaskRepository(db),
         policyLog: new PolicyLogRepository(db),
         drainReports: new DrainReportRepository(db),
-        channel: new ChannelRepository(db)
+        channel: new ChannelRepository(db),
+        activity: new ActivityRepository(db)
     };
 }

@@ -47,6 +47,8 @@ export interface ManagerDeps {
     readonly makeTailer?: (path: string, onEvents: (events: readonly ActivityEvent[]) => void) => Tailer;
     /** Receives tagged events. In piece 1 this is a proof log; piece 2 persists. */
     readonly onEvents: (events: readonly TaggedActivityEvent[]) => void;
+    /** Called when an agent's session ends, so a consumer can flush in-flight actions. */
+    readonly onSessionEnd?: (agentId: string) => void;
     readonly now: () => string;
     readonly onDebug?: (message: string) => void;
 }
@@ -83,7 +85,10 @@ export class TranscriptManager {
      */
     observe(o: TranscriptObservation): void {
         if (o.event === 'SessionEnd') {
-            if (o.agentId) this.#stop(o.agentId);
+            if (o.agentId) {
+                this.#stop(o.agentId);
+                this.#deps.onSessionEnd?.(o.agentId);
+            }
             return;
         }
         if (!o.agentId || !o.transcriptPath) return;
