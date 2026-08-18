@@ -242,3 +242,20 @@ test('isolation: writing activity touches only activity_events, not the state ta
         assert.equal(repos.activity.byHire('marion', 50).length, 1, 'the activity landed in its own table');
     });
 });
+
+function drainRow(drainId: string, agentId: string, over: Partial<import('../../domain/models.ts').DrainReportEntry>): import('../../domain/models.ts').DrainReportEntry {
+    return { drainId, agentId, outcome: 'committed', committed: true, branch: 'stafford/checkpoint/' + agentId + '/S', commitId: agentId + '-sha', reason: null, at: '2026-08-18T12:00:00Z', ...over };
+}
+
+test('drain reports persist reason and latestCommittedDrain returns the newest committed drain', () => {
+    withRepos((repos) => {
+        repos.drainReports.append(drainRow('d1', 'marion', { at: '2026-08-18T12:00:00Z' }));
+        repos.drainReports.append(drainRow('d2', 'theo', { outcome: 'checkpointed', committed: false, branch: null, commitId: null, reason: 'clean', at: '2026-08-18T13:00:00Z' }));
+        repos.drainReports.append(drainRow('d2', 'marion', { at: '2026-08-18T13:00:01Z' }));
+
+        const latest = repos.drainReports.latestCommittedDrain();
+        assert.deepEqual(latest.map((r) => [r.drainId, r.agentId, r.committed]), [['d2', 'marion', true]], 'newest committed drain, committed rows only');
+        // The reason column persists through the INSERT (the piece-2 gap this piece closed).
+        assert.equal(repos.drainReports.byDrain('d2').find((r) => r.agentId === 'theo')?.reason, 'clean');
+    });
+});
