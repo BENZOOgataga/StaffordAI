@@ -153,10 +153,11 @@
     border: 1px solid var(--line);
     border-left: 3px solid transparent;
     border-radius: var(--radius);
-    transition: transform 260ms var(--ease), box-shadow 260ms var(--ease),
-                background 200ms var(--ease);
+    transition: background 200ms var(--ease), border-color 200ms var(--ease);
   }
   .card:hover { background: var(--surface-hover); }
+  /* Pointer-down feedback is instant, no settle: the press reads immediately. */
+  .card[role="button"]:active { background: var(--surface-hover); transition: none; }
   /* The card whose detail fills the right pane reads selected, quietly. */
   .card.selected { background: var(--surface-hover); border-color: rgba(255, 255, 255, 0.18); }
 
@@ -214,33 +215,27 @@
     white-space: nowrap;
   }
 
-  /* The signature. The one warm card in a cool room. */
+  /* The signature, in the feed's register: the one amber accent, no glow, no
+     gradient, no lift. A crisp amber left edge and an amber dot and line carry it,
+     the same one-accent-on-attention the feed spends its amber on. */
   .card.waiting_for_you {
-    border-left-color: var(--waiting-edge);
-    background: linear-gradient(90deg, var(--waiting-soft), var(--surface) 42%);
-    box-shadow: 0 0 0 1px var(--waiting-soft), 0 8px 24px -12px rgba(232, 161, 58, 0.5);
-    transform: translateY(-2px);
+    border-left-color: var(--waiting);
+    background: var(--surface);
   }
   .card.waiting_for_you .card-rail { background: var(--waiting); }
   .card.waiting_for_you .state-line { color: var(--waiting); font-weight: 560; }
 
-  /* The unseen badge: a small amber dot that clears when the person looks. */
+  /* The unseen badge: a small static amber dot that clears when the person looks.
+     Static, not pulsing, to match the feed's calm: the amber itself is the signal,
+     a pulse would read as a second, louder one. */
   .badge {
     display: none;
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: var(--waiting);
-    box-shadow: 0 0 0 0 var(--waiting-soft);
   }
-  .card.badged .badge {
-    display: inline-block;
-    animation: pulse 2.4s var(--ease) infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(232, 161, 58, 0.45); }
-    50% { box-shadow: 0 0 0 5px rgba(232, 161, 58, 0); }
-  }
+  .card.badged .badge { display: inline-block; }
 
   /* Cannot reach this one: spawned, alive, but silent. A dashed edge and a hollow
      ring read as a connection that did not complete, not as resting and not as a
@@ -432,10 +427,12 @@
     padding: 8px 12px;
     margin-bottom: -1px;
     cursor: pointer;
-    transition: color var(--settle) var(--ease);
+    /* Quick, so the tab responds to the pointer rather than fading in slowly. */
+    transition: color 140ms var(--ease), border-color 140ms var(--ease);
   }
   .tab:hover { color: var(--text); }
-  .tab:active { color: var(--text); }
+  /* Pointer-down feedback is instant. */
+  .tab:active { color: var(--text); transition: none; }
   .tab.active { color: var(--text); border-bottom-color: var(--text); }
   .tab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 4px; }
 
@@ -654,8 +651,7 @@
   .sheet-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
   @media (prefers-reduced-motion: reduce) {
-    .card { transition: background 160ms ease; transform: none !important; }
-    .card.badged .badge { animation: none; }
+    .card { transition: background 120ms linear; }
   }
 
   :focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
