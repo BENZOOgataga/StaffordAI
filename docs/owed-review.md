@@ -3,6 +3,52 @@
 A single accounting of everything parked, taken from the plan and the tree rather than memory, so the
 next build is chosen against the whole board. Read-only: this decides nothing and builds nothing.
 
+## Update, 2026-08-18, the git executor loop is done and the release is one blocker away
+
+Read this block first. It is the newest. The block under it records the redesign as complete, and everything
+below that is older.
+
+### The git executor loop landed, so committed work is real and findable
+
+The drain used to write `committed=false` every time, because nothing turned a checkpoint into a real commit.
+That is closed. On drain, a colleague's tracked work is committed to a `stafford/checkpoint/<hire>/<timestamp>`
+branch through git plumbing over a temporary index, so the working tree, the real index, HEAD, and the current
+branch end byte-for-byte unchanged and nothing lands on main or the working branch. Only tracked modifications
+are committed (`git add -u`), never an untracked file, so a drain cannot sweep a secret into a commit.
+`committed=true` is now genuine in `drain_report`, with a real branch and sha and a new `reason` column that
+tells a clean tree from a failed commit from an executor timeout. The design and the split are in
+`docs/plans/GIT-EXECUTOR-SPLIT.md`; this is the summary.
+
+The save is no longer invisible. On launch a quiet, dismissible banner reads the drain report and tells the
+person what was saved and the branch it is on, so a save nobody could find is now findable. It is read-only
+over the rows, shows only `committed=true` saves, and does not reappear for a drain once dismissed.
+
+### The Windows signing blocker is cleared
+
+The Windows build ships deterministically unsigned now. There was never a work cert on it (the exe read
+NotSigned and its metadata carries only my handle, no employer identifier), but a build machine with a `CSC_*`
+env would have signed with whatever cert it pointed at. A no-op sign hook under `win.signtoolOptions.sign`
+withholds any signature regardless of the machine's store or environment, and the packaged-bundle check now
+reads the exe's PE certificate table and fails the build if a signature ever appears. It is CI-enforced on the
+Windows package leg.
+
+### The release status, precisely
+
+v0.1.0 is feature-complete and one blocker from cuttable. The Windows signing blocker is cleared. The one
+remaining blocker is the macOS real-spawn verification: the POSIX hook path, the transcript tail the rich feed
+reads, and the drain-commit loop have all been proven structurally and in CI against real git, but never
+against a real Claude binary on a Mac. That single verification is the next real work, and it needs the Mac.
+The exact Mac-side steps are the runbook in `docs/HANDOFF.md`.
+
+### What is next now
+
+The Mac-side runbook in `docs/HANDOFF.md`, in order: the real-spawn verification, the darwin build, the real
+unsigned launch and README reconciliation, then cutting v0.1.0. After the release, the deferred set: the three
+small Geist re-skin follow-ups (the create and hire sheets shadow, the nav rail active-state gradient, the
+header backdrop blur), then the larger features, task dispatch and a board, a project-centric view, Settings,
+and the `ProjectPolicy.sandbox` shape decision, which comes due with task dispatch. None of the deferred set
+blocks the release.
+
 ## Update, 2026-08-18, the redesign is complete
 
 Read this block first. Everything under it is older. The redesign that the 2026-08-14 block listed as the
