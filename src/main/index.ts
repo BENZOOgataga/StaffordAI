@@ -43,10 +43,11 @@ import { locateClaude } from './agents/claude-locator.ts';
 import { readTrust } from './agents/trust.ts';
 import { recordTransition } from './channel/channel-events.ts';
 import { TranscriptManager, coerceObservation } from './activity/transcript-manager.ts';
+import { savedNoticeFor } from './checkpoints/saved-work.ts';
 import { ActivityCoalescer, shouldPersist, type CoalescedAction } from './activity/activity-coalesce.ts';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import type { RosterSnapshot, ActivityRow } from '../shared/ipc.ts';
+import type { RosterSnapshot, ActivityRow, SavedCheckpoints } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 import type { PtyLike } from './agents/pty-session.ts';
 
@@ -235,6 +236,44 @@ function rendererEntry(): string {
 /** The remembered window bounds live beside the DB, in userData, never committed. */
 function windowStatePath(): string {
     return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+/** The last saved-work notice the person dismissed, in userData, so it does not show again. */
+function checkpointsSeenPath(): string {
+    return path.join(app.getPath('userData'), 'checkpoints-seen.json');
+}
+
+function readSeenDrainId(): string | null {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(checkpointsSeenPath(), 'utf8')) as { drainId?: unknown };
+        return typeof parsed.drainId === 'string' ? parsed.drainId : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The saved work from the most recent committed drain, for the launch notice, or null
+ * when there is none or the person already dismissed it. A read of the drain report,
+ * never git; a committed row carries the branch, and the agent id is the hire id, so
+ * the name is a store lookup.
+ */
+function savedCheckpoints(): SavedCheckpoints | null {
+    if (!repositories) return null;
+    const hires = repositories.hires;
+    return savedNoticeFor(
+        repositories.drainReports.latestCommittedDrain(),
+        readSeenDrainId(),
+        (hireId) => hires.get(hireId)?.name ?? hireId
+    );
+}
+
+function ackCheckpoints(drainId: string): void {
+    try {
+        fs.writeFileSync(checkpointsSeenPath(), JSON.stringify({ drainId }));
+    } catch {
+        // A best-effort marker: a failure only means the notice may show once more.
+    }
 }
 
 /**
@@ -723,6 +762,9 @@ app.whenReady().then(async () => {
                 id: r.id, hireId: r.hireId, tool: r.tool, target: r.target, status: r.status, at: r.at, live: false
             }))
             : []),
+        // The saved-work notice: the most recent committed drain, and the dismissal.
+        savedCheckpoints: () => savedCheckpoints(),
+        ackCheckpoints: (drainId) => ackCheckpoints(drainId),
         // A reply records a message from the person in the timeline, then delivers
         // it to the colleague through the lifecycle, the same submitMessage path a
         // first message and the 3b input use. No second session path: the lifecycle

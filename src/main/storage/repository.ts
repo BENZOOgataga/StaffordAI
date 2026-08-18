@@ -180,18 +180,36 @@ export class PolicyLogRepository {
 export class DrainReportRepository {
     readonly #append: Statement;
     readonly #byDrain: Statement;
+    readonly #latestCommittedId: Statement;
+    readonly #committedForDrain: Statement;
 
     constructor(db: StorageDatabase) {
         this.#append = db.prepare(
-            'INSERT INTO drain_report (drain_id, agent_id, outcome, committed, branch, commit_id, at) ' +
-            'VALUES (@drain_id, @agent_id, @outcome, @committed, @branch, @commit_id, @at)');
+            'INSERT INTO drain_report (drain_id, agent_id, outcome, committed, branch, commit_id, reason, at) ' +
+            'VALUES (@drain_id, @agent_id, @outcome, @committed, @branch, @commit_id, @reason, @at)');
         this.#byDrain = db.prepare('SELECT * FROM drain_report WHERE drain_id = ? ORDER BY id');
+        // The most recent shutdown that saved anything, by write time.
+        this.#latestCommittedId = db.prepare(
+            'SELECT drain_id FROM drain_report WHERE committed = 1 ORDER BY at DESC, id DESC LIMIT 1');
+        this.#committedForDrain = db.prepare(
+            'SELECT * FROM drain_report WHERE drain_id = ? AND committed = 1 ORDER BY id');
     }
 
     append(entry: DrainReportEntry): void { this.#append.run(drainReportToRow(entry)); }
     /** Every row for one shutdown, in write order. */
     byDrain(drainId: string): DrainReportEntry[] {
         return rowsOf(this.#byDrain, drainId).map(drainReportFromRow);
+    }
+
+    /**
+     * The committed rows of the most recent shutdown that saved anything, for the
+     * launch notice. Empty when no drain has ever committed. Read-only: this reads
+     * what the drain wrote, it never re-derives from git.
+     */
+    latestCommittedDrain(): DrainReportEntry[] {
+        const row = this.#latestCommittedId.get() as { drain_id: string } | undefined;
+        if (!row) return [];
+        return rowsOf(this.#committedForDrain, row.drain_id).map(drainReportFromRow);
     }
 }
 

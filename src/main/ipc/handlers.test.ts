@@ -4,7 +4,7 @@ import { buildHandlers } from './handlers.ts';
 import {
     INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened,
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
-    type ProjectCreated, type HireCreated, type ActivityRow
+    type ProjectCreated, type HireCreated, type ActivityRow, type SavedCheckpoints
 } from '../../shared/ipc.ts';
 import type { ProofPty } from './proof-pty.ts';
 
@@ -26,6 +26,8 @@ interface SessionOverrides {
     channelPage?: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     channelSince?: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
     activityByHire?: (hireId: string, limit: number) => readonly ActivityRow[];
+    savedCheckpoints?: () => SavedCheckpoints | null;
+    ackCheckpoints?: (drainId: string) => void;
     channelReply?: (hireId: string, text: string) => Promise<void>;
     createProject?: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
     createHire?: (payload: { name: string; type: string; title: string; projectId: string }) => HireCreated;
@@ -55,6 +57,8 @@ function deps(
         channelPage: over.channelPage ?? (() => []),
         channelSince: over.channelSince ?? (() => []),
         activityByHire: over.activityByHire ?? (() => []),
+        savedCheckpoints: over.savedCheckpoints ?? (() => null),
+        ackCheckpoints: over.ackCheckpoints ?? (() => { /* noop */ }),
         channelReply: over.channelReply ?? (() => Promise.resolve())
     };
 }
@@ -346,4 +350,19 @@ test('proof:spawn passes a valid size to the pty', () => {
     const result = handlers['proof:spawn']({ cols: 80, rows: 24 });
     assert.deepEqual(result, { ok: true });
     assert.deepEqual(spawned, { cols: 80, rows: 24 });
+});
+
+test('checkpoints:saved returns the deps result, or null when nothing to show', () => {
+    const saved = { drainId: 'd1', saves: [{ name: 'Marion', branch: 'stafford/checkpoint/marion/S1' }] };
+    const withSaved = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, { savedCheckpoints: () => saved }));
+    assert.deepEqual(withSaved['checkpoints:saved'](undefined), saved);
+    assert.equal(buildHandlers(deps())['checkpoints:saved'](undefined), null);
+});
+
+test('checkpoints:ack is guarded and routes the drain id to ack', () => {
+    const acked: string[] = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, { ackCheckpoints: (d) => acked.push(d) }));
+    handlers['checkpoints:ack']({ drainId: 'd1' });
+    assert.deepEqual(acked, ['d1']);
+    assert.throws(() => handlers['checkpoints:ack']({}), /checkpoints:ack requires/);
 });

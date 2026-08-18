@@ -15,7 +15,7 @@ import {
     isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel,
     type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened,
     type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
-    type ActivityByHireReply, type ActivityRow
+    type ActivityByHireReply, type ActivityRow, type SavedCheckpoints
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -89,6 +89,16 @@ const api = Object.freeze({
             invoke('activity:by-hire', { hireId, limit }) as Promise<ActivityByHireReply>,
         onAppended: (listener: (row: ActivityRow) => void): (() => void) =>
             on('activity:appended', (payload) => listener(payload as ActivityRow))
+    }),
+
+    // The saved-work notice on launch: what a drain committed and where, read from
+    // the drain report. saved returns null when there is nothing new to show; ack
+    // marks a drain's notice seen so it does not show again. Branch names only.
+    checkpoints: Object.freeze({
+        saved: (): Promise<SavedCheckpoints | null> =>
+            invoke('checkpoints:saved') as Promise<SavedCheckpoints | null>,
+        ack: (drainId: string): Promise<void> =>
+            invoke('checkpoints:ack', { drainId }) as Promise<void>
     }),
 
     // The detail view's live terminal. open subscribes to a hire's session and

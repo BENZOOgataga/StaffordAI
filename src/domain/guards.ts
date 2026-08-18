@@ -13,7 +13,7 @@
 
 import type {
     ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite,
-    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ActivityByHireRequest,
+    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ActivityByHireRequest, CheckpointAck,
     ProjectCreate, HireCreate
 } from '../shared/ipc.ts';
 
@@ -62,6 +62,11 @@ export function isChannelPage(value: unknown): value is ChannelPageRequest {
 /** A read of one colleague's persisted activity, capped. */
 export function isActivityByHire(value: unknown): value is ActivityByHireRequest {
     return isObject(value) && isHireId(value.hireId) && isBoundedInt(value.limit, 1, 1000);
+}
+
+/** Acknowledging a drain's saved-work notice: a bounded drain id, no path. */
+export function isCheckpointAck(value: unknown): value is CheckpointAck {
+    return isObject(value) && isBoundedString(value.drainId, 256);
 }
 
 /** A tail read: rows after a cursor, capped. */

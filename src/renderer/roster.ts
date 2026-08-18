@@ -18,6 +18,7 @@ import { openDetail } from './detail.ts';
 import { activateChannel, deactivateChannel } from './channel.ts';
 import { initCreateForms, openProjectForm, openHireForm } from './create-forms.ts';
 import { formCopy, type Lang } from './create-forms-view.ts';
+import { renderSavedWork } from './checkpoints.ts';
 
 const lang: Lang = typeof navigator !== 'undefined' && navigator.language.startsWith('fr') ? 'fr' : 'en';
 const copy = formCopy(lang);
@@ -248,6 +249,15 @@ function main(): void {
     // The create forms. Creating a hire or a project does not emit a state
     // transition, so the roster is refreshed directly on a successful create
     // rather than waiting for a roster:changed that will not come.
+    // On launch, quietly surface any work a drain saved, so a save nobody could find
+    // becomes findable. Read-only, off the drain report; dismissing marks it seen.
+    const savedHost = document.getElementById('saved-work') as HTMLElement;
+    void window.stafford.checkpoints.saved().then((data) => {
+        if (data && data.saves.length > 0) {
+            renderSavedWork(savedHost, data, lang, () => { void window.stafford.checkpoints.ack(data.drainId); });
+        }
+    });
+
     initCreateForms({ onCreated: () => { void refresh(); } });
     (document.getElementById('add-project-header') as HTMLButtonElement)
         .addEventListener('click', () => openProjectForm());

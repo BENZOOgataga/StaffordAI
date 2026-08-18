@@ -141,6 +141,54 @@
   .group-label { font-weight: 560; overflow-wrap: anywhere; }
   .group-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
 
+  /* The saved-work notice: a quiet hairline banner on launch when a drain saved a
+     colleague's work. Grayscale, no accent (this is information, not attention). An
+     explicit display guard is not needed since it has none, but pair it anyway. */
+  .saved-work { padding: 10px 16px 0; }
+  .saved-work[hidden] { display: none; }
+  .saved-panel {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 12px 14px;
+  }
+  .saved-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .saved-title { color: var(--muted); font-size: 0.82rem; font-weight: 560; letter-spacing: 0.01em; }
+  .saved-dismiss {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.78rem;
+    padding: 3px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .saved-dismiss:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.16); }
+  .saved-dismiss:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .saved-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+    color: var(--text);
+    font-size: 0.92rem;
+  }
+  /* The branch, selectable in one click so the person can copy it and go find the work. */
+  .saved-branch {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1px 7px;
+    user-select: all;
+    overflow-wrap: anywhere;
+  }
+
   /* The detail pane, right: fills the rest, shows the empty state or a colleague. */
   .detail-pane { flex: 1 1 auto; min-width: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 
@@ -671,6 +719,7 @@
       <button id="hire-header" class="header-btn" type="button">Hire</button>
       <button id="mute" class="mute" type="button" aria-pressed="false">Mute</button>
     </header>
+    <div id="saved-work" class="saved-work" hidden></div>
     <div id="workspace" class="workspace">
       <main id="roster" class="roster" aria-live="polite"></main>
       <section id="detail-pane" class="detail-pane" aria-label="Colleague detail">

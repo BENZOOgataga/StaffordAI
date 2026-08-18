@@ -31,6 +31,8 @@ export const INVOKE_CHANNELS = [
     'channel:since',
     'channel:reply',
     'activity:by-hire',
+    'checkpoints:saved',
+    'checkpoints:ack',
     'proof:spawn',
     'proof:write',
     'proof:kill'
@@ -252,6 +254,27 @@ export interface ActivityByHireRequest {
 /** The reply to activity:by-hire: the persisted accomplishment rows, oldest-first. */
 export interface ActivityByHireReply {
     readonly rows: readonly ActivityRow[];
+}
+
+/** One colleague's saved work from a drain: the name and the checkpoint branch it is on. */
+export interface SavedWork {
+    readonly name: string;
+    readonly branch: string;
+}
+
+/**
+ * The saved work from the most recent drain that committed anything, for the launch
+ * notice. `drainId` identifies the drain so the person's dismissal marks that one
+ * seen and it does not reappear. Null (not this type) when there is nothing to show.
+ */
+export interface SavedCheckpoints {
+    readonly drainId: string;
+    readonly saves: readonly SavedWork[];
+}
+
+/** Marks a drain's saved-work notice seen, so it does not show again. */
+export interface CheckpointAck {
+    readonly drainId: string;
 }
 
 /** What the proof window sends to open a pty. Ids only, no paths. */
