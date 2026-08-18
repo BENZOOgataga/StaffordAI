@@ -13,7 +13,7 @@
 
 import type {
     ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite,
-    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply,
+    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ActivityByHireRequest,
     ProjectCreate, HireCreate
 } from '../shared/ipc.ts';
 
@@ -57,6 +57,11 @@ export function isChannelPage(value: unknown): value is ChannelPageRequest {
     if (!isObject(value)) return false;
     const okBefore = value.before === null || isChannelCursor(value.before);
     return okBefore && isBoundedInt(value.limit, 1, 500);
+}
+
+/** A read of one colleague's persisted activity, capped. */
+export function isActivityByHire(value: unknown): value is ActivityByHireRequest {
+    return isObject(value) && isHireId(value.hireId) && isBoundedInt(value.limit, 1, 1000);
 }
 
 /** A tail read: rows after a cursor, capped. */

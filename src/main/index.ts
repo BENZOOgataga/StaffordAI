@@ -44,7 +44,7 @@ import { TranscriptManager, coerceObservation } from './activity/transcript-mana
 import { ActivityCoalescer, shouldPersist, type CoalescedAction } from './activity/activity-coalesce.ts';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import type { RosterSnapshot } from '../shared/ipc.ts';
+import type { RosterSnapshot, ActivityRow } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 import type { PtyLike } from './agents/pty-session.ts';
 
@@ -408,6 +408,11 @@ function notifyChannelChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('channel:changed');
 }
 
+/** Pushes one activity action to the Activity feed, so it appends the row live. */
+function notifyActivityAppended(row: ActivityRow): void {
+    if (window && !window.isDestroyed()) window.webContents.send('activity:appended', row);
+}
+
 /**
  * Builds the session lifecycle: the owner of live Claude sessions. It is dormant
  * until the first message (the detail view is 3b), but constructing it wires the
@@ -609,22 +614,32 @@ app.whenReady().then(async () => {
         // turn-paced transition writes, so it cannot regress the state cadence or the
         // drain. The rich rows are piece 3.
         const coalescer = new ActivityCoalescer();
-        const persist = (action: CoalescedAction): void => {
-            if (!shouldPersist(action.tool)) return; // live-only tools are not stored
+        const handleAction = (action: CoalescedAction): void => {
             const sessionId = action.sessionId;
             const binding = sessionId ? store.findBySession(sessionId) : null;
-            if (!binding || !repositories) return; // unattributable, so not stored
-            repositories.activity.append({
-                id: randomUUID(), hireId: binding.hireId, sessionId,
-                tool: action.tool, target: action.target, status: action.status, at: action.at
+            if (!binding || !repositories) return; // unattributable, so neither stored nor shown
+            // The accomplishment set is persisted; a read or search is live-only, shown
+            // while the colleague is open and gone on reopen. Either way the action is
+            // pushed to the open renderer so the feed is rich in the moment.
+            const id = randomUUID();
+            const stored = shouldPersist(action.tool);
+            if (stored) {
+                repositories.activity.append({
+                    id, hireId: binding.hireId, sessionId,
+                    tool: action.tool, target: action.target, status: action.status, at: action.at
+                });
+            }
+            notifyActivityAppended({
+                id, hireId: binding.hireId, tool: action.tool, target: action.target,
+                status: action.status, at: action.at, live: !stored
             });
-            smoke('activity persisted ' + binding.hireId + ' ' + action.tool +
-                (action.target ? ' ' + action.target : '') + ' [' + action.status + ']');
+            smoke('activity ' + (stored ? 'persisted' : 'live') + ' ' + binding.hireId + ' ' +
+                action.tool + (action.target ? ' ' + action.target : '') + ' [' + action.status + ']');
         };
         transcriptManager = new TranscriptManager({
             now: () => new Date().toISOString(),
-            onEvents: (events) => { for (const action of coalescer.ingest(events)) persist(action); },
-            onSessionEnd: (agentId) => { for (const action of coalescer.flush(agentId)) persist(action); },
+            onEvents: (events) => { for (const action of coalescer.ingest(events)) handleAction(action); },
+            onSessionEnd: (agentId) => { for (const action of coalescer.flush(agentId)) handleAction(action); },
             onDebug: (message) => smoke('transcript: ' + message)
         });
         transport.listener.on('event', (raw: Record<string, unknown>) => {
@@ -687,6 +702,14 @@ app.whenReady().then(async () => {
             ? (before ? repositories.channel.before(before, limit) : repositories.channel.newest(limit))
             : []),
         channelSince: (after, limit) => (repositories ? repositories.channel.after(after, limit) : []),
+        // One colleague's persisted activity history, mapped to the renderer's row. The
+        // stored rows are the durable accomplishments; live is false because a reload
+        // is the reopen case, where only the persisted history remains.
+        activityByHire: (hireId, limit) => (repositories
+            ? repositories.activity.byHire(hireId, limit).map((r): ActivityRow => ({
+                id: r.id, hireId: r.hireId, tool: r.tool, target: r.target, status: r.status, at: r.at, live: false
+            }))
+            : []),
         // A reply records a message from the person in the timeline, then delivers
         // it to the colleague through the lifecycle, the same submitMessage path a
         // first message and the 3b input use. No second session path: the lifecycle
