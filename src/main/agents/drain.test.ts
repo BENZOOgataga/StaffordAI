@@ -50,7 +50,7 @@ async function withRepos(
 test('an agent that checkpoints and commits cleanly is committed, with its branch and commit id', async () => {
     const { sink, rows } = collectingSink();
     const summary = await runDrain({
-        agents: [agent('marion', () => Promise.resolve({ committed: true, branch: 'feat/x', commitId: 'abc123' }))],
+        agents: [agent('marion', () => Promise.resolve({ committed: true, branch: 'feat/x', commitId: 'abc123', reason: null }))],
         platform: PLATFORM, sink, drainId: 'd1', now: () => AT,
         timeout: neverTimes, forceKill: () => Promise.resolve()
     });
@@ -58,7 +58,7 @@ test('an agent that checkpoints and commits cleanly is committed, with its branc
     assert.equal(rows.length, 1);
     assert.deepEqual(rows[0], {
         drainId: 'd1', agentId: 'marion', outcome: 'committed', committed: true,
-        branch: 'feat/x', commitId: 'abc123', at: AT
+        branch: 'feat/x', commitId: 'abc123', reason: null, at: AT
     });
     assert.equal(summary.committed, 1);
 });
@@ -66,7 +66,7 @@ test('an agent that checkpoints and commits cleanly is committed, with its branc
 test('an agent asked to commit that reports failure is committed=false, outcome checkpointed', async () => {
     const { sink, rows } = collectingSink();
     await runDrain({
-        agents: [agent('marion', () => Promise.resolve({ committed: false, branch: 'feat/x', commitId: null }))],
+        agents: [agent('marion', () => Promise.resolve({ committed: false, branch: 'feat/x', commitId: null, reason: null }))],
         platform: PLATFORM, sink, drainId: 'd1', now: () => AT,
         timeout: neverTimes, forceKill: () => Promise.resolve()
     });
@@ -111,7 +111,7 @@ test('a kill that fails does not stop the drain: the row is still written and th
     await runDrain({
         agents: [
             agent('hangs', () => new Promise<CheckpointResult>(() => {}), 1),
-            agent('commits', () => Promise.resolve({ committed: true, branch: 'b', commitId: 'c' }), 2)
+            agent('commits', () => Promise.resolve({ committed: true, branch: 'b', commitId: 'c', reason: null }), 2)
         ],
         platform: PLATFORM, sink, drainId: 'd1', now: () => AT,
         timeout: timesOut, forceKill: () => Promise.reject(new Error('taskkill failed'))
@@ -182,9 +182,9 @@ test('rows are durable per agent: an interrupt after some resolve leaves those r
         };
 
         const agents = [
-            agent('a0', () => Promise.resolve({ committed: true, branch: 'b0', commitId: 'c0' })),
-            agent('a1', () => Promise.resolve({ committed: true, branch: 'b1', commitId: 'c1' })),
-            agent('a2', () => Promise.resolve({ committed: true, branch: 'b2', commitId: 'c2' }))
+            agent('a0', () => Promise.resolve({ committed: true, branch: 'b0', commitId: 'c0', reason: null })),
+            agent('a1', () => Promise.resolve({ committed: true, branch: 'b1', commitId: 'c1', reason: null })),
+            agent('a2', () => Promise.resolve({ committed: true, branch: 'b2', commitId: 'c2', reason: null }))
         ];
 
         await assert.rejects(
@@ -206,7 +206,7 @@ test('the drain report is append-only: the repository offers no update or delete
     await withRepos((repos, db) => {
         repos.drainReports.append({
             drainId: 'run-1', agentId: 'a0', outcome: 'committed', committed: true,
-            branch: 'b', commitId: 'c', at: AT
+            branch: 'b', commitId: 'c', reason: null, at: AT
         });
 
         const repo = repos.drainReports as unknown as Record<string, unknown>;

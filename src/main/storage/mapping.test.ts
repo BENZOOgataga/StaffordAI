@@ -51,12 +51,12 @@ const LOG: PolicyLogEntry = {
 
 const DRAIN_COMMITTED: DrainReportEntry = {
     drainId: 'run-1', agentId: 'h1', outcome: 'committed', committed: true,
-    branch: 'feat/x', commitId: 'abc123', at: '2026-08-11T00:00:00Z'
+    branch: 'feat/x', commitId: 'abc123', reason: null, at: '2026-08-11T00:00:00Z'
 };
 
 const DRAIN_KILLED: DrainReportEntry = {
     drainId: 'run-1', agentId: 'h2', outcome: 'force-killed', committed: false,
-    branch: null, commitId: null, at: '2026-08-11T00:00:01Z'
+    branch: null, commitId: null, reason: null, at: '2026-08-11T00:00:01Z'
 };
 
 test('a hire round-trips through the mapping unchanged', () => {

@@ -191,7 +191,9 @@ test('the drainable checkpoint routes through the injected teardown', async () =
 
     registry.ingest(ev('SessionStart', 'sess-1', { agentId: 'h1' }), AT);
     const result = await registry.drainables()[0]?.checkpoint();
-    assert.deepEqual(result, { committed: false, branch: null, commitId: null });
+    // No checkpoint runner is wired here, so the result is the empty placeholder, and
+    // the session is still torn down through the shared path.
+    assert.deepEqual(result, { committed: false, branch: null, commitId: null, reason: null });
     assert.deepEqual(torn, ['h1'], 'checkpoint tore the session down through the shared path');
 });
 

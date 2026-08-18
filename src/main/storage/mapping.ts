@@ -184,7 +184,7 @@ export function drainReportToRow(e: DrainReportEntry): Row {
     return {
         drain_id: e.drainId, agent_id: e.agentId, outcome: e.outcome,
         // The schema stores the flag as 0 or 1; the domain carries a boolean.
-        committed: e.committed ? 1 : 0, branch: e.branch, commit_id: e.commitId, at: e.at
+        committed: e.committed ? 1 : 0, branch: e.branch, commit_id: e.commitId, reason: e.reason, at: e.at
     };
 }
 
@@ -193,7 +193,7 @@ export function drainReportFromRow(row: Row): DrainReportEntry {
         drainId: str(row, 'drain_id'), agentId: str(row, 'agent_id'),
         outcome: oneOf<DrainOutcome>(row, 'outcome', Object.values(DRAIN_OUTCOMES)),
         committed: bool(row, 'committed'), branch: nstr(row, 'branch'),
-        commitId: nstr(row, 'commit_id'), at: str(row, 'at')
+        commitId: nstr(row, 'commit_id'), reason: nstr(row, 'reason'), at: str(row, 'at')
     };
 }
 
