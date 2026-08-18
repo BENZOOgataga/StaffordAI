@@ -182,6 +182,26 @@ export interface ChannelMessage {
     at: string;
 }
 
+/** The outcome of a coalesced activity action. `incomplete` is a use whose session ended first. */
+export const ACTIVITY_STATUSES = { OK: 'ok', ERROR: 'error', INCOMPLETE: 'incomplete' } as const;
+export type ActivityStatus = (typeof ACTIVITY_STATUSES)[keyof typeof ACTIVITY_STATUSES];
+
+/**
+ * One completed action a colleague took, append-only. Coalesced from a transcript
+ * use and its result before it is stored, so a row already carries its outcome: the
+ * tool, its target (a path or command, never file contents), a status, and when.
+ * Keyed by hire, with the session it happened in.
+ */
+export interface ActivityRecord {
+    id: string;
+    hireId: string;
+    sessionId: string | null;
+    tool: string;
+    target: string | null;
+    status: ActivityStatus;
+    at: string;
+}
+
 /**
  * The outcome of one agent at drain time, append-only.
  *

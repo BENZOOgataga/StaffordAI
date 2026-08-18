@@ -41,6 +41,7 @@ import { locateClaude } from './agents/claude-locator.ts';
 import { readTrust } from './agents/trust.ts';
 import { recordTransition } from './channel/channel-events.ts';
 import { TranscriptManager, coerceObservation } from './activity/transcript-manager.ts';
+import { ActivityCoalescer, shouldPersist, type CoalescedAction } from './activity/activity-coalesce.ts';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { RosterSnapshot } from '../shared/ipc.ts';
@@ -599,17 +600,31 @@ app.whenReady().then(async () => {
         // tails Claude's own transcript for tool events. It is wrapped so a fault
         // in it can never reach the state path above: a throw here is swallowed,
         // and the module cannot even import the registry, state, or drain, which a
-        // test asserts. In this piece its events are logged as proof, not stored or
-        // rendered; persistence is piece 2 and the rich rows are piece 3.
+        // test asserts.
+        //
+        // The events are coalesced (a use plus its result become one action) and the
+        // accomplishment set is persisted per colleague, resolving the hire from the
+        // session read-only. This write path is separate from the state path: it
+        // touches only activity_events, never a state table, the registry, or the
+        // turn-paced transition writes, so it cannot regress the state cadence or the
+        // drain. The rich rows are piece 3.
+        const coalescer = new ActivityCoalescer();
+        const persist = (action: CoalescedAction): void => {
+            if (!shouldPersist(action.tool)) return; // live-only tools are not stored
+            const sessionId = action.sessionId;
+            const binding = sessionId ? store.findBySession(sessionId) : null;
+            if (!binding || !repositories) return; // unattributable, so not stored
+            repositories.activity.append({
+                id: randomUUID(), hireId: binding.hireId, sessionId,
+                tool: action.tool, target: action.target, status: action.status, at: action.at
+            });
+            smoke('activity persisted ' + binding.hireId + ' ' + action.tool +
+                (action.target ? ' ' + action.target : '') + ' [' + action.status + ']');
+        };
         transcriptManager = new TranscriptManager({
             now: () => new Date().toISOString(),
-            onEvents: (events) => {
-                for (const e of events) {
-                    smoke('activity ' + e.agentId + ' ' + e.phase +
-                        (e.tool ? ' ' + e.tool : '') + (e.target ? ' ' + e.target : '') +
-                        (e.status ? ' [' + e.status + ']' : ''));
-                }
-            },
+            onEvents: (events) => { for (const action of coalescer.ingest(events)) persist(action); },
+            onSessionEnd: (agentId) => { for (const action of coalescer.flush(agentId)) persist(action); },
             onDebug: (message) => smoke('transcript: ' + message)
         });
         transport.listener.on('event', (raw: Record<string, unknown>) => {
