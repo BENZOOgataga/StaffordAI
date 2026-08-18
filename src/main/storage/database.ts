@@ -78,6 +78,12 @@ export interface OpenOptions {
      * the platform layer stays the one place that knows per-OS paths.
      */
     readonly appDataDir: string;
+    /**
+     * The folder created under `appDataDir`, defaulting to the `Stafford` runtime
+     * id. An isolated run (a verification build under a distinct app id) passes its
+     * own id here so its store sits beside the real one rather than in it.
+     */
+    readonly dirName?: string;
     /** Overrides the migrations directory, for tests. */
     readonly migrationsDir?: string;
 }
@@ -87,7 +93,7 @@ export interface OpenOptions {
  * every pending migration before returning the connection.
  */
 export function openDatabase(options: OpenOptions): OpenResult {
-    const dir = path.join(options.appDataDir, DATA_DIR_NAME);
+    const dir = path.join(options.appDataDir, options.dirName ?? DATA_DIR_NAME);
     mkdirSync(dir, { recursive: true });
 
     const file = path.join(dir, DATABASE_FILENAME);

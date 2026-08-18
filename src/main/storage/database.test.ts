@@ -35,6 +35,23 @@ test('creates the Stafford directory and the database file under the app data di
     }
 });
 
+test('an overridden dirName puts the store in its own folder, beside the default not in it', () => {
+    // A verification run under a distinct app id passes its id as dirName, so its
+    // store sits next to the real Stafford folder rather than sharing it. The default
+    // is unchanged: with no dirName, the folder is still DATA_DIR_NAME.
+    const appDataDir = mkdtempSync(path.join(tmpdir(), 'stafford-db-'));
+    const isolated = openDatabase({ appDataDir, dirName: 'StaffordVerify' });
+    try {
+        assert.equal(isolated.path, path.join(appDataDir, 'StaffordVerify', DATABASE_FILENAME));
+        assert.notEqual(isolated.path, path.join(appDataDir, DATA_DIR_NAME, DATABASE_FILENAME),
+            'the isolated store is not the default store');
+        assert.ok(existsSync(isolated.path));
+    } finally {
+        isolated.db.close();
+        rmSync(appDataDir, { recursive: true, force: true });
+    }
+});
+
 test('WAL is active after open, confirmed rather than assumed', () => {
     withDb(({ db }) => {
         const mode = db.pragma('journal_mode', { simple: true });

@@ -25,8 +25,9 @@ import { installTray } from './tray.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
 import { ProofPty } from './ipc/proof-pty.ts';
-import { openDatabase, DATA_DIR_NAME, type OpenResult } from './storage/database.ts';
+import { openDatabase, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
+import { resolveAppId } from './app-id.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import { preTrustDirectory } from './agents/pre-trust.ts';
 import { buildCommand, hookShellFor, merge, addExcludeEntry, type Settings } from './hooks/registration.ts';
@@ -47,7 +48,10 @@ import type { PtyLike } from './agents/pty-session.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
-const APP_ID = 'Stafford';
+// The runtime app id, `Stafford` by default. STAFFORD_APP_ID overrides it for an
+// isolated verification run, scoping the hook pipe and the data dir together so
+// the run coexists with a running Stafford instead of colliding on its endpoints.
+const { appId: APP_ID, overridden: APP_ID_OVERRIDDEN } = resolveAppId(process.env);
 
 let store: OpenResult | null = null;
 let repositories: Repositories | null = null;
@@ -84,11 +88,13 @@ let lifecycle: SessionLifecycle | null = null;
  */
 function openStore(): boolean {
     try {
-        const realBase = path.dirname(currentPlatform().appDataDir(os.homedir(), DATA_DIR_NAME));
+        const realBase = path.dirname(currentPlatform().appDataDir(os.homedir(), APP_ID));
         // A smoke run opens a throwaway store instead of the real one, so its seed
         // never lands in user data. A normal launch is unchanged.
         const base = resolveStoreBase({ smoke: SMOKE, realBase });
-        store = openDatabase({ appDataDir: base });
+        // The store folder is named for the app id, so an overridden run keeps its
+        // store beside the real one rather than in it. The default id is DATA_DIR_NAME.
+        store = openDatabase({ appDataDir: base, dirName: APP_ID });
         repositories = createRepositories(store.db);
         smoke('db open ' + store.path + ', migration ' + JSON.stringify(store.migration));
         return true;
@@ -348,6 +354,7 @@ async function startTransport(): Promise<boolean> {
     try {
         assertLaunchable(platform, home, APP_ID, canSpawnAndKill);
         transport = await startHookTransport({ platform, home, appId: APP_ID });
+        smoke('app id ' + APP_ID + (APP_ID_OVERRIDDEN ? ' (overridden, isolated run)' : ' (default)'));
         smoke('hook transport up at ' + transport.socketPath + ' | ' + transport.accessDetail);
         smoke('socket setup: ' + JSON.stringify(transport.report));
         return true;

@@ -84,6 +84,50 @@ test('the socket comes up and a valid agent gets the byte-identical acknowledgem
     });
 });
 
+test('two app ids bind distinct endpoints at once and each still authenticates its own agent', async () => {
+    // The whole point of the override: a verification run under a distinct app id
+    // stands up beside a running instance rather than colliding on its endpoint. Two
+    // transports with two app ids come up together on two distinct pipes/sockets, and
+    // the per-agent secret handshake still holds on the second, unweakened by the
+    // isolation.
+    const homeA = shortHome();
+    const homeB = shortHome();
+    const a = await startHookTransport({ platform, home: homeA, appId: appIdFor() });
+    const b = await startHookTransport({ platform, home: homeB, appId: appIdFor() });
+    // Auth shows in the listener signal, not the reply: the ack is byte-identical by
+    // design, so a valid secret emits 'event' and a bad one emits 'rejected'.
+    const eventsB: Array<{ agentId?: string; secret?: string }> = [];
+    const rejectsB: Array<{ reason: string }> = [];
+    b.listener.on('event', (e: { agentId?: string; secret?: string }) => eventsB.push(e));
+    b.listener.on('rejected', (r: { reason: string }) => rejectsB.push(r));
+    try {
+        assert.notEqual(a.socketPath, b.socketPath, 'distinct app ids bind distinct endpoints, no collision');
+
+        const secretB = b.secrets.issue('marion');
+        const goodReply = await send(b.socketPath,
+            JSON.stringify({ event: 'Stop', sessionId: 's1', agentId: 'marion', secret: secretB }) + '\n');
+        assert.equal(goodReply, ACKNOWLEDGEMENT, 'the ack is byte-identical on the overridden endpoint');
+        const authed = eventsB[0];
+        assert.ok(authed, 'a valid secret authenticates and the event is emitted');
+        assert.equal(eventsB.length, 1);
+        assert.equal(authed.agentId, 'marion');
+        assert.equal('secret' in authed, false, 'the secret never travels past the listener');
+
+        // A's secret must not authenticate on B: the handshake is per-transport, so
+        // isolation does not blur the auth between two coexisting runs.
+        const secretA = a.secrets.issue('marion');
+        await send(b.socketPath,
+            JSON.stringify({ event: 'Stop', sessionId: 's2', agentId: 'marion', secret: secretA }) + '\n');
+        assert.equal(eventsB.length, 1, 'the cross-transport secret does not emit an event');
+        assert.ok(rejectsB.some((r) => r.reason === 'bad-secret'), 'a secret from the other transport is rejected');
+    } finally {
+        await stopHookTransport(a).catch(() => {});
+        await stopHookTransport(b).catch(() => {});
+        fs.rmSync(homeA, { recursive: true, force: true });
+        fs.rmSync(homeB, { recursive: true, force: true });
+    }
+});
+
 test('the connection cap rejects the connection past the cap, from the shell wiring', async () => {
     await withTransport('cap', { maxConnections: 2 }, async (t) => {
         const rejections: string[] = [];
