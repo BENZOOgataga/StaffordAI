@@ -3,6 +3,57 @@
 A single accounting of everything parked, taken from the plan and the tree rather than memory, so the
 next build is chosen against the whole board. Read-only: this decides nothing and builds nothing.
 
+## Update, 2026-08-18, the redesign is complete
+
+Read this block first. Everything under it is older. The redesign that the 2026-08-14 block listed as the
+next work is done, so its next-pieces list is now history.
+
+### The rich activity feed landed, across three pieces
+
+The Activity tab is a real "what this colleague did and is doing" feed now, not a placeholder. It merges
+three sources into one stream ordered by time: the persisted accomplishment rows (edits, commands, session
+boundaries), the live-only reads and searches that show while the colleague is open and are gone on reopen,
+and the state-change rows the tab already showed (waiting, crashed, needs_trust, rate_limited). One amber
+accent stays on waiting; a failed or interrupted action reads as a quiet grayscale tag, never the accent.
+
+The data source is Claude's own session transcript. Stafford tails the transcript JSONL Claude writes as it
+works, so the rich rows cost zero added latency and need no new hook: the path arrives on the SessionStart
+hook Stafford already receives (`transcript_path`), and the tool hooks stay unregistered, which is what kept
+them off in the first place, since registering them cost about 760ms per tool call on Windows. The parser
+turns each transcript `tool_use` and `tool_result` into a typed event and pairs them by id. Persistence is a
+selective coalesced cut written to a new append-only table, `activity_events` (migration 0003): one row per
+completed action carrying its outcome. The cut lives in one place, `shouldPersist`, so it is easy to change:
+writes and commands and dispatch persist, reads and searches are live-only. The design and the split are in
+`docs/plans/RICH-ACTIVITY-SPLIT.md`; this is the summary, not a second copy.
+
+### The terminal-versus-structured question is closed
+
+It was an open deferred item. Shipped code answers it, so no further investigation is owed. The resolution:
+the structured feed is the front door and the raw terminal is the advanced fallback tab. The one caveat is
+that the feed reads an undocumented, version-dependent file, so if the transcript format proves unstable that
+reopens, but the parser degrades safely and the state feed stays authoritative, so a format change costs rich
+rows, not the app. See the fragility note in `docs/HANDOFF.md`.
+
+### The Geist re-skin landed, so the redesign is finished
+
+The roster cards and the tab bar were brought to the register the feed set: the waiting card is flat now, its
+one amber accent carried by a left edge and a dot and its state line, with the gradient and glow and lift
+removed. The composer was already in the register. One small re-skin follow-up remains and is bounded: the
+create and hire sheets still carry a drop-shadow elevation, the nav rail active state uses an amber-soft
+gradient that spends the accent off attention, and the header keeps a backdrop blur. None of that is a
+blocker; it is a later tidy pass.
+
+Also merged since 2026-08-14: the smoke and verification harness can now run beside a live Stafford, because
+`STAFFORD_APP_ID` overrides the runtime app id and gives an isolated run its own pipe and data dir together.
+
+### What is next now
+
+The redesign is complete, so the next work is the older deferred set below, chosen against the whole board:
+the git executor and real commit-on-quit, task dispatch and a board, a project-centric view, Settings, the
+`ProjectPolicy.sandbox` decision, and the release. The release is the shortest path to something a person can
+trust and is the recommendation: it waits only on a real Claude spawn verified on macOS and the Windows
+signing-cert check, both described under "The release" below.
+
 ## Update, 2026-08-14, machine switch to the MacBook
 
 I am moving from the work PC to the MacBook, which has none of this session's chat context. This block is
