@@ -14,7 +14,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 import {
     isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel,
     type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened,
-    type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated
+    type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
+    type ActivityByHireReply, type ActivityRow
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -77,6 +78,17 @@ const api = Object.freeze({
         reply: (hireId: string, text: string): Promise<void> =>
             invoke('channel:reply', { hireId, text }) as Promise<void>,
         onChanged: (listener: () => void): (() => void) => on('channel:changed', () => listener())
+    }),
+
+    // The rich activity feed. byHire reads a colleague's persisted accomplishment
+    // rows for the Activity tab's history; onAppended pushes a live action (including
+    // the reads and searches the store drops) while the colleague is open. Tool,
+    // target, and status only, never file contents.
+    activity: Object.freeze({
+        byHire: (hireId: string, limit: number): Promise<ActivityByHireReply> =>
+            invoke('activity:by-hire', { hireId, limit }) as Promise<ActivityByHireReply>,
+        onAppended: (listener: (row: ActivityRow) => void): (() => void) =>
+            on('activity:appended', (payload) => listener(payload as ActivityRow))
     }),
 
     // The detail view's live terminal. open subscribes to a hire's session and

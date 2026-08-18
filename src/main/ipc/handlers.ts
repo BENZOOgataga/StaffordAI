@@ -15,11 +15,11 @@ import type { IpcMain, WebContents } from 'electron';
 import {
     INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot,
     type SessionOpened, type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
-    type ProjectCreated, type HireCreated
+    type ProjectCreated, type HireCreated, type ActivityRow, type ActivityByHireReply
 } from '../../shared/ipc.ts';
 import {
     isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite,
-    isChannelPage, isChannelSince, isChannelReply, isProjectCreate, isHireCreate
+    isChannelPage, isChannelSince, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 import { OutputCoalescer } from './output-coalescer.ts';
@@ -78,6 +78,8 @@ export interface HandlerDeps {
     readonly channelPage: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     /** Rows newer than a cursor, for the tail append. */
     readonly channelSince: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
+    /** One colleague's persisted activity, oldest-first, for the Activity feed's history. */
+    readonly activityByHire: (hireId: string, limit: number) => readonly ActivityRow[];
     /**
      * An inline reply to a colleague. Records it in the timeline as a message from
      * the person, then delivers it to that hire's session through the lifecycle,
@@ -181,6 +183,12 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'channel:since': (payload: unknown): ChannelPageReply => {
             if (!isChannelSince(payload)) throw new Error('channel:since requires {after,limit}');
             return { rows: deps.channelSince(payload.after, payload.limit) };
+        },
+
+        // One colleague's persisted activity history, for the Activity feed on open.
+        'activity:by-hire': (payload: unknown): ActivityByHireReply => {
+            if (!isActivityByHire(payload)) throw new Error('activity:by-hire requires {hireId,limit}');
+            return { rows: deps.activityByHire(payload.hireId, payload.limit) };
         },
 
         // An inline reply to a colleague. Sanitised here, at the trust boundary,

@@ -481,24 +481,37 @@
   .panel-activity { padding: 4px 2px; overflow: hidden; }
   .activity-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 10px; }
   .act-row {
-    display: grid;
-    grid-template-columns: 18px 1fr auto;
+    display: flex;
     align-items: baseline;
-    column-gap: 12px;
+    gap: 12px;
     padding: 12px 6px;
     border-bottom: 1px solid var(--line);
     color: var(--text);
     font-size: 0.92rem;
   }
   .act-row:last-child { border-bottom: 0; }
-  .act-icon { align-self: center; display: inline-flex; color: var(--muted); }
-  .act-line { line-height: 1.45; overflow-wrap: anywhere; }
+  .act-icon { align-self: center; display: inline-flex; flex: 0 0 auto; color: var(--muted); }
+  .act-line { flex: 1 1 auto; min-width: 0; line-height: 1.45; overflow-wrap: anywhere; }
   .act-time {
+    flex: 0 0 auto;
     color: var(--muted);
     font-size: 0.76rem;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* A quiet status tag on a tool row, grayscale so it never takes the amber accent.
+     Only a failure or an interruption shows one; an ok action stays untagged. */
+  .act-status {
+    flex: 0 0 auto;
+    font-size: 0.72rem;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0 6px;
+    white-space: nowrap;
+  }
+  .act-row.act-error .act-status { color: var(--danger); border-color: rgba(255, 255, 255, 0.16); }
+  .act-row.act-incomplete .act-line { color: var(--muted); }
   /* The one accent: a waiting event, the row the person acts on. */
   .act-row.waiting { box-shadow: inset 2px 0 0 var(--waiting-edge); }
   .act-row.waiting .act-icon { color: var(--waiting); }

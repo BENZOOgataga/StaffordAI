@@ -4,7 +4,7 @@ import { buildHandlers } from './handlers.ts';
 import {
     INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot, type SessionOpened,
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
-    type ProjectCreated, type HireCreated
+    type ProjectCreated, type HireCreated, type ActivityRow
 } from '../../shared/ipc.ts';
 import type { ProofPty } from './proof-pty.ts';
 
@@ -25,6 +25,7 @@ interface SessionOverrides {
     submitMessage?: (hireId: string, text: string) => Promise<void>;
     channelPage?: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     channelSince?: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
+    activityByHire?: (hireId: string, limit: number) => readonly ActivityRow[];
     channelReply?: (hireId: string, text: string) => Promise<void>;
     createProject?: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
     createHire?: (payload: { name: string; type: string; title: string; projectId: string }) => HireCreated;
@@ -53,6 +54,7 @@ function deps(
         submitMessage: over.submitMessage ?? (() => Promise.resolve()),
         channelPage: over.channelPage ?? (() => []),
         channelSince: over.channelSince ?? (() => []),
+        activityByHire: over.activityByHire ?? (() => []),
         channelReply: over.channelReply ?? (() => Promise.resolve())
     };
 }

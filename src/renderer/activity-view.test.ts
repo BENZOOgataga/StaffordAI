@@ -80,3 +80,94 @@ test('activityTime is relative when recent, absolute once older, and localized',
     assert.equal(activityTime('2026-08-14T09:00:00Z', NOW, 'fr'), '14 août');
     assert.equal(activityTime('not-a-date', NOW, 'en'), '');
 });
+
+import {
+    mergeFeed, unseenFeed, stateRowToFeed, activityRowToFeed, toolPhrase, toolStatusLabel,
+    feedIcon, feedRowClass, type FeedRow
+} from './activity-view.ts';
+import type { ActivityRow } from '../shared/ipc.ts';
+
+function stateRow(id: string, at: string, state: string, senderId = 'marion'): ChannelMessageRow {
+    return { id, projectId: 'p1', senderId, kind: 'event', body: state, reference: null, at };
+}
+function toolRow(id: string, at: string, tool: string, target: string | null, status: 'ok' | 'error' | 'incomplete' | null, live = false): ActivityRow {
+    return { id, hireId: 'marion', tool, target, status, at, live };
+}
+
+test('mergeFeed orders state and tool rows by time into one stream, deduped by id', () => {
+    const merged = mergeFeed([
+        activityRowToFeed(toolRow('b', '2026-08-18T12:01:00Z', 'Bash', 'ls', 'ok')),
+        stateRowToFeed(stateRow('a', '2026-08-18T12:00:00Z', 'crashed')),
+        activityRowToFeed(toolRow('c', '2026-08-18T12:02:00Z', 'Edit', 'f.ts', 'ok')),
+        activityRowToFeed(toolRow('b', '2026-08-18T12:01:00Z', 'Bash', 'ls', 'ok')) // duplicate id
+    ]);
+    assert.deepEqual(merged.map((r) => r.id), ['a', 'b', 'c'], 'time order, duplicate dropped');
+    assert.deepEqual(merged.map((r) => r.kind), ['state', 'tool', 'tool'], 'both kinds coexist, distinguishable');
+});
+
+test('live-only rows appear open, absent on reopen; accomplishments persist', () => {
+    // Open: the state row, a persisted edit, and a live read all merged.
+    const openFeed = mergeFeed([
+        stateRowToFeed(stateRow('s1', '2026-08-18T12:00:00Z', 'crashed')),
+        activityRowToFeed(toolRow('e1', '2026-08-18T12:01:00Z', 'Edit', 'f.ts', 'ok', false)),
+        activityRowToFeed(toolRow('r1', '2026-08-18T12:02:00Z', 'Read', 'f.ts', 'ok', true))
+    ]);
+    assert.ok(openFeed.some((r) => r.id === 'r1'), 'the live read shows while open');
+    // Reopen: only the persisted history (byHire, all live false) plus state; no read.
+    const reopenFeed = mergeFeed([
+        stateRowToFeed(stateRow('s1', '2026-08-18T12:00:00Z', 'crashed')),
+        activityRowToFeed(toolRow('e1', '2026-08-18T12:01:00Z', 'Edit', 'f.ts', 'ok', false))
+    ]);
+    assert.ok(!reopenFeed.some((r) => r.id === 'r1'), 'the live read is gone on reopen');
+    assert.ok(reopenFeed.some((r) => r.id === 'e1'), 'the accomplishment stays');
+});
+
+test('degrade: with no tool rows the feed still renders the state rows', () => {
+    const stateOnly = mergeFeed([stateRowToFeed(stateRow('s1', '2026-08-18T12:00:00Z', 'waiting_for_you'))]);
+    assert.deepEqual(stateOnly.map((r) => r.kind), ['state']);
+    assert.equal(stateOnly.length, 1, 'not blank when the tailer yields nothing');
+});
+
+test('unseenFeed appends only rows whose id is new', () => {
+    const rows: FeedRow[] = [
+        stateRowToFeed(stateRow('s1', 'T1', 'crashed')),
+        activityRowToFeed(toolRow('e1', 'T2', 'Edit', 'f.ts', 'ok'))
+    ];
+    assert.deepEqual(unseenFeed(new Set(['s1']), rows).map((r) => r.id), ['e1']);
+});
+
+test('toolPhrase reads as a localized verb plus target, unknown tool names itself', () => {
+    assert.equal(toolPhrase('Edit', 'f.ts', 'en'), 'edited f.ts');
+    assert.equal(toolPhrase('Bash', 'git status', 'en'), 'ran git status');
+    assert.equal(toolPhrase('Read', 'a.ts', 'en'), 'read a.ts');
+    assert.equal(toolPhrase('Edit', 'f.ts', 'fr'), 'a modifié f.ts');
+    assert.notEqual(toolPhrase('Bash', 'ls', 'fr'), toolPhrase('Bash', 'ls', 'en'));
+    assert.equal(toolPhrase('SomeMcpTool', 'x', 'en'), 'used SomeMcpTool x', 'a new tool still renders');
+});
+
+test('toolStatusLabel is quiet for ok, a word for failure or interruption, localized', () => {
+    assert.equal(toolStatusLabel('ok', 'en'), null, 'ok shows no tag');
+    assert.equal(toolStatusLabel(null, 'en'), null);
+    assert.equal(toolStatusLabel('error', 'en'), 'failed');
+    assert.equal(toolStatusLabel('incomplete', 'en'), 'interrupted');
+    assert.equal(toolStatusLabel('error', 'fr'), 'échec');
+    assert.equal(toolStatusLabel('incomplete', 'fr'), 'interrompu');
+});
+
+test('an error tool row is marked without taking the waiting amber accent', () => {
+    const errorClass = feedRowClass(activityRowToFeed(toolRow('e', 'T1', 'Bash', 'npm test', 'error')));
+    assert.ok(errorClass.includes('act-error'), 'error is marked');
+    assert.ok(!errorClass.includes('waiting'), 'error does not take the amber waiting accent');
+    // The amber accent belongs to the waiting state alone.
+    assert.equal(feedRowClass(stateRowToFeed(stateRow('w', 'T1', 'waiting_for_you'))), 'act-row waiting');
+    assert.equal(feedRowClass(activityRowToFeed(toolRow('e2', 'T1', 'Edit', 'f.ts', 'incomplete'))), 'act-row act-tool act-incomplete');
+});
+
+test('feedIcon picks a tool icon per category and a state icon per state', () => {
+    assert.equal(feedIcon(activityRowToFeed(toolRow('a', 'T', 'Edit', 'f', 'ok'))), 'edit');
+    assert.equal(feedIcon(activityRowToFeed(toolRow('a', 'T', 'Bash', 'ls', 'ok'))), 'command');
+    assert.equal(feedIcon(activityRowToFeed(toolRow('a', 'T', 'Read', 'f', 'ok'))), 'read');
+    assert.equal(feedIcon(activityRowToFeed(toolRow('a', 'T', 'Task', 'x', 'ok'))), 'task');
+    assert.equal(feedIcon(activityRowToFeed(toolRow('a', 'T', 'Weird', null, 'ok'))), 'tool');
+    assert.equal(feedIcon(stateRowToFeed(stateRow('a', 'T', 'crashed'))), 'crashed');
+});

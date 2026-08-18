@@ -30,6 +30,7 @@ export const INVOKE_CHANNELS = [
     'channel:page',
     'channel:since',
     'channel:reply',
+    'activity:by-hire',
     'proof:spawn',
     'proof:write',
     'proof:kill'
@@ -39,6 +40,7 @@ export const INVOKE_CHANNELS = [
 export const EVENT_CHANNELS = [
     'roster:changed',
     'channel:changed',
+    'activity:appended',
     'session:data',
     'proof:data',
     'proof:exit'
@@ -221,6 +223,35 @@ export interface ChannelMessageRow {
     readonly body: string;
     readonly reference: { readonly kind: string; readonly value: string } | null;
     readonly at: string;
+}
+
+/** A coalesced action's outcome, as the renderer sees it. */
+export type ActivityToolStatus = 'ok' | 'error' | 'incomplete';
+
+/**
+ * One tool action as the renderer sees it: the tool, its target (a path or command,
+ * never file contents), a status, and when. `live` marks a row pushed while the
+ * colleague is open that is not in the persisted history, a read or search that the
+ * store deliberately drops; it is present in the moment and gone on reopen.
+ */
+export interface ActivityRow {
+    readonly id: string;
+    readonly hireId: string;
+    readonly tool: string;
+    readonly target: string | null;
+    readonly status: ActivityToolStatus | null;
+    readonly at: string;
+    readonly live: boolean;
+}
+
+export interface ActivityByHireRequest {
+    readonly hireId: string;
+    readonly limit: number;
+}
+
+/** The reply to activity:by-hire: the persisted accomplishment rows, oldest-first. */
+export interface ActivityByHireReply {
+    readonly rows: readonly ActivityRow[];
 }
 
 /** What the proof window sends to open a pty. Ids only, no paths. */

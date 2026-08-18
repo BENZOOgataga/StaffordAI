@@ -4,20 +4,20 @@
  * icon each event type gets, and the de-emphasized timestamp. Kept out of the DOM
  * so it is tested without a browser, and so the honest data source has one place.
  *
- * The honest source, confirmed by reading the forwarder and the registry: the only
- * per-colleague structured events Stafford persists are channel event rows, one per
- * qualifying state transition (waiting_for_you, crashed, needs_trust, rate_limited).
- * The raw hook events (SessionStart, UserPromptSubmit, Stop, and the rest) reach the
- * registry to derive state and are not stored, and the tool hooks are not registered
- * at all, so there is no "edited a file" or "ran a command" row to render yet. This
- * module renders the rows the data can fill and nothing it cannot: no stub rows.
+ * The feed merges two sources into one ordered stream. The state rows are the
+ * channel event rows, one per qualifying state transition (waiting_for_you, crashed,
+ * needs_trust, rate_limited), the same the Conversation tab shows. The tool rows are
+ * the colleague's actions from the transcript feed: the persisted accomplishments
+ * (edits, commands, dispatch) that survive a reopen, plus the live-only reads and
+ * searches shown in the moment and gone on reopen. Both are ordered by time into one
+ * feed, so a person reads what a colleague did and is doing as one story.
  *
- * The event text itself is localized by channel-view's eventLabel, the same enum to
- * phrase map the Conversation tab uses, so a row never holds English and both tabs
- * render the same state consistently per language.
+ * Text is localized here, never held in a row: a state through eventLabel, a tool
+ * through its own verb map. A row carries the tool, the target, and the status only,
+ * never file contents or a result body.
  */
 
-import type { ChannelMessageRow } from '../shared/ipc.ts';
+import type { ChannelMessageRow, ActivityRow, ActivityToolStatus } from '../shared/ipc.ts';
 import type { Lang } from './channel-view.ts';
 
 /**
@@ -89,4 +89,97 @@ export function activityTime(at: string, now: number, lang: Lang = 'en'): string
     const day = d.getDate();
     const month = MONTHS[lang][d.getMonth()] ?? MONTHS.en[d.getMonth()];
     return lang === 'fr' ? day + ' ' + month : month + ' ' + day;
+}
+
+// --- the merged feed: state rows and tool rows in one ordered stream ----------
+
+/** One row in the merged feed, discriminated by kind. */
+export type FeedRow =
+    | { readonly kind: 'state'; readonly id: string; readonly at: string; readonly senderId: string; readonly state: string }
+    | {
+        readonly kind: 'tool'; readonly id: string; readonly at: string; readonly tool: string;
+        readonly target: string | null; readonly status: ActivityToolStatus | null; readonly live: boolean
+    };
+
+/** A channel event row becomes a state feed row. */
+export function stateRowToFeed(row: ChannelMessageRow): FeedRow {
+    return { kind: 'state', id: row.id, at: row.at, senderId: row.senderId, state: row.body };
+}
+
+/** A persisted or live activity row becomes a tool feed row. */
+export function activityRowToFeed(row: ActivityRow): FeedRow {
+    return { kind: 'tool', id: row.id, at: row.at, tool: row.tool, target: row.target, status: row.status, live: row.live };
+}
+
+/** Orders the feed by time then id, and drops a row already present by id. */
+export function mergeFeed(rows: readonly FeedRow[]): FeedRow[] {
+    const seen = new Set<string>();
+    const unique = rows.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+    return unique.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/** The feed rows not shown yet, by id, preserving order, for the live append seam. */
+export function unseenFeed(seen: ReadonlySet<string>, rows: readonly FeedRow[]): FeedRow[] {
+    return rows.filter((r) => !seen.has(r.id));
+}
+
+/** The unified icon key: the state icons plus one per tool category. */
+export type FeedIcon = ActivityIcon | 'edit' | 'wrote' | 'command' | 'read' | 'search' | 'task' | 'tool';
+
+const TOOL_ICONS: Record<string, FeedIcon> = {
+    Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit', Write: 'wrote',
+    Bash: 'command', PowerShell: 'command',
+    Read: 'read', Glob: 'search', Grep: 'search', LS: 'search', Task: 'task'
+};
+
+export function feedIcon(row: FeedRow): FeedIcon {
+    return row.kind === 'state' ? activityIcon(row.state) : (TOOL_ICONS[row.tool] ?? 'tool');
+}
+
+type Verb = 'edited' | 'wrote' | 'ran' | 'read' | 'searched' | 'listed' | 'delegated' | 'used';
+
+const TOOL_VERBS: Record<string, Verb> = {
+    Edit: 'edited', MultiEdit: 'edited', NotebookEdit: 'edited', Write: 'wrote',
+    Bash: 'ran', PowerShell: 'ran', Read: 'read', Glob: 'searched', Grep: 'searched', LS: 'listed', Task: 'delegated'
+};
+
+const VERB_WORDS: Record<Lang, Record<Verb, string>> = {
+    en: { edited: 'edited', wrote: 'wrote', ran: 'ran', read: 'read', searched: 'searched', listed: 'listed', delegated: 'delegated', used: 'used' },
+    fr: { edited: 'a modifié', wrote: 'a créé', ran: 'a exécuté', read: 'a lu', searched: 'a cherché', listed: 'a listé', delegated: 'a délégué', used: 'a utilisé' }
+};
+
+/**
+ * The plain phrase for a tool action, localized. A known tool reads as its verb plus
+ * its target ("edited f.ts"); an unknown tool names itself ("used SomeTool x"), so a
+ * new tool still renders rather than vanishing. Built only from the tool and target
+ * the event carries, never from a result body.
+ */
+export function toolPhrase(tool: string, target: string | null, lang: Lang = 'en'): string {
+    const verb = TOOL_VERBS[tool] ?? 'used';
+    const word = VERB_WORDS[lang][verb];
+    if (verb === 'used') return word + ' ' + tool + (target ? ' ' + target : '');
+    return word + (target ? ' ' + target : '');
+}
+
+/**
+ * The small status tag for a tool row, or null when there is none to show. An ok
+ * action shows no tag, so the feed stays quiet; only a failure or an interruption
+ * carries a word, and grayscale, never the amber the waiting state keeps.
+ */
+export function toolStatusLabel(status: ActivityToolStatus | null, lang: Lang = 'en'): string | null {
+    if (status === 'error') return lang === 'fr' ? 'échec' : 'failed';
+    if (status === 'incomplete') return lang === 'fr' ? 'interrompu' : 'interrupted';
+    return null;
+}
+
+/**
+ * The row class. A waiting state keeps the one amber accent; a failed or interrupted
+ * tool action is marked grayscale-quiet (act-error / act-incomplete), so an error is
+ * legible without stealing the accent the waiting state exists to own.
+ */
+export function feedRowClass(row: FeedRow): string {
+    if (row.kind === 'state') return activityRowClass(row.state);
+    if (row.status === 'error') return 'act-row act-tool act-error';
+    if (row.status === 'incomplete') return 'act-row act-tool act-incomplete';
+    return 'act-row act-tool';
 }

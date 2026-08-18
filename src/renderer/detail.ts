@@ -20,7 +20,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { fitToContainer } from './terminal-fit.ts';
 import { DEFAULT_TAB, isTabId, type TabId } from './detail-tabs.ts';
 import { channelRowClass, eventLabel, referenceLabel, type Lang } from './channel-view.ts';
-import { activityRows } from './activity-view.ts';
+import { activityRows, stateRowToFeed, activityRowToFeed, mergeFeed } from './activity-view.ts';
 import { ActivityFeed } from './activity.ts';
 import { CHANNEL_SELF_SENDER, type ChannelMessageRow } from '../shared/ipc.ts';
 import type { StaffordApi } from '../preload/index.ts';
@@ -46,6 +46,7 @@ let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let offData: (() => void) | null = null;
 let offChanged: (() => void) | null = null;
+let offActivity: (() => void) | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let openHireId: string | null = null;
 let feed: ActivityFeed | null = null;
@@ -115,15 +116,14 @@ function conversationRow(row: ChannelMessageRow): HTMLElement {
 }
 
 /**
- * Loads the channel window once and updates both tabs from it: Conversation gets
- * this colleague's messages and events plus the person's own messages, reusing the
- * channel's rendering; Activity gets only this colleague's events, as a feed. One
- * fetch feeds both so a change does not read the stream twice.
+ * Loads the channel window and updates both tabs. Conversation gets this colleague's
+ * messages and events plus the person's own messages. Activity merges two sources:
+ * the state rows from the channel and, on the first load, the persisted tool history
+ * from activity.byHire, ordered into one feed. Live tool actions arrive separately on
+ * activity:appended, so a later channel change only appends new state rows.
  *
- * On the first load the feed is painted whole; a later change appends only its new
- * rows rather than rebuilding, which is why Activity takes the row list through
- * setInitial once and apply after. The Conversation tab keeps its simple full
- * re-render, which it already had and which is cheap for its window.
+ * On the first load the feed is painted whole from the merged history; a later change
+ * appends only its new rows rather than rebuilding.
  */
 async function refreshDetail(hireId: string, initial: boolean): Promise<void> {
     const { rows } = await window.stafford.channel.page(null, 100);
@@ -131,9 +131,15 @@ async function refreshDetail(hireId: string, initial: boolean): Promise<void> {
     conversationEl.replaceChildren(...mine.map(conversationRow));
     conversationEl.scrollTop = conversationEl.scrollHeight;
 
-    const acts = activityRows(rows, hireId);
-    if (initial) feed?.setInitial(acts);
-    else feed?.apply(acts);
+    const stateFeed = activityRows(rows, hireId).map(stateRowToFeed);
+    if (initial) {
+        // The persisted accomplishment history, merged with the state rows by time.
+        // The live reads and searches are not here; they arrive on activity:appended.
+        const { rows: acts } = await window.stafford.activity.byHire(hireId, 200);
+        feed?.setInitial(mergeFeed([...stateFeed, ...acts.map(activityRowToFeed)]));
+    } else {
+        feed?.apply(stateFeed);
+    }
 }
 
 /**
@@ -192,6 +198,11 @@ export async function openDetail(hireId: string, name: string, role: string): Pr
     feed = new ActivityFeed(activityHost, { nameOf: nameFor, now: () => Date.now(), lang });
     await refreshDetail(hireId, true);
     offChanged = window.stafford.channel.onChanged(() => scheduleRefresh());
+    // Live tool actions push in one at a time. A live read or search appears now and
+    // is gone on the next open; a persisted action is also in byHire on reopen.
+    offActivity = window.stafford.activity.onAppended((row) => {
+        if (openHireId && row.hireId === openHireId) feed?.apply([activityRowToFeed(row)]);
+    });
 
     reply.focus();
 }
@@ -200,6 +211,7 @@ export async function closeDetail(): Promise<void> {
     if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
     if (offData) { offData(); offData = null; }
     if (offChanged) { offChanged(); offChanged = null; }
+    if (offActivity) { offActivity(); offActivity = null; }
     if (openHireId) { await window.stafford.session.close(); }
     if (term) { term.dispose(); term = null; }
     fit = null;
