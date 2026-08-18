@@ -65,6 +65,16 @@ win:
   # that node-pty's native .node modules are unpacked from the asar. x64 only:
   # node-pty ships a win32-arm64 prebuild too, but the daily machine and the CI
   # runner are x64, so arm64 is not built until there is a reason.
+  #
+  # Deliberately unsigned, deterministically. There is no signtoolOptions and no
+  # cert, so nothing requests signing, but a CSC_LINK or WIN_CSC_LINK env var on a
+  # build machine would otherwise make electron-builder sign with whatever cert it
+  # points at. The no-op sign hook runs in signtool's place and applies nothing, so
+  # a public artifact can never pick up a local or work cert and carry an employer
+  # identity into the binary, whatever is in the machine's store or environment.
+  # v0.1.x ships unsigned; the packaged-bundle check asserts Stafford.exe carries no
+  # Authenticode signature.
+  sign: scripts/no-sign.cjs
   target:
     - target: dir
       arch:
