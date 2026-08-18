@@ -33,7 +33,9 @@ import { preTrustDirectory } from './agents/pre-trust.ts';
 import { buildCommand, hookShellFor, merge, addExcludeEntry, type Settings } from './hooks/registration.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
-import { runDrain, type DrainableAgent } from './agents/drain.ts';
+import { runDrain, type DrainableAgent, type CheckpointResult } from './agents/drain.ts';
+import { checkpointRepo } from './agents/checkpoint-executor.ts';
+import { realCheckpointDeps } from './agents/checkpoint-git.ts';
 import { SessionRegistry, hireStoreOver, coerceHookEvent, type HireStore } from './hooks/session-registry.ts';
 import { assembleRoster } from './roster/snapshot.ts';
 import { SessionLifecycle } from './agents/session-lifecycle.ts';
@@ -581,6 +583,17 @@ app.whenReady().then(async () => {
     if (repositories && transport) {
         const store = hireStoreOver(repositories);
         registry = new SessionRegistry(store);
+        // The git checkpoint executor. On drain, a session's tracked work is committed
+        // to a checkpoint branch before the session is reaped, so committed=true in the
+        // drain report is real. The executor is bounded and always resolves, so it fits
+        // inside the drain's per-agent budget without a new unbounded path.
+        registry.setCheckpointRunner((cwd, hireId) =>
+            checkpointRepo(realCheckpointDeps(currentPlatform()), {
+                cwd, hireId, stamp: new Date().toISOString()
+            }).then((o): CheckpointResult => ({
+                committed: o.committed, branch: o.branch, commitId: o.commitId,
+                reason: o.committed ? null : (o.reason === 'error' && o.detail ? 'error: ' + o.detail : o.reason)
+            })));
         transport.listener.on('event', (raw: Record<string, unknown>) => {
             const now = new Date().toISOString();
             const result = registry?.ingest(coerceHookEvent(raw), now);

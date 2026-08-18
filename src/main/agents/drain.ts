@@ -40,11 +40,13 @@ import { DRAIN_OUTCOMES, type DrainReportEntry, type DrainOutcome } from '../../
 export const DEFAULT_PER_AGENT_MS = 45_000;
 export const DEFAULT_TOTAL_MS = 120_000;
 
-/** What an agent's checkpoint reports back: did a commit land, and where. */
+/** What an agent's checkpoint reports back: did a commit land, and where, and why not. */
 export interface CheckpointResult {
     readonly committed: boolean;
     readonly branch: string | null;
     readonly commitId: string | null;
+    /** Why a checkpoint did not commit (clean, an error summary, timed-out), or null on success. */
+    readonly reason: string | null;
 }
 
 /**
@@ -151,6 +153,7 @@ export async function runDrain(options: DrainOptions): Promise<DrainSummary> {
         let committedFlag: boolean;
         let branch: string | null;
         let commitId: string | null;
+        let reason: string | null;
 
         if (totalRemaining <= 0) {
             // The total grace is spent. Kill without waiting, so a hang earlier in
@@ -160,31 +163,39 @@ export async function runDrain(options: DrainOptions): Promise<DrainSummary> {
             committedFlag = false;
             branch = null;
             commitId = null;
+            reason = null;
             forceKilled += 1;
         } else {
             const budget = Math.min(perAgentMs, totalRemaining);
             const raced = await checkpointWithin(agent, budget, timeout);
             if (raced.timedOut) {
+                // The checkpoint promise never resolved inside its budget: the agent
+                // or its teardown hung, not the bounded executor, which always
+                // resolves. So this is a force-kill, distinct from an executor
+                // timed-out that resolves as a checkpoint.
                 await safeKill(forceKill, agent);
                 outcome = DRAIN_OUTCOMES.FORCE_KILLED;
                 committedFlag = false;
                 branch = raced.result?.branch ?? null;
                 commitId = null;
+                reason = null;
                 forceKilled += 1;
             } else if (raced.result && raced.result.committed) {
                 outcome = DRAIN_OUTCOMES.COMMITTED;
                 committedFlag = true;
                 branch = raced.result.branch;
                 commitId = raced.result.commitId;
+                reason = raced.result.reason;
                 committed += 1;
             } else {
-                // Reached and finished, but no commit landed: nothing to commit, or
-                // the commit was attempted and failed. Either way committed is false
-                // and it did not have to be killed.
+                // Reached and finished, but no commit landed: nothing to commit, an
+                // error, or an executor timeout. The reason carries which. It did not
+                // have to be killed.
                 outcome = DRAIN_OUTCOMES.CHECKPOINTED;
                 committedFlag = false;
                 branch = raced.result?.branch ?? null;
                 commitId = null;
+                reason = raced.result?.reason ?? null;
                 checkpointed += 1;
             }
         }
@@ -199,6 +210,7 @@ export async function runDrain(options: DrainOptions): Promise<DrainSummary> {
             committed: committedFlag,
             branch,
             commitId,
+            reason,
             at: options.now()
         });
     }

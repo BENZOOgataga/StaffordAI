@@ -121,6 +121,8 @@ export class SessionRegistry {
     readonly #pending = new Map<string, PendingSpawn>();
     /** The one idempotent teardown, set by the lifecycle. Kills, deregisters, revokes. */
     #teardown: ((agentId: string) => Promise<void>) | null = null;
+    /** The git checkpoint executor, injected by the shell. Null until wired. */
+    #checkpointRunner: ((cwd: string, hireId: string) => Promise<CheckpointResult>) | null = null;
     /** Notified when a pending spawn binds, so the lifecycle can stop waiting on it. */
     #onBound: ((agentId: string) => void) | null = null;
     /** Notified on every event for a known session, so the lifecycle resets its idle clock. */
@@ -136,6 +138,15 @@ export class SessionRegistry {
      */
     setTeardown(teardown: (agentId: string) => Promise<void>): void {
         this.#teardown = teardown;
+    }
+
+    /**
+     * Wires the git checkpoint executor. Given a session's own cwd and hire, it
+     * commits the tracked work to a checkpoint branch and reports the result. Injected
+     * so the registry never imports git: it only holds the seam the shell fills.
+     */
+    setCheckpointRunner(runner: (cwd: string, hireId: string) => Promise<CheckpointResult>): void {
+        this.#checkpointRunner = runner;
     }
 
     /** Wires the bind callback, so the lifecycle learns when a spawn reports. */
@@ -282,32 +293,46 @@ export class SessionRegistry {
     drainables(): DrainableAgent[] {
         const out: DrainableAgent[] = [];
         for (const entry of this.#live.values()) {
-            out.push(this.#drainable(entry.snapshot.agentId ?? entry.binding.hireId, entry.pid));
+            // A live session carries its cwd, the repo the colleague worked in, so its
+            // checkpoint has a repo to commit.
+            out.push(this.#drainable(
+                entry.snapshot.agentId ?? entry.binding.hireId, entry.pid, entry.snapshot.cwd, entry.binding.hireId));
         }
         for (const pending of this.#pending.values()) {
-            out.push(this.#drainable(pending.agentId, pending.pid));
+            // A spawn that never reported has no cwd here, so it is torn down without a
+            // checkpoint. It reported nothing, so there is no working tree to attribute.
+            out.push(this.#drainable(pending.agentId, pending.pid, null, pending.binding.hireId));
         }
         return out;
     }
 
-    #drainable(agentId: string, pid: number | null): DrainableAgent {
+    #drainable(agentId: string, pid: number | null, cwd: string | null, hireId: string): DrainableAgent {
         return {
             agentId,
             pid,
-            checkpoint: () => this.#checkpoint(agentId)
+            checkpoint: () => this.#checkpoint(agentId, cwd, hireId)
         };
     }
 
     /**
-     * The git checkpoint executor is a later piece, so there is nothing to commit
-     * yet. What a checkpoint does now is tear the session down through the shared
-     * path, and report no commit, so the drain leaves zero survivors and records an
-     * honest checkpointed-with-nothing-committed rather than a false commit. When
-     * the executor lands, the commit happens before the teardown.
+     * Checkpoints the session's work, then tears it down. The order is deliberate: the
+     * bounded executor commits the tracked changes on a checkpoint branch first, then
+     * the session is reaped through the shared teardown, so a checkpoint of any result
+     * (committed, clean, error, timed-out) still lets teardown proceed and leaves zero
+     * survivors. The executor always resolves and never throws, so it cannot block the
+     * teardown or the bounded drain; the catch is a belt to that.
      */
-    async #checkpoint(agentId: string): Promise<CheckpointResult> {
+    async #checkpoint(agentId: string, cwd: string | null, hireId: string): Promise<CheckpointResult> {
+        let result: CheckpointResult = { committed: false, branch: null, commitId: null, reason: null };
+        if (this.#checkpointRunner && cwd) {
+            try {
+                result = await this.#checkpointRunner(cwd, hireId);
+            } catch (error) {
+                result = { committed: false, branch: null, commitId: null, reason: 'error: ' + String(error) };
+            }
+        }
         if (this.#teardown) await this.#teardown(agentId);
-        return { committed: false, branch: null, commitId: null };
+        return result;
     }
 
     /**

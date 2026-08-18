@@ -227,5 +227,7 @@ export interface DrainReportEntry {
     committed: boolean;
     branch: string | null;
     commitId: string | null;
+    /** Why a checkpoint did not commit (clean, an error summary, timed-out), or null. */
+    reason: string | null;
     at: string;
 }
