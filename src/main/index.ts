@@ -40,6 +40,7 @@ import { SessionLifecycle } from './agents/session-lifecycle.ts';
 import { locateClaude } from './agents/claude-locator.ts';
 import { readTrust } from './agents/trust.ts';
 import { recordTransition } from './channel/channel-events.ts';
+import { TranscriptManager, coerceObservation } from './activity/transcript-manager.ts';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { RosterSnapshot } from '../shared/ipc.ts';
@@ -58,6 +59,7 @@ let repositories: Repositories | null = null;
 let transport: HookTransport | null = null;
 let registry: SessionRegistry | null = null;
 let lifecycle: SessionLifecycle | null = null;
+let transcriptManager: TranscriptManager | null = null;
 
 /**
  * Opens the database and brings it to the current schema, before anything a user
@@ -497,6 +499,11 @@ async function quit(): Promise<void> {
     proofQuitting = true;
     proof.kill();
 
+    // Stop the transcript tailers. They only read files and hold an unref'd timer,
+    // so they cannot block the quit, but stopping them is tidy and deterministic.
+    transcriptManager?.stopAll();
+    transcriptManager = null;
+
     // Socket first, then sessions. The hook socket is the inbound agent-event
     // channel and holds no state worth saving, so closing it first shuts the gate:
     // the drain then checkpoints a stable set of sessions with nothing new arriving.
@@ -586,6 +593,34 @@ app.whenReady().then(async () => {
             }
         });
         buildLifecycle(store);
+
+        // A second, independent consumer of the same hook stream, for the rich
+        // activity feed. It reads only the transcript path off each record and
+        // tails Claude's own transcript for tool events. It is wrapped so a fault
+        // in it can never reach the state path above: a throw here is swallowed,
+        // and the module cannot even import the registry, state, or drain, which a
+        // test asserts. In this piece its events are logged as proof, not stored or
+        // rendered; persistence is piece 2 and the rich rows are piece 3.
+        transcriptManager = new TranscriptManager({
+            now: () => new Date().toISOString(),
+            onEvents: (events) => {
+                for (const e of events) {
+                    smoke('activity ' + e.agentId + ' ' + e.phase +
+                        (e.tool ? ' ' + e.tool : '') + (e.target ? ' ' + e.target : '') +
+                        (e.status ? ' [' + e.status + ']' : ''));
+                }
+            },
+            onDebug: (message) => smoke('transcript: ' + message)
+        });
+        transport.listener.on('event', (raw: Record<string, unknown>) => {
+            try {
+                transcriptManager?.observe(coerceObservation(raw));
+            } catch (error) {
+                // The rich feed must never disturb the state feed. Swallow and note.
+                smoke('transcript observe error (ignored): ' +
+                    (error instanceof Error ? error.message : String(error)));
+            }
+        });
     }
 
     // Never register the login item during a smoke run. A smoke run launches
