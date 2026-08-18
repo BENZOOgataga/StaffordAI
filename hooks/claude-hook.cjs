@@ -60,6 +60,10 @@ function summarise(payload) {
     if (payload.tool_name) out.toolName = payload.tool_name;
     if (payload.message) out.message = String(payload.message).slice(0, 500);
     if (payload.subagent_type) out.subagentType = payload.subagent_type;
+    // The path to this session's transcript, on every payload. The state machine
+    // ignores it; the activity feed tails it for the rich rows. A local file path,
+    // not the transcript's contents, so it is safe to pass.
+    if (payload.transcript_path) out.transcriptPath = String(payload.transcript_path);
 
     return out;
 }
