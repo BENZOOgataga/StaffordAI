@@ -51,6 +51,31 @@ function fail(message) {
     process.exit(1);
 }
 
+/**
+ * The size of a PE file's embedded Authenticode signature, in bytes, or 0 when it
+ * carries none. Reads the certificate table entry (data directory index 4) from the
+ * PE optional header. null when the file is not a PE we can parse. The header is in
+ * the first few KB, so it reads a slice rather than the whole (large) exe.
+ */
+function peSignatureSize(file) {
+    const fd = fs.openSync(file, 'r');
+    try {
+        const buf = Buffer.alloc(8192);
+        fs.readSync(fd, buf, 0, 8192, 0);
+        if (buf.readUInt16LE(0) !== 0x5A4D) return null;          // 'MZ'
+        const peOff = buf.readUInt32LE(0x3C);
+        if (peOff + 96 > buf.length || buf.readUInt32LE(peOff) !== 0x00004550) return null; // 'PE\0\0'
+        const optStart = peOff + 24;
+        const magic = buf.readUInt16LE(optStart);
+        const dataDirStart = optStart + (magic === 0x20B ? 112 : 96); // PE32+ vs PE32
+        const securitySizeOff = dataDirStart + 4 * 8 + 4;         // data directory index 4, its Size field
+        if (securitySizeOff + 4 > buf.length) return null;
+        return buf.readUInt32LE(securitySizeOff);
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
 function main() {
     if (!fs.existsSync(DIST)) {
         fail('no dist/ directory. electron-builder did not produce a bundle.');
@@ -155,6 +180,28 @@ function main() {
     }
     for (const bin of nodeBinaries) console.log('  OK    unpacked native module: ' + rel(bin));
     console.log('  windows equivalent invariant: checked ' + nodeBinaries.length + ' node-pty .node files unpacked');
+
+    // The app exe must ship unsigned, deterministically. A public build must not carry
+    // a local or work-issued cert, which would leak an employer identity into the
+    // binary. This checks Stafford.exe itself, our artifact; node-pty's bundled
+    // conpty.dll and OpenConsole.exe are Microsoft's own files, signed by Microsoft
+    // upstream, which is not ours to strip and is not an employer leak. On a bundle
+    // with no app exe (a darwin build reaches this only if misclassified), there is
+    // nothing to check.
+    const appExe = files.find((f) => path.basename(f) === 'Stafford.exe');
+    if (appExe) {
+        const sig = peSignatureSize(appExe);
+        if (sig === null) {
+            fail('could not read the PE headers of ' + rel(appExe) + ' to confirm it is unsigned.');
+        }
+        if (sig > 0) {
+            fail('Stafford.exe carries an Authenticode signature (' + sig + ' bytes). A public build must ' +
+                'ship unsigned so no local or work cert identity enters the artifact. Check the win.sign ' +
+                'hook and that no CSC_* env is applied.');
+        }
+        console.log('  OK    Stafford.exe is unsigned (no Authenticode signature): ' + rel(appExe));
+    }
+
     console.log('PASS  non-darwin bundle, ' + nodeBinaries.length + ' native modules unpacked');
 }
 
