@@ -1,7 +1,7 @@
 /**
  * The detail pane: the selected colleague filling the right pane, with three tabs
- * in priority order, Conversation (default), Activity (a placeholder this piece),
- * and Terminal (last, the raw pty as it worked before).
+ * in priority order, Conversation (default), Activity, and Terminal (last, the raw
+ * pty as it worked before).
  *
  * The terminal is unchanged in behaviour: the same xterm, the same
  * replay-then-stream subscription, the same fit-to-pane sizing. It has only moved
@@ -9,7 +9,9 @@
  * own message rendering, scoped to this colleague, and its composer sends through
  * the existing reply path, so no new message logic is introduced here.
  *
- * The Activity tab is a placeholder in this piece. Its events feed is piece 2.
+ * The Activity tab renders this colleague's stored events as a feed (activity.ts),
+ * fed from the same channel window the Conversation reads, so one fetch serves both
+ * and a change appends to the feed off the existing channel:changed signal.
  */
 
 import '@xterm/xterm/css/xterm.css';
@@ -18,6 +20,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { fitToContainer } from './terminal-fit.ts';
 import { DEFAULT_TAB, isTabId, type TabId } from './detail-tabs.ts';
 import { channelRowClass, eventLabel, referenceLabel, type Lang } from './channel-view.ts';
+import { activityRows } from './activity-view.ts';
+import { ActivityFeed } from './activity.ts';
 import { CHANNEL_SELF_SENDER, type ChannelMessageRow } from '../shared/ipc.ts';
 import type { StaffordApi } from '../preload/index.ts';
 
@@ -35,14 +39,17 @@ const nameEl = document.getElementById('detail-name') as HTMLElement;
 const roleEl = document.getElementById('detail-role') as HTMLElement;
 const termHost = document.getElementById('term') as HTMLElement;
 const conversationEl = document.getElementById('conversation') as HTMLElement;
+const activityHost = document.getElementById('panel-activity') as HTMLElement;
 const reply = document.getElementById('reply') as HTMLTextAreaElement;
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let offData: (() => void) | null = null;
-let offConversation: (() => void) | null = null;
+let offChanged: (() => void) | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let openHireId: string | null = null;
+let feed: ActivityFeed | null = null;
+let refreshScheduled = false;
 const names = new Map<string, string>();
 
 function nameFor(senderId: string): string {
@@ -108,17 +115,43 @@ function conversationRow(row: ChannelMessageRow): HTMLElement {
 }
 
 /**
- * Loads the colleague's messages and events from the channel, reusing its
- * rendering. Scoped to this colleague by sender, plus the person's own messages.
- * A per-colleague conversation store, and the colleague's structured replies, are
- * later work; today the replies live in the Terminal tab.
+ * Loads the channel window once and updates both tabs from it: Conversation gets
+ * this colleague's messages and events plus the person's own messages, reusing the
+ * channel's rendering; Activity gets only this colleague's events, as a feed. One
+ * fetch feeds both so a change does not read the stream twice.
+ *
+ * On the first load the feed is painted whole; a later change appends only its new
+ * rows rather than rebuilding, which is why Activity takes the row list through
+ * setInitial once and apply after. The Conversation tab keeps its simple full
+ * re-render, which it already had and which is cheap for its window.
  */
-async function loadConversation(hireId: string): Promise<void> {
+async function refreshDetail(hireId: string, initial: boolean): Promise<void> {
     const { rows } = await window.stafford.channel.page(null, 100);
     const mine = rows.filter((r) => r.senderId === hireId || r.senderId === CHANNEL_SELF_SENDER);
     conversationEl.replaceChildren(...mine.map(conversationRow));
     conversationEl.scrollTop = conversationEl.scrollHeight;
-    void hireId;
+
+    const acts = activityRows(rows, hireId);
+    if (initial) feed?.setInitial(acts);
+    else feed?.apply(acts);
+}
+
+/**
+ * Coalesces a burst of channel:changed signals into one refresh on the next frame,
+ * so several transitions arriving together redraw the detail once rather than once
+ * each. It fires off the same signal the roster and channel already use, not a
+ * poll, and the append seam in the feed means the extra rows are added, not redrawn.
+ */
+function scheduleRefresh(): void {
+    if (refreshScheduled || !openHireId) return;
+    refreshScheduled = true;
+    const run = (): void => {
+        refreshScheduled = false;
+        const hireId = openHireId;
+        if (hireId) void refreshDetail(hireId, false);
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    else setTimeout(run, 0);
 }
 
 async function loadNames(): Promise<void> {
@@ -156,8 +189,9 @@ export async function openDetail(hireId: string, name: string, role: string): Pr
     await window.stafford.session.open(hireId);
 
     await loadNames();
-    await loadConversation(hireId);
-    offConversation = window.stafford.channel.onChanged(() => { if (openHireId) void loadConversation(openHireId); });
+    feed = new ActivityFeed(activityHost, { nameOf: nameFor, now: () => Date.now(), lang });
+    await refreshDetail(hireId, true);
+    offChanged = window.stafford.channel.onChanged(() => scheduleRefresh());
 
     reply.focus();
 }
@@ -165,11 +199,13 @@ export async function openDetail(hireId: string, name: string, role: string): Pr
 export async function closeDetail(): Promise<void> {
     if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
     if (offData) { offData(); offData = null; }
-    if (offConversation) { offConversation(); offConversation = null; }
+    if (offChanged) { offChanged(); offChanged = null; }
     if (openHireId) { await window.stafford.session.close(); }
     if (term) { term.dispose(); term = null; }
     fit = null;
     openHireId = null;
+    feed = null;
+    refreshScheduled = false;
     conversationEl.replaceChildren();
     detail.hidden = true;
     emptyState.hidden = false;
