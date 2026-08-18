@@ -64,12 +64,10 @@
     align-items: baseline;
     gap: 12px;
     padding: 18px 22px 14px;
-    background: rgba(20, 24, 31, 0.72);
-    backdrop-filter: blur(18px) saturate(160%);
+    /* Flat near-black, no blur. A solid header is the flat register, and it needs
+       no reduced-transparency branch since there is no transparency to reduce. */
+    background: var(--bg);
     border-bottom: 1px solid var(--line);
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    header { background: var(--bg); backdrop-filter: none; }
   }
 
   .wordmark {
@@ -660,13 +658,14 @@
     width: 100%;
     max-width: 440px;
     background: var(--surface);
-    border: 1px solid var(--line);
+    /* Flat: a crisp hairline separates the sheet from the darkened backdrop, no soft
+       glow. The one-pixel edge is the elevation, not a drop-shadow. */
+    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: var(--radius);
     padding: 22px 22px 18px;
     display: flex;
     flex-direction: column;
     gap: 15px;
-    box-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.7);
   }
   .sheet-title { margin: 0; font-size: 1.1rem; font-weight: 600; letter-spacing: -0.01em; }
   .field { display: flex; flex-direction: column; gap: 6px; }
@@ -690,7 +689,11 @@
   .form-hint { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
   .form-error {
     margin: 0;
-    color: var(--waiting);
+    /* A validation error is not the waiting state, so it does not take the amber
+       accent. Amber reads only as "a colleague needs you"; this is the neutral
+       danger gray the palette reserves for a quiet alert. */
+    color: var(--danger);
+    font-weight: 560;
     font-size: 0.85rem;
     line-height: 1.45;
     overflow-wrap: anywhere;
