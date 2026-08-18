@@ -7,13 +7,43 @@ from a chat log it does not have.
 
 Read these three, in order:
 
-1. `docs/owed-review.md`, the top block dated 2026-08-14. What is built, what is next, what is deferred, and
+1. `docs/owed-review.md`, the top block dated 2026-08-18. What is built, what is next, what is deferred, and
    what the release waits on.
-2. `docs/plans/design-spec.md`. The decided layout and visual direction. The next UI piece builds to it.
+2. `docs/plans/design-spec.md`. The decided layout and visual direction that the shipped UI is built to.
 3. `docs/KNOWN-ISSUES.md`. The screenshot and signing leaks to check before anything public, and the
    third-party plugin noise that is not ours.
 
-The next build piece is the Activity tab feed. See the owed-review next-pieces list.
+The redesign is complete. The next work is the older deferred set or the release, per the owed-review top
+block; the shortest path to something a person can trust is the release, which waits on a real macOS Claude
+spawn and the Windows signing-cert check.
+
+## The rich activity feed, landed
+
+The Activity tab is a merged feed of persisted accomplishment rows, live-only reads and searches, and the
+existing state-change rows. It reads Claude's own session transcript rather than registering the tool hooks,
+so it costs no added latency and needs no new hook: the transcript path arrives on the SessionStart hook
+already received, and a selective coalesced cut is stored in the append-only `activity_events` table
+(migration 0003), with `shouldPersist` the one place that cut lives. The design and the split are in
+`docs/plans/RICH-ACTIVITY-SPLIT.md`.
+
+It stays fully off the state path. The feed registers no hook, never calls the registry, never derives state,
+and never touches the drain, which an import-boundary test asserts, so a fault in it cannot move a colleague's
+state, the roster, or the drain.
+
+The one fragility, recorded plainly so it is not a surprise: the feed reads Claude's transcript, which is an
+undocumented, version-dependent file, so a Claude update could reshape it. The parser is built to degrade,
+not crash: an unknown or partial line is skipped, and if nothing parses the feed falls back to the state rows
+and the persisted history it already has. The hook-based state feed stays authoritative and independent. So a
+transcript-format change costs the rich rows, it does not break the app, and the fix would be to update the
+parser, not to unpick anything from state.
+
+## Running a packaged verification beside a live Stafford
+
+Set `STAFFORD_APP_ID=<id>` alongside `STAFFORD_SMOKE=1` for any packaged smoke or screenshot run. The app id
+names both the Windows hook pipe and the data-dir segment, so an overridden run gets its own pipe and its own
+store and coexists with a running Stafford instead of colliding on the fixed `Stafford` endpoints. Without it,
+a running instance holds `\\.\pipe\Stafford` and the smoke harness cannot bind, which cost real time before
+the override existed.
 
 ## Two regression patterns that cost real time, so watch for them
 
