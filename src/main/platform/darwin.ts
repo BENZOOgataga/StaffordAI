@@ -164,6 +164,12 @@ export const darwin: Platform = {
         };
     },
 
+    ownerOnlyAclPlan(_target: string, _opts: { tree: boolean; account: string }): CommandSpec | null {
+        // POSIX mode bits are real: the seed's chmod to 0600/0700 is the whole
+        // guarantee, so there is no command to run.
+        return null;
+    },
+
     resizeObservation(cols: number, rows: number): ResizeObservation {
         // Measured 2026-08-08 on macOS 26.5.2 arm64, so this one is not
         // UNVERIFIED. Resizing a real pty produced "READY\r\nWINCH 132x40\r\n"

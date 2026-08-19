@@ -34,6 +34,13 @@ This is the first Mac session as a checklist, not a reconstruction. Do these in 
    the git executor work is the basis, and `src/main/agents/checkpoint-drain.test.ts` is the structural
    version to lift onto a real spawn. The executor design and the split are in
    `docs/plans/GIT-EXECUTOR-SPLIT.md`.
+   Fold in one more check on the same real spawn: the config isolation. A colleague now runs against a
+   Stafford-managed `CLAUDE_CONFIG_DIR` under userData, so the user's global plugins do not load. On macOS the
+   credential is in Keychain, not a file, so the seed copies nothing and the managed dir is expected to
+   authenticate through Keychain on its own. Verify on this Mac, with the user's plugins enabled: a colleague
+   comes up authenticated (no login prompt), in normal auto mode, responds, and shows none of the user's
+   plugins or foreign hooks. That is the owed macOS half of the plugin-isolation fix; the Windows half is
+   proven. The module is `src/main/agents/managed-config.ts`.
 3. Build the darwin artifact. `npx electron-vite build`, then `npx electron-builder --mac --arm64 --dir`.
    Confirm the output directory name first with `ls dist`, then zip the app from there (the arm64 dir build
    lands under something like `dist/mac-arm64/Stafford.app`, but check rather than assume).

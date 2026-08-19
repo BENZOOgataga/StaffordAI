@@ -109,6 +109,19 @@ export interface LifecycleDeps {
      */
     readonly registerHooks?: (cwd: string) => void;
     /**
+     * Seeds Stafford's managed Claude config dir before the spawn, so the colleague
+     * runs against a Stafford-controlled environment rather than the user's real
+     * `~/.claude`. This is what isolates the user's global plugins and foreign hooks.
+     * Paired with `claudeConfigDir` below. Optional so a test spawns without a config.
+     */
+    readonly seedManagedConfig?: (cwd: string) => void;
+    /**
+     * Absolute path to the managed config dir, handed to the spawn as
+     * `CLAUDE_CONFIG_DIR` so Claude reads config, plugins, and trust from there and
+     * not from `~/.claude`. Absent in tests, where the spawn stays uncustomised.
+     */
+    readonly claudeConfigDir?: string;
+    /**
      * Clears a hire's stored session id for its active project, called when a
      * resume of that id failed. So a stale id that Claude Code cannot find is not
      * re-attempted on the next open; the fresh session records its own id anyway.
@@ -299,9 +312,15 @@ export class SessionLifecycle {
         const target = this.#deps.resolveTarget(hireId);
         if (!target) throw new Error('cannot spawn ' + hireId + ': the hire is on no project');
 
+        // Seed Stafford's managed config dir before anything reads it, so the
+        // colleague runs isolated from the user's global plugins and foreign hooks.
+        // Also writes the project's trust into the managed dir the session reads.
+        this.#deps.seedManagedConfig?.(target.cwd);
+
         // Pre-trust the project directory before Claude Code reads its config, so
         // the spawn does not stop at the startup trust prompt. Scoped to this one
-        // cwd, the directory the user chose at create time.
+        // cwd, the directory the user chose at create time. Idempotent after the
+        // seed above, which already set the trust key.
         this.#deps.preTrust?.(target.cwd);
 
         // Register the state-reporting hooks in the project before the spawn, so
@@ -327,8 +346,12 @@ export class SessionLifecycle {
             platform: this.#deps.platform,
             parentEnv: this.#deps.parentEnv,
             nodeDir: this.#deps.nodeDir,
-            // Path-shaped values only. The socket path is absolute.
-            extra: { STAFFORD_SOCKET: this.#deps.socketPath }
+            // Path-shaped values only, both absolute. CLAUDE_CONFIG_DIR points Claude
+            // at Stafford's managed config dir, off the user's ~/.claude.
+            extra: {
+                STAFFORD_SOCKET: this.#deps.socketPath,
+                ...(this.#deps.claudeConfigDir ? { CLAUDE_CONFIG_DIR: this.#deps.claudeConfigDir } : {})
+            }
         });
         // The secret is not a path, so it is set directly rather than through extra,
         // which is what agent-env's contract requires.
