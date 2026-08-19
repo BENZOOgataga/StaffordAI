@@ -116,7 +116,7 @@ function buildDeps(over: {
     notReportingMs?: number;
     idleMs?: number;
     acceptTimeoutMs?: number;
-    turnMaxMs?: number;
+   
     timers?: Timers;
     target?: { projectId: string; cwd: string } | null;
     resumeSessionId?: string | null;
@@ -155,7 +155,6 @@ function buildDeps(over: {
         // Drain the queue without waiting on real time.
         submitDelayMs: 0,
         acceptTimeoutMs: over.acceptTimeoutMs ?? 40,
-        turnMaxMs: over.turnMaxMs ?? 40,
         notReportingMs: over.notReportingMs ?? 30_000,
         ...(over.idleMs === undefined ? {} : { idleMs: over.idleMs }),
         ...(over.timers ? { timers: over.timers } : {}),
@@ -507,36 +506,32 @@ test('a submitted message is held until the session reports ready, then written 
     assert.equal(pty.writes.includes('hello there'), true, 'the message is written once the session reports ready');
 });
 
-// Drive the accept/ready handshake for one hire: working = the accept receipt, idle
-// = ready for the next message.
+// Drive the handshake for one hire. The accept receipt is a UserPromptSubmit event,
+// which fires once per submitted prompt; the queue advances on it. A message sent
+// while the session is still working is queued by Claude, so the queue never waits
+// for a return to idle (a real session goes working then waiting, not back to idle).
 const AT2 = '2026-08-11T00:00:00Z';
 const accept = (registry: SessionRegistry, sessionId: string, agentId: string) =>
     registry.ingest(coerceHookEvent({ event: 'UserPromptSubmit', sessionId, agentId }), AT2);
-const ready = (registry: SessionRegistry, sessionId: string, agentId: string) =>
-    registry.ingest(coerceHookEvent({ event: 'Stop', sessionId, agentId }), AT2);
 const live = (registry: SessionRegistry, sessionId: string, agentId: string) =>
     registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId, agentId }), AT2);
 
-test('a second message is not written until the first is accepted and the prompt is ready again', async () => {
+test('a second message is not written until the first is accepted', async () => {
     const pty = stubPty();
-    // Fake timers so only the state events drive the handshake, never a timeout.
+    // Fake timers so only the events drive the handshake, never a timeout.
     const { lifecycle, registry } = buildDeps({ spawn: pty, timers: fakeTimers().timers });
     void lifecycle.submitMessage('h1', 'hi');
     void lifecycle.submitMessage('h1', 'test');
     assert.deepEqual(pty.writes, [], 'nothing is written while the session is cold');
 
-    live(registry, 's1', 'h1');           // SessionStart -> idle: first message goes
+    live(registry, 's1', 'h1');           // SessionStart: first message goes
     await settle();
-    assert.deepEqual(pty.writes, ['hi', '\r'], 'the first message is submitted, the second held');
+    assert.deepEqual(pty.writes, ['hi', '\r'], 'the first message is submitted, the second held for its accept');
 
-    accept(registry, 's1', 'h1');         // UserPromptSubmit -> working: hi accepted
-    await settle();
-    assert.deepEqual(pty.writes, ['hi', '\r'], 'the second is still held while the session is working');
-
-    ready(registry, 's1', 'h1');          // Stop -> idle: ready for the next
+    accept(registry, 's1', 'h1');         // UserPromptSubmit: hi accepted as its own turn
     await settle();
     assert.deepEqual(pty.writes, ['hi', '\r', 'test', '\r'],
-        'the second is submitted only once the first was accepted and the prompt is ready, never merged');
+        'the second is submitted only once the first was accepted, never merged onto its line');
 });
 
 test('five messages sent fast arrive as five ordered turns, none merged, none dropped', async () => {
@@ -547,12 +542,11 @@ test('five messages sent fast arrive as five ordered turns, none merged, none dr
 
     live(registry, 's1', 'h1');
     await settle();
-    // Each message: it appears, then we drive its accept and its ready, unblocking
-    // the next. Nothing is ever written before its turn.
+    // Each message appears, then we drive its accept receipt, unblocking the next.
+    // Nothing is ever written before its turn.
     for (let i = 0; i < msgs.length; i++) {
         assert.deepEqual(pty.writes.slice(-2), [msgs[i], '\r'], 'turn ' + i + ' submitted in order');
         accept(registry, 's1', 'h1');
-        ready(registry, 's1', 'h1');
         await settle();
     }
     const expected = msgs.flatMap((m) => [m, '\r']);
@@ -567,7 +561,6 @@ test('a warm idle session submits a single message on its own, promptly', async 
     live(registry, 's1', 'h1');
     await tick();
     accept(registry, 's1', 'h1');
-    ready(registry, 's1', 'h1');
     await tick();
     const before = pty.writes.length;
 
@@ -581,7 +574,7 @@ test('guard 1: a lost accept signal does not deadlock the queue; it advances aft
     const ft = fakeTimers();
     const pty = stubPty();
     // Tight bounds on the virtual clock, so a never-arriving accept times out.
-    const { lifecycle, registry } = buildDeps({ spawn: pty, timers: ft.timers, acceptTimeoutMs: 1000, turnMaxMs: 1000 });
+    const { lifecycle, registry } = buildDeps({ spawn: pty, timers: ft.timers, acceptTimeoutMs: 1000 });
     void lifecycle.submitMessage('h1', 'hi');
     void lifecycle.submitMessage('h1', 'test');
 
@@ -610,7 +603,7 @@ test('guard 2: one colleague accept never advances another colleague queue', asy
         spawn: (_f, _a, opts) => (String(opts.env.STAFFORD_AGENT_ID) === 'a' ? ptyA : ptyB),
         resolveTarget: (hireId) => ({ projectId: 'p', cwd: 'C:/repo/' + hireId }),
         setState: () => {}, trustFor: () => 'trusted',
-        submitDelayMs: 0, acceptTimeoutMs: 5000, turnMaxMs: 5000, timers: fakeTimers().timers,
+        submitDelayMs: 0, acceptTimeoutMs: 5000, timers: fakeTimers().timers,
         killTree: async () => noKill()
     });
 
@@ -625,13 +618,11 @@ test('guard 2: one colleague accept never advances another colleague queue', asy
 
     // B accepts and readies. A must NOT advance on B's events.
     accept(registry, 'sb', 'b');
-    ready(registry, 'sb', 'b');
     await settle();
     assert.deepEqual(ptyA.writes, ['a1', '\r'], 'A did not advance on B\'s accept');
 
     // A accepts and readies: only now does A advance.
     accept(registry, 'sa', 'a');
-    ready(registry, 'sa', 'a');
     await settle();
     assert.deepEqual(ptyA.writes, ['a1', '\r', 'a2', '\r'], 'A advanced only on its own accept');
 });
