@@ -20,7 +20,14 @@ import type { CheckpointDeps, GitRun, RunGitOptions, TempIndex } from './checkpo
 
 function runGitReal(platform: Platform, args: readonly string[], options: RunGitOptions): Promise<GitRun> {
     return new Promise<GitRun>((resolve) => {
-        const child = spawn('git', [...args], {
+        // Neutralise line-ending conversion per invocation, so the checkpoint does
+        // not depend on the user's git config. With `core.autocrlf` on (and the
+        // stricter `core.safecrlf`), `add -u` on an LF working tree aborts with
+        // "LF would be replaced by CRLF", so whether a checkpoint succeeds would
+        // otherwise vary by machine. The `-c` form is per command only: nothing is
+        // written to any git config, and the working tree is read as-is, which is
+        // what keeps the checkpoint byte-for-byte faithful.
+        const child = spawn('git', ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', ...args], {
             cwd: options.cwd,
             env: { ...process.env, ...(options.env ?? {}) }
         });

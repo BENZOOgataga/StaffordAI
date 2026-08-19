@@ -25,7 +25,7 @@ const deps = realCheckpointDeps(currentPlatform());
 // git with a fixed identity in the env, so the setup does not depend on the machine's
 // git config, and signing is off so a configured signer cannot hang the setup.
 function git(cwd: string, ...args: string[]): string {
-    return execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], {
+    return execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', ...args], {
         cwd,
         encoding: 'utf8',
         env: {
