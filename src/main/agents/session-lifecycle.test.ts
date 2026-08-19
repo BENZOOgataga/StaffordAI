@@ -579,16 +579,37 @@ test('guard 1: a lost accept signal does not deadlock the queue; it advances aft
     void lifecycle.submitMessage('h1', 'test');
 
     live(registry, 's1', 'h1');           // idle: first goes
-    await tick();
-    assert.deepEqual(pty.writes, ['hi', '\r'], 'first submitted');
+    await settle();
+    assert.deepEqual(pty.writes.slice(0, 2), ['hi', '\r'], 'first attempted');
 
-    // No UserPromptSubmit ever arrives (a lost hook). The accept wait must time out
-    // so the queue advances rather than freezing the colleague deaf. The session
-    // never left idle, so the ready wait then resolves at once and the second is sent.
+    // No UserPromptSubmit ever arrives (permanently swallowed / lost hook). The queue
+    // must retry a bounded number of times and then advance, never hang. Fire every
+    // accept timeout until it reaches the second message.
+    for (let i = 0; i < 30 && !pty.writes.includes('test'); i++) { ft.fireByMs(1000); await settle(); }
+    assert.equal(pty.writes.includes('test'), true,
+        'the queue advanced to the second message, no deadlock on the lost signal');
+});
+
+test('a first message swallowed by a cold session is re-sent until it is accepted', async () => {
+    const pty = stubPty();
+    const ft = fakeTimers();
+    const { lifecycle, registry } = buildDeps({ spawn: pty, timers: ft.timers, acceptTimeoutMs: 1000 });
+    void lifecycle.submitMessage('h1', 'hi');
+
+    live(registry, 's1', 'h1');           // idle: first submit goes
+    await settle();
+    assert.deepEqual(pty.writes, ['hi', '\r'], 'first submit');
+
+    // No UserPromptSubmit: the cold TUI swallowed it. The accept times out and, since
+    // the session was idle, it is re-sent.
     ft.fireByMs(1000);
-    await tick(); await tick();
-    assert.deepEqual(pty.writes, ['hi', '\r', 'test', '\r'],
-        'the queue advanced past the lost accept signal, no deadlock');
+    await settle();
+    assert.deepEqual(pty.writes, ['hi', '\r', 'hi', '\r'], 're-sent after the swallow');
+
+    // This time Claude accepts it. No further re-sends.
+    accept(registry, 's1', 'h1');
+    await settle();
+    assert.deepEqual(pty.writes, ['hi', '\r', 'hi', '\r'], 'no further re-send once accepted');
 });
 
 test('guard 2: one colleague accept never advances another colleague queue', async () => {
