@@ -183,7 +183,9 @@ test('a cold spawn seeds the managed config for the cwd, before pre-trusting it'
 });
 
 test('CLAUDE_CONFIG_DIR is set in the spawn env to the managed dir, isolating the user config', () => {
-    const managed = 'C:/Users/me/AppData/Roaming/Stafford/claude-config';
+    // Absolute on the host platform, since buildAgentEnv validates extra paths are
+    // absolute for the platform the test runs on (win32 on Windows, darwin on macOS).
+    const managed = path.resolve(os.tmpdir(), 'stafford-claude-config');
     const { lifecycle, capturedEnvs } = buildDeps({ claudeConfigDir: managed });
     lifecycle.sendMessage('h1', 'hello');
     assert.equal(capturedEnvs[0]?.CLAUDE_CONFIG_DIR, managed, 'the colleague reads config from the managed dir, not ~/.claude');
