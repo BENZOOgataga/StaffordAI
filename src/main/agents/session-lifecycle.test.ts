@@ -150,6 +150,8 @@ function buildDeps(over: {
             : over.target),
         setState: (hireId, state) => { setStateCalls.push({ hireId, state }); over.setState?.(hireId, state); },
         trustFor: () => over.trust ?? 'trusted',
+        // Drain the queue without waiting on the real submit delay.
+        submitDelayMs: 0,
         notReportingMs: over.notReportingMs ?? 30_000,
         ...(over.idleMs === undefined ? {} : { idleMs: over.idleMs }),
         ...(over.timers ? { timers: over.timers } : {}),
@@ -485,12 +487,37 @@ test('a resumed session registers a real pid and is reaped by the drain, zero su
     assert.equal(registry.drainables().length, 0, 'zero survivors');
 });
 
-test('a submitted message reaches the session stdin, spawning if none is up', () => {
+test('a submitted message is held until the session reports ready, then written to stdin, spawning if none is up', async () => {
     const pty = stubPty();
-    const { lifecycle } = buildDeps({ spawn: pty });
+    const { lifecycle, registry } = buildDeps({ spawn: pty });
     void lifecycle.submitMessage('h1', 'hello there');
     assert.equal(lifecycle.has('h1'), true, 'the first message spawned the session');
-    assert.equal(pty.writes.includes('hello there'), true, 'the message was written to stdin');
+    // The cold session has not reported: nothing is written into a TUI not yet
+    // accepting input, which is what the swallowed-first-message bug was.
+    assert.equal(pty.writes.includes('hello there'), false, 'nothing is written before the session reports ready');
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    await tick();
+    assert.equal(pty.writes.includes('hello there'), true, 'the message is written once the session reports ready');
+});
+
+test('two messages sent before ready arrive as two separate submitted turns, never concatenated onto one prompt line', async () => {
+    const pty = stubPty();
+    const { lifecycle, registry } = buildDeps({ spawn: pty });
+    // Both sent on a cold session, before it reports ready.
+    void lifecycle.submitMessage('h1', 'hi');
+    void lifecycle.submitMessage('h1', 'test');
+    assert.deepEqual(pty.writes, [], 'nothing is written while the session is cold');
+
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    await tick();
+    await tick();
+
+    // Each message is its own turn: text then Enter, in order. Never a merged
+    // 'hitest', and never a text write immediately followed by the next text.
+    // Exactly two turns, each text then its own Enter, in order. A merged 'hitest'
+    // or a text write followed straight by the next text would fail this.
+    assert.deepEqual(pty.writes, ['hi', '\r', 'test', '\r'],
+        'two turns submitted in order, each with its own Enter, never merged onto one prompt line');
 });
 
 test('a message after teardown reaches a fresh session, never the dead one', async () => {
@@ -512,6 +539,9 @@ test('a message after teardown reaches a fresh session, never the dead one', asy
     await lifecycle.teardown('h1');
     void lifecycle.submitMessage('h1', 'second');
     const fresh = ptys[1];
+    // The fresh session reports ready, so its queue drains.
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's2', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    await tick();
 
     assert.notEqual(dead, fresh, 'a new session was spawned for the second message');
     assert.equal(dead?.writes.includes('second'), false, 'the torn-down session received nothing');
@@ -537,8 +567,12 @@ test('a failed resume re-delivers the triggering message to the fresh session, s
     resumeSession.fireExit(1);                            // the resume fails
     await tick();                                         // the fallback cold spawns
     const fresh = ptys[1]!;
+    // The fresh session reports ready, so the carried message drains into it.
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's2', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    await tick();
 
     assert.notEqual(resumeSession, fresh, 'the fallback spawned a fresh session');
+    assert.equal(resumeSession.writes.includes('run the tests'), false, 'nothing was written into the dead resume session');
     assert.equal(fresh.writes.includes('run the tests'), true,
         'the message that triggered the failed resume is re-delivered to the fresh session, not lost to the dead one');
 });
