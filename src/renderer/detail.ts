@@ -126,9 +126,11 @@ function conversationRow(row: ChannelMessageRow): HTMLElement {
  * appends only its new rows rather than rebuilding.
  */
 async function refreshDetail(hireId: string, initial: boolean): Promise<void> {
-    const { rows } = await window.stafford.channel.page(null, 100);
-    const mine = rows.filter((r) => r.senderId === hireId || r.senderId === CHANNEL_SELF_SENDER);
-    conversationEl.replaceChildren(...mine.map(conversationRow));
+    // This colleague's own conversation, keyed by hire id in the store: the rows it
+    // sent or that were addressed to it. A person's reply to another colleague is not
+    // in here, so the thread is this colleague's alone rather than the merged timeline.
+    const { rows } = await window.stafford.channel.conversation(hireId, 100);
+    conversationEl.replaceChildren(...rows.map(conversationRow));
     conversationEl.scrollTop = conversationEl.scrollHeight;
 
     const stateFeed = activityRows(rows, hireId).map(stateRowToFeed);

@@ -840,6 +840,11 @@ app.whenReady().then(async () => {
             ? (before ? repositories.channel.before(before, limit) : repositories.channel.newest(limit))
             : []),
         channelSince: (after, limit) => (repositories ? repositories.channel.after(after, limit) : []),
+        // One colleague's own conversation, keyed by hire id, so the Conversation tab
+        // reads only its thread rather than the whole timeline filtered client-side.
+        channelConversation: (hireId, limit) => (repositories
+            ? repositories.channel.conversationFor(hireId, limit)
+            : []),
         // One colleague's persisted activity history, mapped to the renderer's row. The
         // stored rows are the durable accomplishments; live is false because a reload
         // is the reopen case, where only the persisted history remains.
@@ -861,6 +866,9 @@ app.whenReady().then(async () => {
                 const hire = repositories.hires.get(hireId);
                 repositories.channel.append({
                     id: randomUUID(), projectId: hire?.activeProjectId ?? '', senderId: CHANNEL_SELF_SENDER,
+                    // The person's reply is addressed to this colleague, so its
+                    // Conversation is keyed by hire and does not leak into another's.
+                    targetHireId: hireId,
                     kind: 'message', body: text, reference: null, at: new Date().toISOString()
                 });
                 notifyChannelChanged();

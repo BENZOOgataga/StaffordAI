@@ -40,7 +40,7 @@ test('a transition into a qualifying state writes one event row with the hire an
         assert.equal(wrote, true);
         assert.equal(rows.length, 1);
         assert.deepEqual(rows[0], {
-            id: 'id-' + state, projectId: 'p1', senderId: 'h1', kind: 'event',
+            id: 'id-' + state, projectId: 'p1', senderId: 'h1', targetHireId: null, kind: 'event',
             body: state, reference: null, at: '2026-08-13T00:00:00Z'
         });
     }

@@ -53,6 +53,8 @@ export function channelEventFor(input: {
         id: input.id,
         projectId: input.projectId,
         senderId: input.hireId,
+        // An event is about the hire, whose id is the sender; there is no target.
+        targetHireId: null,
         kind: CHANNEL_KINDS.EVENT,
         // The stable state enum, not a rendered phrase, so the view renders it per
         // language with the colleague's name.

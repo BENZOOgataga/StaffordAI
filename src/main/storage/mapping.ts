@@ -219,7 +219,7 @@ export function activityRecordFromRow(row: Row): ActivityRecord {
 
 export function channelMessageToRow(m: ChannelMessage): Row {
     return {
-        id: m.id, project_id: m.projectId, sender_id: m.senderId, kind: m.kind, body: m.body,
+        id: m.id, project_id: m.projectId, sender_id: m.senderId, target_hire_id: m.targetHireId, kind: m.kind, body: m.body,
         // The typed reference is two columns; both null when there is none, so the
         // ref_kind CHECK never sees a value it does not allow.
         ref_kind: m.reference ? m.reference.kind : null,
@@ -232,6 +232,7 @@ export function channelMessageFromRow(row: Row): ChannelMessage {
     const refKind = nstr(row, 'ref_kind');
     return {
         id: str(row, 'id'), projectId: str(row, 'project_id'), senderId: str(row, 'sender_id'),
+        targetHireId: nstr(row, 'target_hire_id'),
         kind: oneOf<ChannelKind>(row, 'kind', Object.values(CHANNEL_KINDS)),
         body: str(row, 'body'),
         // A reference is present only when ref_kind is; then ref_value must be too.

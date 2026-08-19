@@ -13,7 +13,7 @@
 
 import type {
     ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite,
-    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ActivityByHireRequest, CheckpointAck,
+    ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
     ProjectCreate, HireCreate
 } from '../shared/ipc.ts';
 
@@ -61,6 +61,11 @@ export function isChannelPage(value: unknown): value is ChannelPageRequest {
 
 /** A read of one colleague's persisted activity, capped. */
 export function isActivityByHire(value: unknown): value is ActivityByHireRequest {
+    return isObject(value) && isHireId(value.hireId) && isBoundedInt(value.limit, 1, 1000);
+}
+
+/** A read of one colleague's own conversation, capped. Same shape as activity:by-hire. */
+export function isChannelConversation(value: unknown): value is ChannelConversationRequest {
     return isObject(value) && isHireId(value.hireId) && isBoundedInt(value.limit, 1, 1000);
 }
 

@@ -75,6 +75,8 @@ const api = Object.freeze({
             invoke('channel:page', { before, limit }) as Promise<ChannelPageReply>,
         since: (after: ChannelCursor, limit: number): Promise<ChannelPageReply> =>
             invoke('channel:since', { after, limit }) as Promise<ChannelPageReply>,
+        conversation: (hireId: string, limit: number): Promise<ChannelPageReply> =>
+            invoke('channel:conversation', { hireId, limit }) as Promise<ChannelPageReply>,
         reply: (hireId: string, text: string): Promise<void> =>
             invoke('channel:reply', { hireId, text }) as Promise<void>,
         onChanged: (listener: () => void): (() => void) => on('channel:changed', () => listener())
