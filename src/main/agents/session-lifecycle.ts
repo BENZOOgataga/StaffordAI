@@ -53,7 +53,15 @@ export const DEFAULT_IDLE_MS = 10 * 60 * 1000;
  * advancing. Generous, since a cold accept was measured near 900ms and a warm one
  * is faster; well beyond that means the hook did not report, not that Claude is slow.
  */
-export const DEFAULT_ACCEPT_TIMEOUT_MS = 20_000;
+export const DEFAULT_ACCEPT_TIMEOUT_MS = 8_000;
+
+/**
+ * How many times a message is submitted before the queue gives up and advances. The
+ * first prompt to a fresh session is swallowed by a TUI that is not yet accepting
+ * input, so a rewrite lands it; a few attempts covers that without freezing the
+ * queue on a message that genuinely cannot be accepted.
+ */
+export const MAX_SUBMIT_ATTEMPTS = 3;
 
 
 /** A parked wait on a hire's next hook signal, resolved by an event or teardown. */
@@ -420,25 +428,52 @@ export class SessionLifecycle {
             const queue = this.#queue.get(hireId);
             while (queue && queue.length > 0) {
                 if (!this.#sessionUsable(hireId)) { this.#dlog('drain stop hire=' + hireId, 'session-unusable'); break; }
-
-                // 1. Submit this message's text and Enter.
-                const ok = await this.#owned.get(hireId)?.session.submit(queue[0] as string);
-                this.#dlog('submit hire=' + hireId, 'ok=' + ok, 'remaining=' + (queue.length - 1));
-                if (!ok || !this.#sessionUsable(hireId)) break; // Left queued for a fresh spawn.
-                queue.shift();
-
-                // 2. Wait for this message's accept receipt before the next. A lost
-                //    receipt advances after the bound rather than deadlocking.
-                if (queue.length > 0) {
-                    const accept = await this.#waitForSignal(
-                        hireId, (event) => event === 'UserPromptSubmit', this.#acceptTimeoutMs);
-                    this.#dlog('accept hire=' + hireId, 'result=' + accept);
-                    if (accept === 'dead' || !this.#sessionUsable(hireId)) break;
-                }
+                const result = await this.#deliverOne(hireId, queue[0] as string);
+                if (result === 'dead') break; // Left queued for the fresh spawn a fallback brings up.
+                queue.shift();               // Confirmed or given-up: advance so one lost turn cannot block the rest.
             }
         } finally {
             this.#draining.delete(hireId);
         }
+    }
+
+    /**
+     * Delivers one message and confirms it was accepted, retrying a swallowed one.
+     *
+     * The receipt is the next `UserPromptSubmit` event, which fires once per prompt
+     * Claude takes. The failure this fixes: the first prompt written to a freshly
+     * started session lands ~400ms after SessionStart, before the TUI is accepting
+     * input, so Claude silently swallows it and no receipt ever comes. So this waits
+     * for the receipt and, if it does not arrive, rewrites the prompt.
+     *
+     * The rewrite is gated on the session being idle at submit time. An idle session
+     * that produced no receipt swallowed the prompt, so rewriting is safe and lands
+     * it. A working session did not swallow it: Claude queues a prompt typed while it
+     * responds and its receipt simply comes later, so rewriting there would double
+     * the message. In that case a timeout advances without a rewrite; Claude's queue
+     * is FIFO, so order holds. Bounded attempts, so a genuinely unacceptable message
+     * cannot freeze the queue (Guard 1). Every wait is keyed by this hire (Guard 2).
+     */
+    async #deliverOne(hireId: string, text: string): Promise<'confirmed' | 'dead' | 'gave-up'> {
+        for (let attempt = 1; attempt <= MAX_SUBMIT_ATTEMPTS; attempt++) {
+            if (!this.#sessionUsable(hireId)) return 'dead';
+            const idleBefore = this.#state.get(hireId) === AGENT_STATES.IDLE;
+            const ok = await this.#owned.get(hireId)?.session.submit(text);
+            this.#dlog('submit hire=' + hireId, 'ok=' + ok, 'attempt=' + attempt, 'idleBefore=' + idleBefore);
+            if (!ok) return 'dead';
+
+            const accept = await this.#waitForSignal(
+                hireId, (event) => event === 'UserPromptSubmit', this.#acceptTimeoutMs);
+            this.#dlog('accept hire=' + hireId, 'result=' + accept, 'attempt=' + attempt);
+            if (accept === 'match') return 'confirmed';
+            if (accept === 'dead' || !this.#sessionUsable(hireId)) return 'dead';
+            // Timeout. Rewrite only if the session was idle (it swallowed the prompt);
+            // a working session has the prompt queued, so leave it and advance.
+            if (!idleBefore) return 'gave-up';
+            this.#dlog('resubmit hire=' + hireId, 'swallowed-while-idle attempt=' + attempt);
+        }
+        this.#dlog('give-up hire=' + hireId, 'not-confirmed after ' + MAX_SUBMIT_ATTEMPTS);
+        return 'gave-up';
     }
 
     /** True while a hire's session is live enough to write to. */
