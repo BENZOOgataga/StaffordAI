@@ -20,7 +20,7 @@ import {
 } from '../../shared/ipc.ts';
 import {
     isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite,
-    isChannelPage, isChannelSince, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck
+    isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 import { OutputCoalescer } from './output-coalescer.ts';
@@ -79,6 +79,7 @@ export interface HandlerDeps {
     readonly channelPage: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     /** Rows newer than a cursor, for the tail append. */
     readonly channelSince: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
+    readonly channelConversation: (hireId: string, limit: number) => readonly ChannelMessageRow[];
     /** One colleague's persisted activity, oldest-first, for the Activity feed's history. */
     readonly activityByHire: (hireId: string, limit: number) => readonly ActivityRow[];
     /** The saved work from the most recent committed drain, or null when there is nothing new to show. */
@@ -188,6 +189,13 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'channel:since': (payload: unknown): ChannelPageReply => {
             if (!isChannelSince(payload)) throw new Error('channel:since requires {after,limit}');
             return { rows: deps.channelSince(payload.after, payload.limit) };
+        },
+
+        // One colleague's own conversation, keyed by hire, so the Conversation tab
+        // shows only its thread and a person's reply to another colleague never leaks in.
+        'channel:conversation': (payload: unknown): ChannelPageReply => {
+            if (!isChannelConversation(payload)) throw new Error('channel:conversation requires {hireId,limit}');
+            return { rows: deps.channelConversation(payload.hireId, payload.limit) };
         },
 
         // One colleague's persisted activity history, for the Activity feed on open.

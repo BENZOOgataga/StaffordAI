@@ -29,6 +29,7 @@ export const INVOKE_CHANNELS = [
     'session:write',
     'channel:page',
     'channel:since',
+    'channel:conversation',
     'channel:reply',
     'activity:by-hire',
     'checkpoints:saved',
@@ -211,6 +212,12 @@ export const CHANNEL_SELF_SENDER = 'benzoo';
 export interface ChannelReply {
     readonly hireId: string;
     readonly text: string;
+}
+
+/** A read of one colleague's own conversation, keyed by hire and capped. */
+export interface ChannelConversationRequest {
+    readonly hireId: string;
+    readonly limit: number;
 }
 
 /**

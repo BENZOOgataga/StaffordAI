@@ -130,7 +130,7 @@ test('the policy log refuses update and delete at the database even by raw state
 });
 
 function channelMessage(id: string, at: string, over: Partial<ChannelMessage> = {}): ChannelMessage {
-    return { id, projectId: 'p1', senderId: 'Benzoo', kind: 'message', body: 'hi', reference: null, at, ...over };
+    return { id, projectId: 'p1', senderId: 'Benzoo', targetHireId: null, kind: 'message', body: 'hi', reference: null, at, ...over };
 }
 
 test('the channel appends and reads a page of messages and events interleaved in time order', () => {
@@ -181,6 +181,24 @@ test('the channel newest, before and after cursor reads page the timeline in tim
             repos.channel.after({ at: newest[1]!.at, id: newest[1]!.id }, 10).map((m) => m.id), ['m5'],
             'only the new tail row, not the whole timeline'
         );
+    });
+});
+
+test('conversationFor keys a colleague thread by hire: its own rows and the replies addressed to it, not another colleague', () => {
+    withRepos((repos) => {
+        // Two colleagues on one project. The person replies to each; each colleague
+        // sends its own message; one has an event.
+        repos.channel.append(channelMessage('p-to-a', '2026-08-13T00:00:00Z', { senderId: 'benzoo', targetHireId: 'A', body: 'hi A' }));
+        repos.channel.append(channelMessage('p-to-b', '2026-08-13T00:00:01Z', { senderId: 'benzoo', targetHireId: 'B', body: 'hi B' }));
+        repos.channel.append(channelMessage('a-says', '2026-08-13T00:00:02Z', { senderId: 'A', targetHireId: null, body: 'A here' }));
+        repos.channel.append(channelMessage('b-evt', '2026-08-13T00:00:03Z', { senderId: 'B', targetHireId: null, kind: 'event', body: 'waiting_for_you' }));
+
+        // A's thread: only what A sent and what was addressed to A. Never B's rows.
+        assert.deepEqual(repos.channel.conversationFor('A', 100).map((m) => m.id), ['p-to-a', 'a-says']);
+        // B's thread: only B's rows and the reply to B.
+        assert.deepEqual(repos.channel.conversationFor('B', 100).map((m) => m.id), ['p-to-b', 'b-evt']);
+        // A colleague with no messages has an empty conversation, not another's.
+        assert.deepEqual(repos.channel.conversationFor('C', 100), []);
     });
 });
 

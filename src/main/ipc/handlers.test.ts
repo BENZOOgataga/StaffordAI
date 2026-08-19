@@ -25,6 +25,7 @@ interface SessionOverrides {
     submitMessage?: (hireId: string, text: string) => Promise<void>;
     channelPage?: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     channelSince?: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
+    channelConversation?: (hireId: string, limit: number) => readonly ChannelMessageRow[];
     activityByHire?: (hireId: string, limit: number) => readonly ActivityRow[];
     savedCheckpoints?: () => SavedCheckpoints | null;
     ackCheckpoints?: (drainId: string) => void;
@@ -56,6 +57,7 @@ function deps(
         submitMessage: over.submitMessage ?? (() => Promise.resolve()),
         channelPage: over.channelPage ?? (() => []),
         channelSince: over.channelSince ?? (() => []),
+        channelConversation: over.channelConversation ?? (() => []),
         activityByHire: over.activityByHire ?? (() => []),
         savedCheckpoints: over.savedCheckpoints ?? (() => null),
         ackCheckpoints: over.ackCheckpoints ?? (() => { /* noop */ }),
@@ -287,6 +289,18 @@ test('channel:page returns rows and passes the cursor and limit through', () => 
 
     handlers['channel:page']({ before: { at: 't', id: 'a' }, limit: 20 });
     assert.deepEqual(calls[1], { before: { at: 't', id: 'a' }, limit: 20 }, 'a cursor loads older rows');
+});
+
+test('channel:conversation reads one colleague thread by hire id, and rejects a bad shape', () => {
+    const calls: Array<{ hireId: string; limit: number }> = [];
+    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+        channelConversation: (hireId, limit) => { calls.push({ hireId, limit }); return [chRow('a')]; }
+    }));
+    const reply = handlers['channel:conversation']({ hireId: 'h1', limit: 100 }) as ChannelPageReply;
+    assert.deepEqual(reply.rows.map((r) => r.id), ['a']);
+    assert.deepEqual(calls[0], { hireId: 'h1', limit: 100 }, 'the read is keyed by the selected hire');
+    // A missing hire id is refused at the boundary, not passed through.
+    assert.throws(() => handlers['channel:conversation']({ limit: 100 }), /requires \{hireId,limit\}/);
 });
 
 test('channel:since returns rows newer than the cursor', () => {

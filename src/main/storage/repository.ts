@@ -230,12 +230,20 @@ export class ChannelRepository {
     readonly #newest: Statement;
     readonly #before: Statement;
     readonly #after: Statement;
+    readonly #conversation: Statement;
 
     constructor(db: StorageDatabase) {
         this.#append = db.prepare(
-            'INSERT INTO channel_messages (id, project_id, sender_id, kind, body, ref_kind, ref_value, at) ' +
-            'VALUES (@id, @project_id, @sender_id, @kind, @body, @ref_kind, @ref_value, @at)');
+            'INSERT INTO channel_messages (id, project_id, sender_id, target_hire_id, kind, body, ref_kind, ref_value, at) ' +
+            'VALUES (@id, @project_id, @sender_id, @target_hire_id, @kind, @body, @ref_kind, @ref_value, @at)');
         this.#page = db.prepare('SELECT * FROM channel_messages ORDER BY at, id LIMIT ? OFFSET ?');
+        // One colleague's own conversation: the rows it sent or that were addressed to
+        // it. A colleague's own messages and its events carry sender_id = the hire; a
+        // person's replies to it carry target_hire_id = the hire. Newest first for the
+        // cap, reversed to oldest-first by the caller.
+        this.#conversation = db.prepare(
+            'SELECT * FROM channel_messages WHERE sender_id = @hireId OR target_hire_id = @hireId ' +
+            'ORDER BY at DESC, id DESC LIMIT @limit');
         this.#pageByProject = db.prepare(
             'SELECT * FROM channel_messages WHERE project_id = ? ORDER BY at, id LIMIT ? OFFSET ?');
         // The newest page: the tail, for the initial load. Read descending, then
@@ -277,6 +285,16 @@ export class ChannelRepository {
     /** A page of one project's timeline. */
     pageByProject(projectId: string, page: Page): ChannelMessage[] {
         return rowsOf(this.#pageByProject, projectId, page.limit, page.offset).map(channelMessageFromRow);
+    }
+
+    /**
+     * One colleague's own conversation, oldest-first: the rows it sent or that were
+     * addressed to it, capped to the newest `limit`. This is the per-hire key the
+     * Conversation tab reads, so a person's reply to one colleague does not appear in
+     * another's. Events for the hire come along, since they share the sender_id key.
+     */
+    conversationFor(hireId: string, limit: number): ChannelMessage[] {
+        return (this.#conversation.all({ hireId, limit }) as Row[]).map(channelMessageFromRow).reverse();
     }
 }
 

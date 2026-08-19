@@ -175,6 +175,13 @@ export interface ChannelMessage {
     projectId: string;
     /** Agent id, or a sentinel for Benzoo. Kept a string so the sender set is not fixed here. */
     senderId: string;
+    /**
+     * The colleague a person's message is addressed to, so the per-colleague
+     * Conversation can be keyed by hire. Set to the hire id on a person's reply
+     * (whose senderId is the Benzoo sentinel and so carries no hire on its own), and
+     * null on a colleague's own message or an event (there the senderId is the hire).
+     */
+    targetHireId: string | null;
     kind: ChannelKind;
     /** The message text, or the rendered summary of an event. */
     body: string;

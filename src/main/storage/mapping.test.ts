@@ -64,12 +64,12 @@ test('a hire round-trips through the mapping unchanged', () => {
 });
 
 const CHANNEL_MESSAGE: ChannelMessage = {
-    id: 'm1', projectId: 'p1', senderId: 'Benzoo', kind: 'message',
+    id: 'm1', projectId: 'p1', senderId: 'Benzoo', targetHireId: 'h1', kind: 'message',
     body: 'ship the parser', reference: { kind: 'task', value: 't1' }, at: '2026-08-13T00:00:00Z'
 };
 
 const CHANNEL_EVENT: ChannelMessage = {
-    id: 'e1', projectId: 'p1', senderId: 'h1', kind: 'event',
+    id: 'e1', projectId: 'p1', senderId: 'h1', targetHireId: null, kind: 'event',
     body: 'waiting_for_you', reference: null, at: '2026-08-13T00:00:01Z'
 };
 
