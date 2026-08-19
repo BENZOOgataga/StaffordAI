@@ -119,13 +119,24 @@ test('project trust is written and never a permission bypass', () => {
     }
 });
 
-test('settings.json is plugin-free: no plugins, marketplaces, or hooks', () => {
+test('settings.json is plugin-free: no plugins or marketplaces', () => {
     const fs = fakeFs();
     seedManagedConfig(deps(fs), CWD);
     const settings = JSON.parse(fs.readText(MANAGED + '/settings.json')) as Record<string, unknown>;
-    for (const banned of ['enabledPlugins', 'extraKnownMarketplaces', 'hooks']) {
+    for (const banned of ['enabledPlugins', 'extraKnownMarketplaces']) {
         assert.equal(banned in settings, false, banned + ' must be absent');
     }
+});
+
+test('Stafford hooks are written into the managed settings, scoped to the colleague session', () => {
+    const fs = fakeFs();
+    const staffordSettings = { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'X --stafford-hook', shell: 'powershell' }] }] } };
+    seedManagedConfig({ ...deps(fs), settings: staffordSettings }, CWD);
+    const settings = JSON.parse(fs.readText(MANAGED + '/settings.json')) as Record<string, unknown>;
+    // The hooks reach the managed dir the colleague reads, with the shell pinned,
+    // and still no plugins or marketplaces leak in.
+    assert.deepEqual(settings.hooks, staffordSettings.hooks);
+    assert.equal('enabledPlugins' in settings, false);
 });
 
 test('re-seeding a second project preserves the first project trust', () => {

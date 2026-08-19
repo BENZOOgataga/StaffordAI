@@ -50,6 +50,21 @@ export const REGISTERED_EVENTS = [
 interface HookCommand {
     readonly type: 'command';
     readonly command: string;
+    /**
+     * The interpreter Claude Code runs this command through. Pinned because the
+     * default is Git Bash when it is present, which cannot parse the PowerShell
+     * command built for Windows and fails with a bash syntax error. Only set when a
+     * shell is chosen; a diagnostic caller that leaves it off keeps the default.
+     */
+    readonly shell?: ClaudeShell;
+}
+
+/** The two values Claude Code's hook `shell` field accepts. */
+export type ClaudeShell = 'bash' | 'powershell';
+
+/** Maps Stafford's platform shell to the value Claude Code's hook `shell` field takes. */
+export function claudeShellFor(shell: HookShell): ClaudeShell {
+    return shell === 'powershell' ? 'powershell' : 'bash';
 }
 
 interface HookGroup {
@@ -95,10 +110,11 @@ export function buildCommand(runtime: string, forwarder: string, shell: HookShel
         : 'ELECTRON_RUN_AS_NODE=1 ' + invocation;
 }
 
-export function desiredHooks(command: string): HookSettings {
+export function desiredHooks(command: string, shell?: ClaudeShell): HookSettings {
+    const entry: HookCommand = shell ? { type: 'command', command, shell } : { type: 'command', command };
     const hooks: HookSettings = {};
     for (const event of REGISTERED_EVENTS) {
-        hooks[event] = [{ hooks: [{ type: 'command', command }] }];
+        hooks[event] = [{ hooks: [entry] }];
     }
     return hooks;
 }
@@ -110,7 +126,7 @@ export function desiredHooks(command: string): HookSettings {
  * is idempotent: registering twice cannot produce two entries, because ours are
  * removed by marker before the new ones go in.
  */
-export function merge(existing: Settings, command: string): Settings {
+export function merge(existing: Settings, command: string, shell?: ClaudeShell): Settings {
     const next: Settings = { ...existing };
     const hooks: HookSettings = {};
 
@@ -121,7 +137,7 @@ export function merge(existing: Settings, command: string): Settings {
         if (kept.length > 0) hooks[event] = kept;
     }
 
-    for (const [event, groups] of Object.entries(desiredHooks(command))) {
+    for (const [event, groups] of Object.entries(desiredHooks(command, shell))) {
         hooks[event] = [...(hooks[event] ?? []), ...groups];
     }
 
