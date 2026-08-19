@@ -131,6 +131,12 @@ export interface LifecycleDeps {
     readonly onStateChanged?: (hireId: string) => void;
     readonly notReportingMs?: number;
     readonly idleMs?: number;
+    /**
+     * The delay between a prompt's text and its Enter, passed to each PtySession.
+     * Defaults to the measured `SUBMIT_DELAY_MS`; a test injects 0 to drain a queue
+     * without waiting on real time.
+     */
+    readonly submitDelayMs?: number;
     /** Injected so a test drives a virtual clock and sees the unref. Defaults to real. */
     readonly timers?: Timers;
     /** Injected so a unit test does not reap a real process tree. Defaults to the real one. */
@@ -173,13 +179,20 @@ export class SessionLifecycle {
      */
     readonly #lastSize = new Map<string, { cols: number; rows: number }>();
     /**
-     * The last message submitted to a hire, held so it can be re-delivered to the
-     * fresh session if a resume of a stale id fails and falls back. Without this the
-     * message that triggered the resume is written to the session that then dies, so
-     * the fresh colleague sits idle and never answers. Cleared once a session reports
-     * it is working, so a later unrelated fallback cannot replay an old message.
+     * Messages waiting to be delivered to a hire, in order.
+     *
+     * A message is never written straight into a cold session: a spawn's TUI is not
+     * accepting input until its first hook (SessionStart) has fired, roughly two
+     * seconds in, and a prompt written before then is silently swallowed. So a
+     * message is queued and the queue is drained only once the session has reported.
+     * Each message is submitted as its own turn, so two sent in quick succession do
+     * not merge onto one prompt line. The queue also survives a teardown keyed by
+     * hire, so a resume that fails and falls back to a fresh spawn re-delivers the
+     * undelivered message by draining it into the fresh session rather than losing it.
      */
-    readonly #pendingMessage = new Map<string, string>();
+    readonly #queue = new Map<string, string[]>();
+    /** Hires whose queue is being drained, so two drains do not interleave writes. */
+    readonly #draining = new Set<string>();
     readonly #notReportingMs: number;
     readonly #idleMs: number;
     readonly #timers: Timers;
@@ -298,14 +311,50 @@ export class SessionLifecycle {
      * Returns nothing to write to when the hire is on no project.
      */
     async submitMessage(hireId: string, text: string): Promise<void> {
-        const existing = this.#owned.get(hireId);
-        const session = existing ? existing.session : this.#spawn(hireId).session;
-        // Held until the session reports it is working, so a resume that fails and
-        // falls back can re-deliver this message to the fresh session rather than
-        // lose it to the dead one.
-        this.#pendingMessage.set(hireId, text);
+        // Spawn on the first message; reuse a live session otherwise. The message is
+        // queued rather than written now, because a cold session's TUI is not yet
+        // accepting input. The drain delivers it once the session reports ready.
+        if (!this.#owned.get(hireId)) this.#spawn(hireId);
         this.#resetIdle(hireId);
-        await session.submit(text);
+        this.#enqueue(hireId, text);
+    }
+
+    /** Queues a message for a hire and kicks the drain. */
+    #enqueue(hireId: string, text: string): void {
+        const queue = this.#queue.get(hireId) ?? [];
+        queue.push(text);
+        this.#queue.set(hireId, queue);
+        void this.#drainQueue(hireId);
+    }
+
+    /**
+     * Delivers a hire's queued messages in order, one submitted turn at a time.
+     *
+     * Gated on readiness: a session that has not reported its first hook has a TUI
+     * that silently swallows a written prompt, so the drain returns and #onActivity
+     * kicks it again once the session reports. Serialized by #draining so two
+     * messages never interleave into one prompt line, and a message is removed from
+     * the queue only after its submit lands, so a session that dies mid-submit leaves
+     * the message queued for the fresh spawn a fallback brings up.
+     */
+    async #drainQueue(hireId: string): Promise<void> {
+        if (this.#draining.has(hireId)) return;
+        const owned = this.#owned.get(hireId);
+        if (!owned || owned.tornDown || !owned.reported) return;
+
+        this.#draining.add(hireId);
+        try {
+            const queue = this.#queue.get(hireId);
+            while (queue && queue.length > 0) {
+                const current = this.#owned.get(hireId);
+                if (!current || current.tornDown || !current.session.alive) break;
+                const ok = await current.session.submit(queue[0] as string);
+                if (!ok) break; // Session went away mid-submit; leave it queued.
+                queue.shift();
+            }
+        } finally {
+            this.#draining.delete(hireId);
+        }
     }
 
     #spawn(hireId: string, options: { cold?: boolean } = {}): Owned {
@@ -369,6 +418,7 @@ export class SessionLifecycle {
             cwd: target.cwd,
             env,
             spawn: this.#deps.spawn,
+            ...(this.#deps.submitDelayMs === undefined ? {} : { submitDelayMs: this.#deps.submitDelayMs }),
             ...(size ? { cols: size.cols, rows: size.rows } : {})
         });
         session.start();
@@ -437,9 +487,9 @@ export class SessionLifecycle {
         if (!owned.reported) {
             owned.reported = true;
             if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
-            // The session is working, so its message was delivered: drop the pending
-            // copy, or a much-later fallback could replay it.
-            this.#pendingMessage.delete(agentId);
+            // The session is ready to accept input now, so deliver anything queued
+            // before readiness, each as its own submitted turn.
+            void this.#drainQueue(agentId);
         }
         this.#resetIdle(agentId);
     }
@@ -495,6 +545,10 @@ export class SessionLifecycle {
      * is told this is a clean start rather than a continuation.
      */
     async #fallbackToFresh(agentId: string): Promise<void> {
+        // Carry the undelivered messages across the teardown. The resume died before
+        // reporting, so the drain never ran and never removed them; teardown clears
+        // the queue, so snapshot first and re-enqueue them onto the fresh session.
+        const carried = [...(this.#queue.get(agentId) ?? [])];
         await this.teardown(agentId);
         // Clear the dead resume's frame from any open terminal at once, so the
         // person is not left staring at "No conversation found" for the seconds it
@@ -506,12 +560,10 @@ export class SessionLifecycle {
         this.#deps.clearStoredSession?.(agentId);
         this.#contextLost.add(agentId);
         try {
-            const fresh = this.#spawn(agentId, { cold: true });
-            // Re-deliver the message that triggered the failed resume, so the fresh
-            // colleague acts on it rather than sitting idle. It was written to the
-            // dead resume session and lost otherwise.
-            const pending = this.#pendingMessage.get(agentId);
-            if (pending) void fresh.session.submit(pending);
+            this.#spawn(agentId, { cold: true });
+            // Re-deliver onto the fresh session; its first hook kicks the drain and
+            // each message goes through as its own turn once the session is ready.
+            for (const text of carried) this.#enqueue(agentId, text);
         } catch {
             // No project to spawn into, or the hire is gone. The teardown already
             // cleared the failed session; there is nothing to leave stuck.
@@ -567,6 +619,11 @@ export class SessionLifecycle {
         this.#deps.registry.deregisterByAgent(agentId);
         this.#deps.secrets.revoke(agentId);
         this.#owned.delete(agentId);
+        // Undelivered messages do not outlive the session they were queued for, or a
+        // crashed cold spawn's message would replay into an unrelated later spawn. The
+        // resume-fallback carries its message forward explicitly, before this runs.
+        this.#queue.delete(agentId);
+        this.#draining.delete(agentId);
         // The session is gone, so its subscribers detach; they re-attach if the
         // colleague is resumed, so an open card comes back to life on the next spawn.
         this.#detachSubscribers(agentId);
