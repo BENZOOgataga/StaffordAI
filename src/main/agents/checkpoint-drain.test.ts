@@ -31,7 +31,7 @@ const AT = '2026-08-18T00:00:00.000Z';
 const platform = currentPlatform();
 
 function git(cwd: string, ...args: string[]): string {
-    return execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], {
+    return execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', ...args], {
         cwd, encoding: 'utf8',
         env: { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@t' }
     }).trim();
