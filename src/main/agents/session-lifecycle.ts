@@ -27,6 +27,7 @@
  * would delay app quit.
  */
 
+import { createRequire } from 'node:module';
 import { buildAgentEnv } from './agent-env.ts';
 import { PtySession, RESET, type PtyLike } from './pty-session.ts';
 import { killTree as defaultKillTree, type KillTreeReport } from './kill-tree.ts';
@@ -342,11 +343,35 @@ export class SessionLifecycle {
         this.#enqueue(hireId, text);
     }
 
+    /**
+     * A delivery trace line, off unless STAFFORD_DELIVERY_LOG is set. Written to
+     * stderr, which the app captures, so a person can reproduce a message not landing
+     * and hand back exactly where the queue stalled, without a debugger. Carries hire
+     * ids and event names only, never message text, which is the person's content.
+     */
+    #dlog(...parts: unknown[]): void {
+        if (!this.#deps.parentEnv.STAFFORD_DELIVERY_LOG) return;
+        const line = '[delivery] ' + new Date().toISOString() + ' ' + parts.join(' ') + '\n';
+        try { process.stderr.write(line); } catch { /* ignore */ }
+        // Also to a file, since a packaged app has no visible stderr. Lazy-required so
+        // the lifecycle stays fs-free for tests, and only when the flag is on.
+        try {
+            const nodeFs = (this.#deps.parentEnv.STAFFORD_DELIVERY_LOG_FILE)
+                ? String(this.#deps.parentEnv.STAFFORD_DELIVERY_LOG_FILE)
+                : (createRequire(import.meta.url)('node:os') as typeof import('node:os')).tmpdir() + '/stafford-delivery.log';
+            (createRequire(import.meta.url)('node:fs') as typeof import('node:fs')).appendFileSync(nodeFs, line);
+        } catch { /* best effort */ }
+    }
+
     /** Queues a message for a hire and kicks the drain. */
     #enqueue(hireId: string, text: string): void {
         const queue = this.#queue.get(hireId) ?? [];
         queue.push(text);
         this.#queue.set(hireId, queue);
+        const owned = this.#owned.get(hireId);
+        this.#dlog('enqueue hire=' + hireId, 'len=' + queue.length,
+            'reported=' + (owned?.reported ?? 'no-session'), 'draining=' + this.#draining.has(hireId),
+            'state=' + (this.#state.get(hireId) ?? 'none'));
         void this.#drainQueue(hireId);
     }
 
@@ -379,18 +404,23 @@ export class SessionLifecycle {
      * for the fresh spawn a fallback brings up.
      */
     async #drainQueue(hireId: string): Promise<void> {
-        if (this.#draining.has(hireId)) return;
+        if (this.#draining.has(hireId)) { this.#dlog('drain skip hire=' + hireId, 'already-draining'); return; }
         const owned = this.#owned.get(hireId);
-        if (!owned || owned.tornDown || !owned.reported) return;
+        if (!owned || owned.tornDown || !owned.reported) {
+            this.#dlog('drain wait hire=' + hireId, 'reported=' + (owned?.reported ?? 'no-session'),
+                'tornDown=' + (owned?.tornDown ?? 'no-session'));
+            return;
+        }
 
         this.#draining.add(hireId);
         try {
             const queue = this.#queue.get(hireId);
             while (queue && queue.length > 0) {
-                if (!this.#sessionUsable(hireId)) break;
+                if (!this.#sessionUsable(hireId)) { this.#dlog('drain stop hire=' + hireId, 'session-unusable'); break; }
 
                 // 1. Submit this message's text and Enter.
                 const ok = await this.#owned.get(hireId)?.session.submit(queue[0] as string);
+                this.#dlog('submit hire=' + hireId, 'ok=' + ok, 'remaining=' + (queue.length - 1));
                 if (!ok || !this.#sessionUsable(hireId)) break; // Left queued for a fresh spawn.
                 queue.shift();
 
@@ -399,6 +429,7 @@ export class SessionLifecycle {
                 if (queue.length > 0) {
                     const accept = await this.#waitForSignal(
                         hireId, (event) => event === 'UserPromptSubmit', this.#acceptTimeoutMs);
+                    this.#dlog('accept hire=' + hireId, 'result=' + accept);
                     if (accept === 'dead' || !this.#sessionUsable(hireId)) break;
                 }
             }
@@ -539,6 +570,8 @@ export class SessionLifecycle {
      */
     #onActivity(agentId: string, event: string, state: AgentState): void {
         const owned = this.#owned.get(agentId);
+        this.#dlog('hook hire=' + agentId, 'event=' + event, 'state=' + state,
+            'known=' + (!!owned && !owned.tornDown));
         if (!owned || owned.tornDown) return;
         // Record the latest state and wake anything waiting on a signal. The message
         // queue waits for the next UserPromptSubmit event, the per-turn accept
