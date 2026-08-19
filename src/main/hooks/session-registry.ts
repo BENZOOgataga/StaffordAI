@@ -125,8 +125,12 @@ export class SessionRegistry {
     #checkpointRunner: ((cwd: string, hireId: string) => Promise<CheckpointResult>) | null = null;
     /** Notified when a pending spawn binds, so the lifecycle can stop waiting on it. */
     #onBound: ((agentId: string) => void) | null = null;
-    /** Notified on every event for a known session, so the lifecycle resets its idle clock. */
-    #onActivity: ((agentId: string) => void) | null = null;
+    /**
+     * Notified on every event for a known session, with the session's derived state,
+     * so the lifecycle resets its idle clock and its message queue can wait for the
+     * prompt to accept a turn (working) and be ready for the next (idle).
+     */
+    #onActivity: ((agentId: string, state: AgentState) => void) | null = null;
 
     constructor(store: HireStore) {
         this.#store = store;
@@ -155,7 +159,7 @@ export class SessionRegistry {
     }
 
     /** Wires the activity callback, so the lifecycle resets a session's idle clock. */
-    setOnActivity(onActivity: (agentId: string) => void): void {
+    setOnActivity(onActivity: (agentId: string, state: AgentState) => void): void {
         this.#onActivity = onActivity;
     }
 
@@ -252,7 +256,7 @@ export class SessionRegistry {
         // SessionStart) before it exits, so treating that as reported would defeat
         // the stale-id fallback, which fires only on an unreported exit. The end is
         // handled by the exit path instead.
-        if (this.#onActivity && !ended) this.#onActivity(binding.hireId);
+        if (this.#onActivity && !ended) this.#onActivity(binding.hireId, next.state);
 
         return {
             handled: true, sessionId, hireId: binding.hireId, projectId: binding.projectId,
