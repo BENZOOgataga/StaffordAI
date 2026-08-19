@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    buildCommand, hookShellFor, desiredHooks, merge, unregister, inspect,
+    buildCommand, hookShellFor, claudeShellFor, desiredHooks, merge, unregister, inspect,
     hasExcludeEntry, addExcludeEntry, isStaffordCommand,
     HOOK_MARKER, REGISTERED_EVENTS, EXCLUDE_ENTRY, type Settings
 } from './registration.ts';
@@ -48,6 +48,19 @@ test('six events, and never the per-tool ones', () => {
     assert.equal('PreToolUse' in hooks, false);
     assert.equal('PostToolUse' in hooks, false);
     assert.equal(Object.keys(hooks).length, 6);
+});
+
+test('a pinned shell is carried onto every hook entry, so a PowerShell command is not run by bash', () => {
+    assert.equal(claudeShellFor('powershell'), 'powershell');
+    assert.equal(claudeShellFor('posix'), 'bash');
+
+    const pinned = desiredHooks(COMMAND, 'powershell');
+    for (const event of REGISTERED_EVENTS) {
+        assert.equal(pinned[event]?.[0]?.hooks[0]?.shell, 'powershell', event + ' must pin the shell');
+    }
+    // Omitted shell stays off, so a diagnostic caller keeps the default.
+    const unpinned = desiredHooks(COMMAND);
+    assert.equal('shell' in (unpinned.SessionStart?.[0]?.hooks[0] ?? {}), false);
 });
 
 test('registering is idempotent, however many times it runs', () => {

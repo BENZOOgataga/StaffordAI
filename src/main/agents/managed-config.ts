@@ -63,6 +63,13 @@ export interface SeedManagedConfigDeps {
     readonly realHome: string;
     /** Turns a cwd into the key Claude matches it to. Shared with pre-trust so the keys agree. */
     readonly resolveKey: (dir: string) => string;
+    /**
+     * The settings.json to write into the managed dir. Carries Stafford's own hooks,
+     * scoped here so a colleague session running against this CLAUDE_CONFIG_DIR gets
+     * them while the user's own session, on the real ~/.claude, does not. Never
+     * carries plugins or marketplaces. Defaults to an empty object.
+     */
+    readonly settings?: Record<string, unknown>;
     readonly warn?: (message: string) => void;
 }
 
@@ -129,9 +136,10 @@ export function seedManagedConfig(deps: SeedManagedConfigDeps, cwd: string): See
 
     fs.writeText(managedConfigPath, JSON.stringify(config), MANAGED_FILE_MODE);
 
-    // 4. Minimal settings: no plugins, no marketplaces, no hooks, no bypass. An empty
-    //    object is the whole point, the user's plugin settings never reach this dir.
-    fs.writeText(fs.join(managedDir, 'settings.json'), JSON.stringify({}), MANAGED_FILE_MODE);
+    // 4. Settings: no plugins, no marketplaces, no bypass, and Stafford's own hooks
+    //    scoped to this managed dir so only a colleague session reads them. The user's
+    //    plugin settings never reach here. Defaults to an empty object.
+    fs.writeText(fs.join(managedDir, 'settings.json'), JSON.stringify(deps.settings ?? {}), MANAGED_FILE_MODE);
 
     return { credentialCopied, credentialMode: MANAGED_FILE_MODE, dirMode: MANAGED_DIR_MODE };
 }

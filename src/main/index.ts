@@ -32,7 +32,7 @@ import { resolveAppId } from './app-id.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import { preTrustDirectory } from './agents/pre-trust.ts';
 import { seedManagedConfig, type ManagedFs } from './agents/managed-config.ts';
-import { buildCommand, hookShellFor, merge, addExcludeEntry, type Settings } from './hooks/registration.ts';
+import { buildCommand, hookShellFor, claudeShellFor, desiredHooks, unregister, addExcludeEntry, type Settings } from './hooks/registration.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent, type CheckpointResult } from './agents/drain.ts';
@@ -184,22 +184,30 @@ function resolveForwarder(): string {
  * re-registration cannot double an entry. This is what makes a spawned colleague's
  * state actually reach Stafford.
  */
-function registerHooksInProject(cwd: string): void {
-    const command = buildCommand(process.execPath, resolveForwarder(), hookShellFor(currentPlatform().id));
-    const settingsDir = path.join(cwd, '.claude');
-    const settingsPath = path.join(settingsDir, 'settings.local.json');
-
-    let existing: Settings = {};
+/**
+ * Removes Stafford's hooks from a project's `.claude/settings.local.json`.
+ *
+ * Stafford's hooks now live in the managed config dir, scoped to colleague sessions
+ * by `CLAUDE_CONFIG_DIR`. An earlier build wrote them into the shared project file,
+ * where the user's own Claude Code session in the same repo reads them and fails,
+ * on Windows with a bash syntax error because the command is PowerShell. So this
+ * strips any Stafford entries left in the project file, healing that leak, and never
+ * writes new ones there. The exclude entry stays as defence against a future write.
+ */
+function cleanupProjectHooks(cwd: string): void {
+    const settingsPath = path.join(cwd, '.claude', 'settings.local.json');
     try {
-        existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Settings;
+        const existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Settings;
+        const next = unregister(existing);
+        const before = JSON.stringify(existing);
+        const after = JSON.stringify(next);
+        if (after !== before) writeConfigAtomic(settingsPath, JSON.stringify(next, null, 2) + '\n');
     } catch {
-        existing = {};
+        // No project settings file, or unreadable: nothing of ours to clean.
     }
-    fs.mkdirSync(settingsDir, { recursive: true });
-    writeConfigAtomic(settingsPath, JSON.stringify(merge(existing, command), null, 2) + '\n');
 
     // Local to this clone, never committed, so an agent running git status in the
-    // project cannot commit Stafford's config into the user's repository.
+    // project cannot commit a stale Stafford entry into the user's repository.
     try {
         if (!fs.existsSync(path.join(cwd, '.git'))) return;
         const excludePath = path.join(cwd, '.git', 'info', 'exclude');
@@ -210,6 +218,13 @@ function registerHooksInProject(cwd: string): void {
     } catch {
         // Best effort: a missing or unwritable .git is not worth failing the spawn.
     }
+}
+
+/** Stafford's hook settings, shell-pinned, for the managed config dir the colleague reads. */
+function staffordHookSettings(): { hooks: ReturnType<typeof desiredHooks> } {
+    const shellId = hookShellFor(currentPlatform().id);
+    const command = buildCommand(process.execPath, resolveForwarder(), shellId);
+    return { hooks: desiredHooks(command, claudeShellFor(shellId)) };
 }
 
 /** True iff the path is an existing directory. The create flow's load-bearing check. */
@@ -592,6 +607,7 @@ function buildLifecycle(store: HireStore): void {
         seedManagedConfig: (cwd) => {
             const result = seedManagedConfig(
                 { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
+                    settings: staffordHookSettings(),
                     warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
                 cwd
             );
@@ -609,9 +625,10 @@ function buildLifecycle(store: HireStore): void {
             resolveKey: resolveTrustKey,
             warn: (message) => process.stderr.write('[pre-trust] ' + message + '\n')
         }, cwd),
-        // Register the state-reporting hooks in the project, so Claude Code runs
-        // the forwarder and the roster hears what the colleague is doing.
-        registerHooks: (cwd) => registerHooksInProject(cwd),
+        // Stafford's hooks live in the managed config dir (seeded above), scoped to
+        // the colleague session. This only strips any stale copies an older build
+        // left in the shared project file, so the user's own session does not fail.
+        registerHooks: (cwd) => cleanupProjectHooks(cwd),
         // Drop a stale session id whose resume failed, so the next open does not
         // resume it again. The fresh session records its own id through the rendezvous.
         clearStoredSession: (hireId) => {

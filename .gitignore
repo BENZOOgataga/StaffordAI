@@ -22,6 +22,12 @@ logs/
 # work PC and every future clone unprotected.
 .letta/
 
+# Local Claude Code config Stafford or a dev may write into this repo. Stafford's
+# own hooks live in its managed config dir, not here, but a stale or manual copy of
+# these must never be committed to this public repo.
+.claude/settings.local.json
+.claude/settings.local.json.disabled
+
 # Windows and editor noise
 Thumbs.db
 desktop.ini
