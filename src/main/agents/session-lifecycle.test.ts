@@ -115,6 +115,8 @@ function buildDeps(over: {
     trust?: 'trusted' | 'not_trusted' | 'unknown';
     notReportingMs?: number;
     idleMs?: number;
+    acceptTimeoutMs?: number;
+    turnMaxMs?: number;
     timers?: Timers;
     target?: { projectId: string; cwd: string } | null;
     resumeSessionId?: string | null;
@@ -150,8 +152,10 @@ function buildDeps(over: {
             : over.target),
         setState: (hireId, state) => { setStateCalls.push({ hireId, state }); over.setState?.(hireId, state); },
         trustFor: () => over.trust ?? 'trusted',
-        // Drain the queue without waiting on the real submit delay.
+        // Drain the queue without waiting on real time.
         submitDelayMs: 0,
+        acceptTimeoutMs: over.acceptTimeoutMs ?? 40,
+        turnMaxMs: over.turnMaxMs ?? 40,
         notReportingMs: over.notReportingMs ?? 30_000,
         ...(over.idleMs === undefined ? {} : { idleMs: over.idleMs }),
         ...(over.timers ? { timers: over.timers } : {}),
@@ -161,6 +165,9 @@ function buildDeps(over: {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+// Lets an async submit fully land (text, the submit-delay macrotask, then Enter)
+// and the drain advance, so an assertion sees a settled write sequence.
+const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 
 test('the first message cold-spawns a session and pre-registers it as drainable by its pid', () => {
     const { lifecycle, registry } = buildDeps();
@@ -500,24 +507,133 @@ test('a submitted message is held until the session reports ready, then written 
     assert.equal(pty.writes.includes('hello there'), true, 'the message is written once the session reports ready');
 });
 
-test('two messages sent before ready arrive as two separate submitted turns, never concatenated onto one prompt line', async () => {
+// Drive the accept/ready handshake for one hire: working = the accept receipt, idle
+// = ready for the next message.
+const AT2 = '2026-08-11T00:00:00Z';
+const accept = (registry: SessionRegistry, sessionId: string, agentId: string) =>
+    registry.ingest(coerceHookEvent({ event: 'UserPromptSubmit', sessionId, agentId }), AT2);
+const ready = (registry: SessionRegistry, sessionId: string, agentId: string) =>
+    registry.ingest(coerceHookEvent({ event: 'Stop', sessionId, agentId }), AT2);
+const live = (registry: SessionRegistry, sessionId: string, agentId: string) =>
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId, agentId }), AT2);
+
+test('a second message is not written until the first is accepted and the prompt is ready again', async () => {
     const pty = stubPty();
-    const { lifecycle, registry } = buildDeps({ spawn: pty });
-    // Both sent on a cold session, before it reports ready.
+    // Fake timers so only the state events drive the handshake, never a timeout.
+    const { lifecycle, registry } = buildDeps({ spawn: pty, timers: fakeTimers().timers });
     void lifecycle.submitMessage('h1', 'hi');
     void lifecycle.submitMessage('h1', 'test');
     assert.deepEqual(pty.writes, [], 'nothing is written while the session is cold');
 
-    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:00Z');
-    await tick();
-    await tick();
+    live(registry, 's1', 'h1');           // SessionStart -> idle: first message goes
+    await settle();
+    assert.deepEqual(pty.writes, ['hi', '\r'], 'the first message is submitted, the second held');
 
-    // Each message is its own turn: text then Enter, in order. Never a merged
-    // 'hitest', and never a text write immediately followed by the next text.
-    // Exactly two turns, each text then its own Enter, in order. A merged 'hitest'
-    // or a text write followed straight by the next text would fail this.
+    accept(registry, 's1', 'h1');         // UserPromptSubmit -> working: hi accepted
+    await settle();
+    assert.deepEqual(pty.writes, ['hi', '\r'], 'the second is still held while the session is working');
+
+    ready(registry, 's1', 'h1');          // Stop -> idle: ready for the next
+    await settle();
     assert.deepEqual(pty.writes, ['hi', '\r', 'test', '\r'],
-        'two turns submitted in order, each with its own Enter, never merged onto one prompt line');
+        'the second is submitted only once the first was accepted and the prompt is ready, never merged');
+});
+
+test('five messages sent fast arrive as five ordered turns, none merged, none dropped', async () => {
+    const pty = stubPty();
+    const { lifecycle, registry } = buildDeps({ spawn: pty, timers: fakeTimers().timers });
+    const msgs = ['one', 'two', 'three', 'four', 'five'];
+    for (const m of msgs) void lifecycle.submitMessage('h1', m);
+
+    live(registry, 's1', 'h1');
+    await settle();
+    // Each message: it appears, then we drive its accept and its ready, unblocking
+    // the next. Nothing is ever written before its turn.
+    for (let i = 0; i < msgs.length; i++) {
+        assert.deepEqual(pty.writes.slice(-2), [msgs[i], '\r'], 'turn ' + i + ' submitted in order');
+        accept(registry, 's1', 'h1');
+        ready(registry, 's1', 'h1');
+        await settle();
+    }
+    const expected = msgs.flatMap((m) => [m, '\r']);
+    assert.deepEqual(pty.writes, expected, 'five ordered turns, each its own Enter, none merged or dropped');
+});
+
+test('a warm idle session submits a single message on its own, promptly', async () => {
+    const pty = stubPty();
+    const { lifecycle, registry } = buildDeps({ spawn: pty });
+    // Warm it: reported and idle.
+    void lifecycle.submitMessage('h1', 'first');
+    live(registry, 's1', 'h1');
+    await tick();
+    accept(registry, 's1', 'h1');
+    ready(registry, 's1', 'h1');
+    await tick();
+    const before = pty.writes.length;
+
+    // A new message to the warm, idle session submits with no second push.
+    void lifecycle.submitMessage('h1', 'again');
+    await tick();
+    assert.deepEqual(pty.writes.slice(before), ['again', '\r'], 'the warm-session message submits on its own');
+});
+
+test('guard 1: a lost accept signal does not deadlock the queue; it advances after the bound', async () => {
+    const ft = fakeTimers();
+    const pty = stubPty();
+    // Tight bounds on the virtual clock, so a never-arriving accept times out.
+    const { lifecycle, registry } = buildDeps({ spawn: pty, timers: ft.timers, acceptTimeoutMs: 1000, turnMaxMs: 1000 });
+    void lifecycle.submitMessage('h1', 'hi');
+    void lifecycle.submitMessage('h1', 'test');
+
+    live(registry, 's1', 'h1');           // idle: first goes
+    await tick();
+    assert.deepEqual(pty.writes, ['hi', '\r'], 'first submitted');
+
+    // No UserPromptSubmit ever arrives (a lost hook). The accept wait must time out
+    // so the queue advances rather than freezing the colleague deaf. The session
+    // never left idle, so the ready wait then resolves at once and the second is sent.
+    ft.fireByMs(1000);
+    await tick(); await tick();
+    assert.deepEqual(pty.writes, ['hi', '\r', 'test', '\r'],
+        'the queue advanced past the lost accept signal, no deadlock');
+});
+
+test('guard 2: one colleague accept never advances another colleague queue', async () => {
+    const ptyA = stubPty();
+    const ptyB = stubPty();
+    const { store } = fakeStore({});
+    const registry = new SessionRegistry(store);
+    const secrets = new AgentSecrets();
+    const lifecycle = new SessionLifecycle({
+        platform: PLATFORM, socketPath: path.resolve(os.tmpdir(), 'x.sock'), secrets, registry,
+        claudePath: path.resolve(os.tmpdir(), 'claude'), nodeDir: path.dirname(process.execPath), parentEnv: {},
+        spawn: (_f, _a, opts) => (String(opts.env.STAFFORD_AGENT_ID) === 'a' ? ptyA : ptyB),
+        resolveTarget: (hireId) => ({ projectId: 'p', cwd: 'C:/repo/' + hireId }),
+        setState: () => {}, trustFor: () => 'trusted',
+        submitDelayMs: 0, acceptTimeoutMs: 5000, turnMaxMs: 5000, timers: fakeTimers().timers,
+        killTree: async () => noKill()
+    });
+
+    void lifecycle.submitMessage('a', 'a1');
+    void lifecycle.submitMessage('a', 'a2');
+    void lifecycle.submitMessage('b', 'b1');
+    live(registry, 'sa', 'a');
+    live(registry, 'sb', 'b');
+    await settle();
+    assert.deepEqual(ptyA.writes, ['a1', '\r'], 'A first message out');
+    assert.deepEqual(ptyB.writes, ['b1', '\r'], 'B first message out');
+
+    // B accepts and readies. A must NOT advance on B's events.
+    accept(registry, 'sb', 'b');
+    ready(registry, 'sb', 'b');
+    await settle();
+    assert.deepEqual(ptyA.writes, ['a1', '\r'], 'A did not advance on B\'s accept');
+
+    // A accepts and readies: only now does A advance.
+    accept(registry, 'sa', 'a');
+    ready(registry, 'sa', 'a');
+    await settle();
+    assert.deepEqual(ptyA.writes, ['a1', '\r', 'a2', '\r'], 'A advanced only on its own accept');
 });
 
 test('a message after teardown reaches a fresh session, never the dead one', async () => {
