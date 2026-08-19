@@ -48,12 +48,14 @@ export const DEFAULT_NOT_REPORTING_MS = 30_000;
 export const DEFAULT_IDLE_MS = 10 * 60 * 1000;
 
 /**
- * How long the queue waits for a message's accept receipt (the session going
- * `working` after a UserPromptSubmit) before treating the signal as lost and
- * advancing. Generous, since a cold accept was measured near 900ms and a warm one
- * is faster; well beyond that means the hook did not report, not that Claude is slow.
+ * How long to wait for a message's accept receipt (the session going `working` after
+ * a UserPromptSubmit) before treating it as swallowed and re-sending. Kept tight: a
+ * cold accept was measured near 900ms and a warm one is faster, so ~2s comfortably
+ * clears a real accept while re-sending a swallowed first message quickly rather than
+ * leaving the person waiting. Beyond this the prompt did not land, not Claude being
+ * slow, because the receipt fires when Claude takes the prompt, not when it finishes.
  */
-export const DEFAULT_ACCEPT_TIMEOUT_MS = 8_000;
+export const DEFAULT_ACCEPT_TIMEOUT_MS = 2_000;
 
 /**
  * How many times a message is submitted before the queue gives up and advances. The
