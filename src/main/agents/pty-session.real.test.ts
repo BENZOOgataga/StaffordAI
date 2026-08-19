@@ -27,6 +27,38 @@ const nodePty = require('node-pty') as {
     spawn: (file: string, args: readonly string[], options: Record<string, unknown>) => PtyLike;
 };
 
+/**
+ * Gates the node-pty #886 flake on Windows, and nothing else.
+ *
+ * node-pty's ConPTY kill forks `conpty_console_list_agent.js` to enumerate the
+ * console's child PIDs. That agent calls native `AttachConsole`, which fails
+ * intermittently on the windows-latest runner, crashing the forked process with
+ * `Error: AttachConsole failed`. node --test attributes that crash to whatever file
+ * is running and reds the board, non-deterministically: it struck on 20ddb4d and on
+ * one of two runs of PR #65, and cleared on re-run. Re-run roulette is itself a
+ * defect, so it is removed here.
+ *
+ * The fork exists only to list PIDs to kill, and node-pty already falls back to
+ * `[innerPid]` after a 5s timeout when the agent does not answer. So this replaces
+ * the fork with exactly that fallback, synchronously: no agent process, no
+ * `AttachConsole`, no crash. Everything the tests actually assert, the native kill,
+ * the conout worker disposal, the input-socket release, the handle counts, runs
+ * unchanged, so no coverage is lost and a real teardown regression still fails.
+ *
+ * Test-only: it patches node-pty in this test process, never the product. It is
+ * scoped to Windows, since the fork is the Windows kill path. If node-pty's internal
+ * layout changes, the require throws here loudly rather than skipping silently.
+ */
+if (process.platform === 'win32') {
+    const agentModule = require('node-pty/lib/windowsPtyAgent') as {
+        WindowsPtyAgent: { prototype: Record<string, unknown> };
+    };
+    agentModule.WindowsPtyAgent.prototype['_getConsoleProcessList'] =
+        function (this: { _innerPid: number }): Promise<number[]> {
+            return Promise.resolve([this._innerPid]);
+        };
+}
+
 const PLATFORM = currentPlatform();
 const CHILD = path.resolve(process.cwd(), 'runner', 'fixtures', 'pty-child.js');
 
