@@ -40,15 +40,23 @@ work-issued or otherwise identifying cert, build the release artifact on a clean
 with signing configured to a cert meant for public release). This is a release-time check, not
 a code change.
 
-## A third-party plugin prints hook errors in sessions
+## A colleague session no longer loads the user's global plugins (fixed)
 
-A session may show red `SessionStart:startup hook error` lines, from a `run-hook.cmd` under a
-plugin path, saying it needs bash (Git Bash not found) and falling back to `node`, which is
-not on the session PATH. That is a Claude Code plugin installed globally in the user's
-`~/.claude` (the superpowers plugin), not Stafford. It fails on startup in every Claude Code
-session on that machine, in Stafford or not, because that plugin's hook hard-requires bash.
+Earlier, a colleague session inherited the user's global `~/.claude`, so their personal
+plugins and hooks loaded into it. With plugins that hard-require bash (the superpowers plugin)
+this printed red `SessionStart:startup hook error` lines, and worse combinations left the
+session in manual mode with a message that never submitted.
 
-Stafford's own hook does not need bash and runs fine beside it (it runs the bundled Electron
-as node through PowerShell on Windows). This is a user-environment issue: install Git for
-Windows, or remove the plugin, or ignore the noise. Stafford does not suppress another tool's
-output.
+Fixed: a colleague now runs against a Stafford-managed config directory under userData, pointed
+to by `CLAUDE_CONFIG_DIR`, seeded per spawn with the user's credential, the project's trust, and
+plugin-free settings. The user's global plugins and hooks are off the read path by construction,
+so a colleague comes up clean and in the normal auto mode even when the user has plugins enabled
+for their own work. Stafford's own state-reporting hook is registered in the project, not the
+user config, so it still fires. `--safe-mode` was deliberately not used: it would also disable
+Stafford's own hook.
+
+macOS caveat, owed on the Mac: on macOS the credential lives in Keychain (global), not in a
+file under `~/.claude`, so the seed has nothing to copy and the managed dir is expected to
+authenticate through Keychain with no copy. This is structured for (the copy is conditional on
+the credential file existing) but not yet verified on a real Mac. See the runbook in
+`docs/HANDOFF.md`.

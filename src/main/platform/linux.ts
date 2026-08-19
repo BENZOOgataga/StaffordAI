@@ -96,6 +96,12 @@ export const linux: Platform = {
         };
     },
 
+    ownerOnlyAclPlan(_target: string, _opts: { tree: boolean; account: string }): CommandSpec | null {
+        // POSIX mode bits are real: the seed's chmod to 0600/0700 is the whole
+        // guarantee, so there is no command to run.
+        return null;
+    },
+
     resizeObservation(cols: number, rows: number): ResizeObservation {
         // Same mechanism as darwin, for the same reason: a real pty, a real
         // SIGWINCH. Unexercised here only because linux refuses to run at all.

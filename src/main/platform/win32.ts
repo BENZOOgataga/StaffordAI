@@ -161,6 +161,16 @@ export const win32: Platform = {
         };
     },
 
+    ownerOnlyAclPlan(target: string, opts: { tree: boolean; account: string }): CommandSpec {
+        // icacls: reset inheritance, then grant only the owner. On a directory the
+        // (OI)(CI) flags make future children inherit the owner-only grant, and /T
+        // reapplies it to any existing children. /C keeps going past a transient
+        // error, /Q stays quiet. node chmod cannot do this on Windows.
+        const grant = opts.account + ':' + (opts.tree ? '(OI)(CI)F' : 'F');
+        const args = [target, '/inheritance:r', '/grant:r', grant, '/C', '/Q', ...(opts.tree ? ['/T'] : [])];
+        return { file: 'icacls', args };
+    },
+
     resizeObservation(cols: number, rows: number): ResizeObservation {
         return {
             mechanism: 'emitted-size-report',

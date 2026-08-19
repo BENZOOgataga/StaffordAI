@@ -17,6 +17,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog, 
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { currentPlatform } from './platform/index.ts';
 import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './window/security.ts';
@@ -30,6 +31,7 @@ import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import { preTrustDirectory } from './agents/pre-trust.ts';
+import { seedManagedConfig, type ManagedFs } from './agents/managed-config.ts';
 import { buildCommand, hookShellFor, merge, addExcludeEntry, type Settings } from './hooks/registration.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
@@ -123,6 +125,30 @@ function writeConfigAtomic(target: string, data: string): void {
     const tmp = target + '.stafford-' + process.pid + '.tmp';
     fs.writeFileSync(tmp, data);
     fs.renameSync(tmp, target);
+}
+
+/**
+ * Locks a managed-config path to the current user, where the platform needs a
+ * command to do it.
+ *
+ * The platform decides: Windows returns an `icacls` plan because node's `chmod`
+ * cannot set an ACL there and a userData path can inherit a group-readable ACE;
+ * POSIX returns null because the seed's `chmod` to 0600/0700 is already the whole
+ * guarantee. Best-effort by design: a failure warns rather than blocking the spawn,
+ * and no message carries the path or the file's contents.
+ */
+function restrictToOwner(target: string, opts: { tree: boolean }): void {
+    const username = process.env.USERNAME;
+    if (!username) return;
+    const account = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + username;
+    const plan = currentPlatform().ownerOnlyAclPlan(target, { tree: opts.tree, account });
+    if (!plan) return;
+    try {
+        const r = spawnSync(plan.file, [...plan.args], { windowsHide: true });
+        if (r.status !== 0) process.stderr.write('[managed-config] could not lock ACL on a managed config path\n');
+    } catch {
+        process.stderr.write('[managed-config] ACL tool unavailable; managed config relies on the inherited ACL\n');
+    }
 }
 
 /**
@@ -481,6 +507,57 @@ function buildLifecycle(store: HireStore): void {
         spawn: (file: string, args: readonly string[], options: Record<string, unknown>) => PtyLike;
     };
 
+    // Stafford's own Claude config dir, under userData and so outside every project
+    // repo: the checkpoint executor only commits tracked files inside the project
+    // cwd, so nothing here can ever enter a checkpoint. Pointing CLAUDE_CONFIG_DIR at
+    // it relocates Claude's config off the user's ~/.claude, which is what keeps the
+    // user's global plugins and foreign hooks out of a colleague session.
+    const managedConfigDir = path.join(app.getPath('userData'), 'claude-config');
+    const managedConfigJson = path.join(managedConfigDir, '.claude.json');
+
+    // The key Claude matches a cwd to: real case, forward slashes. Shared by the seed
+    // and pre-trust so their keys agree, which keeps pre-trust a no-op after the seed
+    // has already set the trust key (so it never rewrites the credential-bearing
+    // .claude.json at broadened permissions).
+    const resolveTrustKey = (dir: string): string => {
+        try {
+            return fs.realpathSync.native(dir).replace(/\\/g, '/');
+        } catch {
+            return dir.replace(/\\/g, '/');
+        }
+    };
+
+    // The real filesystem behind the managed-config seed. Writes are atomic and every
+    // secret-bearing file is chmod'd owner-only; the credential is never read into a
+    // log. On Windows chmod only toggles the read-only bit and the file inherits the
+    // user-profile ACL under userData, so it is not broadened.
+    const managedFs: ManagedFs = {
+        exists: (p) => fs.existsSync(p),
+        readText: (p) => fs.readFileSync(p, 'utf8'),
+        writeText: (p, data, mode) => {
+            writeConfigAtomic(p, data);
+            try { fs.chmodSync(p, mode); } catch {}
+            // The account file carries oauthAccount; lock it owner-only on Windows.
+            if (p.endsWith('.claude.json')) restrictToOwner(p, { tree: false });
+        },
+        mkdirp: (p, mode) => {
+            const existed = fs.existsSync(p);
+            fs.mkdirSync(p, { recursive: true, mode });
+            // Lock the dir and its future children owner-only on first create. POSIX
+            // uses the mode above; the explicit chmod in the seed covers umask.
+            if (!existed) restrictToOwner(p, { tree: true });
+        },
+        copyFile: (from, to, mode) => {
+            fs.copyFileSync(from, to);
+            try { fs.chmodSync(to, mode); } catch {}
+            // The credential is the secret; lock it owner-only every copy on Windows,
+            // regardless of any ACL a prior copy left behind.
+            restrictToOwner(to, { tree: false });
+        },
+        chmod: (p, mode) => { try { fs.chmodSync(p, mode); } catch {} },
+        join: (...parts) => path.join(...parts)
+    };
+
     lifecycle = new SessionLifecycle({
         platform,
         socketPath: transport.socketPath,
@@ -503,24 +580,33 @@ function buildLifecycle(store: HireStore): void {
             };
         },
         setState: (hireId, state) => store.setState(hireId, state),
+        // Trust is read from the managed config the isolated session actually reads,
+        // not the user's ~/.claude.json.
         trustFor: (cwd) => readTrust({
-            platform, dir: cwd, configPath: path.join(home, '.claude.json'),
+            platform, dir: cwd, configPath: managedConfigJson,
             readFile: (p) => fs.readFileSync(p, 'utf8')
         }),
+        // Seed the managed config dir: credential carried in, project trust and
+        // account written, plugin-free settings. This is what isolates the user's
+        // global plugins from the colleague. Directory 0700, credential 0600.
+        seedManagedConfig: (cwd) => {
+            const result = seedManagedConfig(
+                { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
+                    warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
+                cwd
+            );
+            // A one-line log with no token and no listing: just whether auth was carried.
+            smoke('managed config seeded, credential carried: ' + result.credentialCopied);
+        },
+        claudeConfigDir: managedConfigDir,
         // Pre-trust the project directory the user chose, so the spawn skips the
-        // startup trust prompt. Directory-trust only, scoped to this cwd. The key
-        // is the path Claude matches its cwd to: real case, forward slashes.
+        // startup trust prompt. Writes into the managed config the isolated session
+        // reads. Idempotent after the seed, which already set this key.
         preTrust: (cwd) => preTrustDirectory({
-            configPath: path.join(home, '.claude.json'),
+            configPath: managedConfigJson,
             readFile: (p) => fs.readFileSync(p, 'utf8'),
             writeFile: writeConfigAtomic,
-            resolveKey: (dir) => {
-                try {
-                    return fs.realpathSync.native(dir).replace(/\\/g, '/');
-                } catch {
-                    return dir.replace(/\\/g, '/');
-                }
-            },
+            resolveKey: resolveTrustKey,
             warn: (message) => process.stderr.write('[pre-trust] ' + message + '\n')
         }, cwd),
         // Register the state-reporting hooks in the project, so Claude Code runs

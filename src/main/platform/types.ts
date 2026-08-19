@@ -295,6 +295,23 @@ export interface Platform {
     processTreeCommand(): CommandSpec | null;
 
     /**
+     * The command that locks a filesystem path to a single owner, or null where
+     * the POSIX mode already applied by `chmod` is the whole guarantee.
+     *
+     * Windows returns an `icacls` invocation: node's `chmod` cannot set an ACL
+     * there, and a path under userData inherits the profile ACL, which on a managed
+     * or sandboxed machine can carry a group with read access (a `CodexSandboxUsers`
+     * ACE was observed inherited into `%APPDATA%`). So a copied credential has to be
+     * locked to the current user explicitly. POSIX returns null because `0600`/`0700`
+     * is a real, sufficient guarantee there. `tree` sets container inheritance so a
+     * directory's future children are covered; `account` is the owner to grant.
+     *
+     * A plan, not an action, so the platform layer spawns nothing, the same reason
+     * `killTreePlan` is data.
+     */
+    ownerOnlyAclPlan(target: string, opts: { tree: boolean; account: string }): CommandSpec | null;
+
+    /**
      * How to tell that a resize of this size landed. Data, so the two
      * mechanisms stay named rather than becoming a branch in a test fixture.
      */

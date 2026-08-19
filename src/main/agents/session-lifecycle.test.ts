@@ -119,6 +119,7 @@ function buildDeps(over: {
     target?: { projectId: string; cwd: string } | null;
     resumeSessionId?: string | null;
     sessions?: Record<string, HireBinding>;
+    claudeConfigDir?: string;
 } = {}) {
     const { store, sets, binds } = fakeStore(over.sessions ?? {});
     const registry = new SessionRegistry(store);
@@ -130,13 +131,18 @@ function buildDeps(over: {
     const capturedSizes: Array<{ cols: number; rows: number }> = [];
     const preTrustCalls: string[] = [];
     const registerHooksCalls: string[] = [];
+    const seedCalls: string[] = [];
+    const order: string[] = [];
+    const capturedEnvs: Array<Record<string, string | undefined>> = [];
     const clearStoredSessionCalls: string[] = [];
     const absSocket = path.resolve(os.tmpdir(), 'x.sock');
     const lifecycle = new SessionLifecycle({
         platform: PLATFORM, socketPath: absSocket, secrets, registry,
         claudePath: path.resolve(os.tmpdir(), 'claude'), nodeDir: path.dirname(process.execPath), parentEnv: {},
-        spawn: (_file, args, opts) => { capturedArgs.push([...args]); capturedSizes.push({ cols: opts.cols, rows: opts.rows }); return pty; },
-        preTrust: (cwd) => { preTrustCalls.push(cwd); },
+        spawn: (_file, args, opts) => { capturedArgs.push([...args]); capturedSizes.push({ cols: opts.cols, rows: opts.rows }); capturedEnvs.push(opts.env); return pty; },
+        seedManagedConfig: (cwd) => { seedCalls.push(cwd); order.push('seed'); },
+        ...(over.claudeConfigDir ? { claudeConfigDir: over.claudeConfigDir } : {}),
+        preTrust: (cwd) => { preTrustCalls.push(cwd); order.push('preTrust'); },
         registerHooks: (cwd) => { registerHooksCalls.push(cwd); },
         clearStoredSession: (hireId) => { clearStoredSessionCalls.push(hireId); },
         resolveTarget: () => (over.target === undefined
@@ -149,7 +155,7 @@ function buildDeps(over: {
         ...(over.timers ? { timers: over.timers } : {}),
         killTree: async (_p, pid) => { killed.push(pid); return noKill(); }
     });
-    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, capturedSizes, preTrustCalls, registerHooksCalls, clearStoredSessionCalls, pty };
+    return { lifecycle, registry, secrets, sets, binds, setStateCalls, killed, capturedArgs, capturedSizes, capturedEnvs, preTrustCalls, registerHooksCalls, seedCalls, order, clearStoredSessionCalls, pty };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -167,6 +173,26 @@ test('a cold spawn pre-trusts the project cwd it resolved, and only that cwd', (
     lifecycle.sendMessage('h1', 'hello');
     assert.deepEqual(preTrustCalls, ['C:/Users/me/repo'],
         'the spawn pre-trusts exactly the project directory, nothing wider');
+});
+
+test('a cold spawn seeds the managed config for the cwd, before pre-trusting it', () => {
+    const { lifecycle, seedCalls, order } = buildDeps({ target: { projectId: 'p1', cwd: 'C:/Users/me/repo' } });
+    lifecycle.sendMessage('h1', 'hello');
+    assert.deepEqual(seedCalls, ['C:/Users/me/repo'], 'the spawn seeds the managed config for exactly the project cwd');
+    assert.equal(order.indexOf('seed') < order.indexOf('preTrust'), true, 'seed runs before pre-trust');
+});
+
+test('CLAUDE_CONFIG_DIR is set in the spawn env to the managed dir, isolating the user config', () => {
+    const managed = 'C:/Users/me/AppData/Roaming/Stafford/claude-config';
+    const { lifecycle, capturedEnvs } = buildDeps({ claudeConfigDir: managed });
+    lifecycle.sendMessage('h1', 'hello');
+    assert.equal(capturedEnvs[0]?.CLAUDE_CONFIG_DIR, managed, 'the colleague reads config from the managed dir, not ~/.claude');
+});
+
+test('without a managed dir configured, no CLAUDE_CONFIG_DIR is placed in the spawn env', () => {
+    const { lifecycle, capturedEnvs } = buildDeps();
+    lifecycle.sendMessage('h1', 'hello');
+    assert.equal('CLAUDE_CONFIG_DIR' in (capturedEnvs[0] ?? {}), false, 'no stray CLAUDE_CONFIG_DIR when unconfigured');
 });
 
 test('a cold spawn registers the state-reporting hooks in the project it resolved', () => {
