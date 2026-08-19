@@ -54,16 +54,10 @@ export const DEFAULT_IDLE_MS = 10 * 60 * 1000;
  */
 export const DEFAULT_ACCEPT_TIMEOUT_MS = 20_000;
 
-/**
- * The ceiling on waiting for a session to become ready (`idle`) for the next
- * message. While it is `working` this is Claude genuinely responding, so the wait is
- * legitimate; the ceiling only stops a stuck session from freezing the queue forever.
- */
-export const DEFAULT_TURN_MAX_MS = 10 * 60 * 1000;
 
-/** A parked wait on a hire's next state transition, resolved by an event or teardown. */
+/** A parked wait on a hire's next hook signal, resolved by an event or teardown. */
 interface StateWaiter {
-    onState(state: AgentState): void;
+    onSignal(event: string, state: AgentState): void;
     onDead(): void;
 }
 
@@ -160,8 +154,6 @@ export interface LifecycleDeps {
     readonly submitDelayMs?: number;
     /** How long to wait for a message's accept receipt before advancing. Test-injected. */
     readonly acceptTimeoutMs?: number;
-    /** Ceiling on waiting for the session to be ready for the next message. Test-injected. */
-    readonly turnMaxMs?: number;
     /** Injected so a test drives a virtual clock and sees the unref. Defaults to real. */
     readonly timers?: Timers;
     /** Injected so a unit test does not reap a real process tree. Defaults to the real one. */
@@ -225,7 +217,6 @@ export class SessionLifecycle {
     readonly #notReportingMs: number;
     readonly #idleMs: number;
     readonly #acceptTimeoutMs: number;
-    readonly #turnMaxMs: number;
     readonly #timers: Timers;
 
     constructor(deps: LifecycleDeps) {
@@ -233,7 +224,6 @@ export class SessionLifecycle {
         this.#notReportingMs = deps.notReportingMs ?? DEFAULT_NOT_REPORTING_MS;
         this.#idleMs = deps.idleMs ?? DEFAULT_IDLE_MS;
         this.#acceptTimeoutMs = deps.acceptTimeoutMs ?? DEFAULT_ACCEPT_TIMEOUT_MS;
-        this.#turnMaxMs = deps.turnMaxMs ?? DEFAULT_TURN_MAX_MS;
         this.#timers = deps.timers ?? realTimers;
         // The drainable checkpoint and the drain's force-kill both come back here,
         // so a session is torn down through one path however the drain reaches it.
@@ -242,7 +232,7 @@ export class SessionLifecycle {
         // reporting, whether it bound as a cold spawn by agent id or as a resume by
         // a known session id. So activity is what marks a session reported and
         // resets its idle clock.
-        deps.registry.setOnActivity((agentId, state) => this.#onActivity(agentId, state));
+        deps.registry.setOnActivity((agentId, event, state) => this.#onActivity(agentId, event, state));
     }
 
     /** Whether this hire's current session started fresh after a failed resume. */
@@ -365,24 +355,28 @@ export class SessionLifecycle {
      *
      * The handshake per message, so five sent fast arrive as five ordered turns and
      * none merges or drops:
-     *  1. Wait until the session is ready for input (`idle`). Writing while a prompt
-     *     is up merges onto it or is swallowed, which is the race this fixes. On a
-     *     cold session the first `idle` is the SessionStart the #63 gate already
-     *     waits for; here every message waits for it, not only the first.
-     *  2. Submit the text and its Enter.
-     *  3. Wait for the accept receipt: the session going `working`, which only a
-     *     UserPromptSubmit produces, so the turn was taken as its own prompt. Only
-     *     then is the next message delivered.
+     *  1. Submit the message's text and its Enter.
+     *  2. Wait for its accept receipt: the next `UserPromptSubmit` event, which fires
+     *     once per prompt Claude takes. Only then is the next message submitted, so a
+     *     message is never typed onto a line whose Enter has not yet landed (which is
+     *     what merged "hi"+"test"). Claude Code queues a message typed while it is
+     *     still responding, so this does not wait for the whole response, only for
+     *     the receipt, which is why it does not stall on a session that never returns
+     *     to idle (a real session goes working then waiting, not back to idle).
      *
-     * Guard 1, no deadlock: every wait is bounded. A missing accept receipt (a lost
-     * hook, an errored turn) times out after `acceptTimeoutMs` and the queue advances
-     * rather than freezing the colleague deaf forever; a slow-but-live turn is not
-     * that case, because `working` is reached quickly and the wait for the next
-     * `idle` is what covers a long response. Guard 2, no cross-talk: every wait is
-     * keyed by this hireId and woken only by this hire's own state events, so one
-     * colleague's accept never advances another's queue. Serialized by `#draining`,
-     * and a message leaves the queue only once its submit lands, so a mid-submit
-     * death leaves it queued for the fresh spawn a fallback brings up.
+     * The first message needs no pre-wait: the drain only runs once the session has
+     * reported (its SessionStart, the #63 cold-start gate), which is when the prompt
+     * is first ready.
+     *
+     * Guard 1, no deadlock: the accept wait is bounded by `acceptTimeoutMs`. A
+     * receipt that never arrives (a lost hook, an errored turn) advances the queue
+     * rather than freezing the colleague deaf; a slow-but-live turn is not that case,
+     * because the receipt fires when Claude takes the prompt, near a second in, not
+     * at the end of a long response. Guard 2, no cross-talk: the wait is keyed by
+     * this hireId and woken only by this hire's own events, so one colleague's accept
+     * never advances another's queue. Serialized by `#draining`, and a message leaves
+     * the queue only once its submit lands, so a mid-submit death leaves it queued
+     * for the fresh spawn a fallback brings up.
      */
     async #drainQueue(hireId: string): Promise<void> {
         if (this.#draining.has(hireId)) return;
@@ -395,24 +389,16 @@ export class SessionLifecycle {
             while (queue && queue.length > 0) {
                 if (!this.#sessionUsable(hireId)) break;
 
-                // 1. Ready for input. Resolves at once if already idle.
-                if (this.#state.get(hireId) !== AGENT_STATES.IDLE) {
-                    const ready = await this.#waitForState(
-                        hireId, (s) => s === AGENT_STATES.IDLE, this.#turnMaxMs);
-                    if (ready === 'dead' || !this.#sessionUsable(hireId)) break;
-                    // A timeout here means a stuck turn; advance rather than freeze.
-                }
-
-                // 2. Submit this message's text and Enter.
+                // 1. Submit this message's text and Enter.
                 const ok = await this.#owned.get(hireId)?.session.submit(queue[0] as string);
                 if (!ok || !this.#sessionUsable(hireId)) break; // Left queued for a fresh spawn.
                 queue.shift();
 
-                // 3. Accept receipt before the next message. A lost signal advances
-                //    after the bound rather than deadlocking the queue.
+                // 2. Wait for this message's accept receipt before the next. A lost
+                //    receipt advances after the bound rather than deadlocking.
                 if (queue.length > 0) {
-                    const accept = await this.#waitForState(
-                        hireId, (s) => s === AGENT_STATES.WORKING, this.#acceptTimeoutMs);
+                    const accept = await this.#waitForSignal(
+                        hireId, (event) => event === 'UserPromptSubmit', this.#acceptTimeoutMs);
                     if (accept === 'dead' || !this.#sessionUsable(hireId)) break;
                 }
             }
@@ -551,14 +537,15 @@ export class SessionLifecycle {
      * This is the health signal for both a cold spawn and a resume: a resume that
      * is genuinely healthy reaches here, so it is never mistaken for a stale id.
      */
-    #onActivity(agentId: string, state: AgentState): void {
+    #onActivity(agentId: string, event: string, state: AgentState): void {
         const owned = this.#owned.get(agentId);
         if (!owned || owned.tornDown) return;
-        // Record the latest state and wake anything waiting on a transition (the
-        // message queue waits for working, the accept receipt, and for idle, ready
-        // for the next turn).
+        // Record the latest state and wake anything waiting on a signal. The message
+        // queue waits for the next UserPromptSubmit event, the per-turn accept
+        // receipt, which fires once per submitted prompt even when the derived state
+        // stays working, so an event, not a state transition, is what it waits on.
         this.#state.set(agentId, state);
-        this.#wakeStateWaiters(agentId, state);
+        this.#wakeSignalWaiters(agentId, event, state);
         if (!owned.reported) {
             owned.reported = true;
             if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
@@ -569,14 +556,14 @@ export class SessionLifecycle {
         this.#resetIdle(agentId);
     }
 
-    /** Wakes every state waiter for a hire: a match resolves it, others keep waiting. */
-    #wakeStateWaiters(hireId: string, state: AgentState): void {
+    /** Wakes every waiter for a hire with the latest signal; a match resolves it. */
+    #wakeSignalWaiters(hireId: string, event: string, state: AgentState): void {
         const waiters = this.#stateWaiters.get(hireId);
         if (!waiters) return;
-        for (const waiter of [...waiters]) waiter.onState(state);
+        for (const waiter of [...waiters]) waiter.onSignal(event, state);
     }
 
-    /** Resolves every state waiter for a hire as 'dead'. Called at teardown. */
+    /** Resolves every waiter for a hire as 'dead'. Called at teardown. */
     #killStateWaiters(hireId: string): void {
         const waiters = this.#stateWaiters.get(hireId);
         if (!waiters) return;
@@ -585,13 +572,13 @@ export class SessionLifecycle {
     }
 
     /**
-     * Resolves when the hire's session next satisfies `predicate`, or the bound
-     * elapses, or the session is torn down. Bounded so a lost hook signal can never
-     * freeze the queue: a colleague going permanently deaf is worse than one racy
-     * turn. The timer is unref'd through the injected clock, the rule every lifecycle
-     * timer follows.
+     * Resolves when the hire's session next produces a signal `predicate` accepts, or
+     * the bound elapses, or the session is torn down. Bounded so a lost hook signal
+     * can never freeze the queue: a colleague going permanently deaf is worse than
+     * one racy turn. The timer is unref'd through the injected clock, the rule every
+     * lifecycle timer follows.
      */
-    #waitForState(hireId: string, predicate: (s: AgentState) => boolean, timeoutMs: number):
+    #waitForSignal(hireId: string, predicate: (event: string, state: AgentState) => boolean, timeoutMs: number):
         Promise<'match' | 'timeout' | 'dead'> {
         return new Promise((resolve) => {
             let settled = false;
@@ -606,7 +593,7 @@ export class SessionLifecycle {
                 resolve(result);
             };
             const waiter: StateWaiter = {
-                onState: (s) => { if (predicate(s)) finish('match'); },
+                onSignal: (event, state) => { if (predicate(event, state)) finish('match'); },
                 onDead: () => finish('dead')
             };
             waiters.add(waiter);
