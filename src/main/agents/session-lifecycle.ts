@@ -278,6 +278,7 @@ export class SessionLifecycle {
         // first message streams that session's output into the terminal.
         const owned = this.#owned.get(hireId);
         if (owned) sub.off = owned.session.subscribe(listener);
+        this.#dlog('subscribe hire=' + hireId, 'attached-now=' + !!owned, 'subs=' + set.size);
 
         return () => {
             sub.off?.();
@@ -290,6 +291,7 @@ export class SessionLifecycle {
     /** Attaches the hire's pending subscribers to a freshly spawned session. */
     #attachSubscribers(hireId: string, session: PtySession): void {
         const set = this.#subscribers.get(hireId);
+        this.#dlog('attach-subs hire=' + hireId, 'subs=' + (set?.size ?? 0));
         if (!set) return;
         for (const sub of set) { if (!sub.off) sub.off = session.subscribe(sub.listener); }
     }
@@ -297,6 +299,7 @@ export class SessionLifecycle {
     /** Detaches the hire's subscribers on teardown; they re-attach on the next spawn. */
     #detachSubscribers(hireId: string): void {
         const set = this.#subscribers.get(hireId);
+        this.#dlog('detach-subs hire=' + hireId, 'subs=' + (set?.size ?? 0));
         if (!set) return;
         for (const sub of set) { sub.off?.(); sub.off = null; }
     }
@@ -546,6 +549,7 @@ export class SessionLifecycle {
      * quit. A resume brings the colleague back when the person returns.
      */
     #onIdle(agentId: string): void {
+        this.#dlog('idle-teardown hire=' + agentId);
         void this.teardown(agentId);
     }
 
@@ -645,6 +649,8 @@ export class SessionLifecycle {
 
     #onExit(agentId: string, _info: { exitCode: number | null }): void {
         const owned = this.#owned.get(agentId);
+        this.#dlog('session-exit hire=' + agentId, 'code=' + _info.exitCode,
+            'reported=' + (owned?.reported ?? 'gone'), 'resuming=' + (owned?.resuming ?? 'gone'));
         if (!owned || owned.tornDown) return;
 
         // The three cases are told apart by exit versus alive and by resuming
@@ -732,6 +738,7 @@ export class SessionLifecycle {
      */
     async teardown(agentId: string): Promise<void> {
         const owned = this.#owned.get(agentId);
+        this.#dlog('teardown hire=' + agentId, 'had-session=' + (!!owned && !owned.tornDown));
         if (!owned || owned.tornDown) {
             this.#deps.registry.deregisterByAgent(agentId);
             this.#deps.secrets.revoke(agentId);
