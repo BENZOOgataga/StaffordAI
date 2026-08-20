@@ -31,13 +31,12 @@
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
-    /* A quiet solid neutral just above the card fill (0.205), so a card reads as a
-       gently raised panel with a whisper hairline, not an outlined box. The shadcn dark
-       register expresses this as white at low alpha, but white-alpha reads as a bright
-       outline on these near-black surfaces, so this uses a solid neutral instead. Input
-       is a touch lighter so a form field stays findable. */
-    --border: oklch(0.24 0 0);
-    --input: oklch(0.27 0 0);
+    /* Dokploy's exact dark border and input, a low-alpha white rather than a solid gray.
+       An alpha edge blends into the surface under it, so a card reads as a raised panel
+       with a soft edge; a solid line, which earlier revisions used, reads as a harder
+       outline at the same lightness. Values from apps/dokploy/styles/globals.css. */
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
     --status-working: oklch(0.68 0.16 250);
     --status-idle: oklch(0.708 0 0);
