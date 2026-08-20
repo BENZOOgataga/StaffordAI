@@ -13,45 +13,42 @@ Read these three, in order:
 3. `docs/KNOWN-ISSUES.md`. The screenshot and signing leaks to check before anything public, and the
    third-party plugin noise that is not ours.
 
-The redesign and the git executor loop are both done. v0.1.0 is one blocker from cuttable: the Windows signing
-blocker is cleared, and the one that remains is the macOS real-spawn verification, which needs this Mac. The
-next work is the runbook below, then the release.
+The redesign and the git executor loop are both done. v0.1.0 ships Windows only. macOS is deferred to a later
+release, because I develop on Windows and switching machines to verify macOS is too much friction to gate the
+first release on. That decision removes the Mac from the v0.1.0 path entirely: there is no Mac step left before
+cutting it. The macOS verification checks that were release blockers (the Keychain credential path from #61,
+the cold-start first message from #63, the hooks from #65, the five-fast delivery from #67) are no longer
+v0.1.0 blockers. They move to whenever macOS is picked up, tracked in `docs/owed-review.md`.
 
-## The Mac-side runbook, in order
+The Windows distributable comes from CI, because the work PC cannot run electron-builder (the corporate network
+blocks the Electron fetch it needs). The Windows package leg now builds a real zip and uploads it as an Actions
+artifact, so I download it from CI rather than building locally.
 
-This is the first Mac session as a checklist, not a reconstruction. Do these in order.
+## The by-hand v0.1.0 release checklist, Windows only
 
-1. Sync and install. `git checkout main && git pull`, then `npm ci`, then
-   `node scripts/fix-node-pty-permissions.cjs` (repairs the node-pty prebuild's execute bit, which the
-   spawn-helper needs), then `npm run electron:install`.
-2. Run the owed real-spawn verification. This is the remaining release blocker. A real Claude spawn in a real
-   git repo that modifies a tracked file, driven through the actual quit and drain the packaged app uses (not a
-   direct executor call), asserting a real `stafford/checkpoint/<hire>/<timestamp>` branch exists holding the
-   change and `drain_report.committed=true`, then a relaunch that shows the saved-work notice. That single run
-   verifies, against a real binary on macOS, three things proven only structurally or against real git so far:
-   the POSIX hook path, the transcript tail the rich feed reads, and the drain-commit loop. If it does not yet
-   exist as a runnable `@real-machine` test, building it is the first Mac task; the reproduction harness from
-   the git executor work is the basis, and `src/main/agents/checkpoint-drain.test.ts` is the structural
-   version to lift onto a real spawn. The executor design and the split are in
-   `docs/plans/GIT-EXECUTOR-SPLIT.md`.
-   Fold in one more check on the same real spawn: the config isolation. A colleague now runs against a
-   Stafford-managed `CLAUDE_CONFIG_DIR` under userData, so the user's global plugins do not load. On macOS the
-   credential is in Keychain, not a file, so the seed copies nothing and the managed dir is expected to
-   authenticate through Keychain on its own. Verify on this Mac, with the user's plugins enabled: a colleague
-   comes up authenticated (no login prompt), in normal auto mode, responds, and shows none of the user's
-   plugins or foreign hooks. That is the owed macOS half of the plugin-isolation fix; the Windows half is
-   proven. The module is `src/main/agents/managed-config.ts`.
-3. Build the darwin artifact. `npx electron-vite build`, then `npx electron-builder --mac --arm64 --dir`.
-   Confirm the output directory name first with `ls dist`, then zip the app from there (the arm64 dir build
-   lands under something like `dist/mac-arm64/Stafford.app`, but check rather than assume).
-4. Do the real unsigned launch on macOS. Unzip outside the repo tree, launch, hit the real Gatekeeper block,
-   and reconcile the README macOS steps against what this macOS actually shows. Recent macOS routes an unsigned
-   app through Settings, Privacy and Security, Open Anyway, not the old control-click Open path, so fix the
-   README if it differs from what you see.
-5. Cut v0.1.0. Tag from a clean tree, push the tag, create the release, upload both the darwin zip and the
-   now-unsigned Windows zip, and paste the release notes (the README install section plus the what-is-this and
-   working-core lines). The by-hand release checklist from the release work still applies; follow it rather
-   than improvising.
+I perform these. Nothing here is automated yet; the tag-triggered release automation is deferred to v0.1.1.
+
+1. Make sure main is clean and green. `git checkout main && git pull`, then confirm the latest CI run on main
+   is green on every leg. `package.json` is already at 0.1.0.
+2. Download the Windows artifact from CI. On the green Actions run for the main commit being released, open the
+   run, go to Artifacts, and download `Stafford-windows-x64`. Unzip it to get `Stafford-0.1.0-win-x64.zip`.
+   This zip is the release binary. It is unsigned by the deterministic config, which the packaged-bundle check
+   on that same run already asserted.
+3. Run the five-fast real-use check on that exact zip, the last gate before tagging. Unzip
+   `Stafford-0.1.0-win-x64.zip` outside the repo, run `Stafford.exe`, approve the SmartScreen warning, hire a
+   colleague onto a project, and send five messages fast to it (for example one, two, three, four, five).
+   Confirm five separate submitted turns arrive in order, none merged into one and none dropped. Then open a
+   second colleague and send messages to both close together, and confirm each one's turns are its own and do
+   not cross-trigger. This is the #67 serial-queue behaviour, which was proven against the state model but
+   never in a live packaged app; verifying it on the real artifact is what makes the release trustworthy. If it
+   misbehaves, do not tag; capture the delivery log (`$env:STAFFORD_DELIVERY_LOG = "1"` before launch, log at
+   `%TEMP%\stafford-delivery.log`) and fix first.
+4. Tag v0.1.0. From a clean main, `git tag v0.1.0` and `git push origin v0.1.0`. Pushing the tag is the live
+   action, and it is mine to take.
+5. Create the GitHub release. On the v0.1.0 tag, create a release, upload `Stafford-0.1.0-win-x64.zip`, and
+   paste the notes from `docs/releases/0.1.0.md`. Title it Stafford v0.1.0.
+
+That is the whole release. No Mac, no local build, no signing.
 
 ## The Mac can finally verify locally
 

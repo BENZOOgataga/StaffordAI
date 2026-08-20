@@ -3,6 +3,28 @@
 A single accounting of everything parked, taken from the plan and the tree rather than memory, so the
 next build is chosen against the whole board. Read-only: this decides nothing and builds nothing.
 
+## Update, 2026-08-20, v0.1.0 is Windows only and macOS is deferred
+
+Read this block first. It is the newest.
+
+v0.1.0 ships Windows only. macOS is deferred to a later release, then Linux after that. I develop on Windows,
+and switching machines to verify macOS is too much friction to gate the first release on. This takes the Mac
+off the v0.1.0 path: there is no Mac step left before cutting it, and the CI Windows package leg now builds a
+real zip and uploads it as an Actions artifact (`Stafford-windows-x64`), so the release binary comes from CI
+without a local build. The by-hand release checklist is in `docs/HANDOFF.md`.
+
+The macOS verification checks that were v0.1.0 blockers are no longer v0.1.0 blockers. They move to whenever
+macOS is picked up. They are: the Keychain credential path for the managed-config isolation (#61, does the
+managed dir authenticate through Keychain with no file to copy), the cold-start first-message delivery on a
+real Mac spawn (#63), the hooks firing in the managed dir on macOS (#65), and the five-fast serial delivery on
+macOS (#67). None of these block Windows, which was verified directly.
+
+One Windows check is still owed before the release is trusted, and it moved from the Mac to Windows: the
+five-fast delivery proof (#67). It was proven against the state model, never in a live packaged app. With a
+real CI-built Windows artifact now available, it becomes a manual check on that artifact, written into the
+release checklist in `docs/HANDOFF.md` as the last gate before tagging v0.1.0. Send five fast messages to one
+colleague and confirm five ordered turns, and confirm two colleagues do not cross-trigger.
+
 ## Update, 2026-08-18, the git executor loop is done and the release is one blocker away
 
 Read this block first. It is the newest. The block under it records the redesign as complete, and everything
