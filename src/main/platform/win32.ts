@@ -4,7 +4,7 @@
  */
 
 import nodePath from 'node:path';
-import type { CommandSpec, InputSocketDisposal, KillSignal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
+import type { CommandSpec, KillSignal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
 
 // win32 semantics regardless of the machine running this. On a macOS CI runner
 // plain path.join would produce forward slashes and the platform layer would
@@ -124,21 +124,6 @@ export const win32: Platform = {
         // not exist on this platform. Returning a command that produces numbers
         // nobody compares would be worse than saying so.
         return null;
-    },
-
-    inputSocketDisposal(): InputSocketDisposal {
-        // Measured on 1.1.0, and again on 1.2.0-beta.15 on a Windows runner,
-        // where six sessions with no disposal of ours left PipeWrap +6. One per
-        // session on both, so the release is required regardless of which of
-        // the two versions is pinned.
-        return {
-            required: true,
-            path: ['_agent', 'inSocket'],
-            detail:
-                'the ConPTY kill path marks both sockets unreadable and disposes the conout worker ' +
-                'without destroying the conin socket, while the DLL path a few lines away does destroy it. ' +
-                'One handle per session, linear, on a runner meant to stay up for days.'
-        };
     },
 
     ownerOnlyAclPlan(target: string, opts: { tree: boolean; account: string }): CommandSpec {

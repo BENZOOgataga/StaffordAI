@@ -37,7 +37,7 @@ body:
       description: Best guess is fine.
       options:
         - Terminal or ConPTY (a session, typing, the pty itself)
-        - Native module or install (node-pty, better-sqlite3, npm ci, packaging)
+        - Native module or install (better-sqlite3, npm ci, packaging)
         - Colleague state (working, idle, waiting, rate limited, crashed showing wrong)
         - Roster or channel UI
         - Other or not sure

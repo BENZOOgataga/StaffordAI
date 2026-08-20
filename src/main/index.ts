@@ -24,7 +24,6 @@ import { resolveWindowBounds, readWindowState, saveWindowState, WINDOW_DEFAULTS,
 import { installTray } from './tray.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
-import { ProofPty } from './ipc/proof-pty.ts';
 import { openDatabase, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
@@ -180,7 +179,6 @@ function smoke(line: string): void { if (SMOKE) process.stderr.write('[smoke] ' 
 
 let tray: Tray | null = null;
 let window: BrowserWindow | null = null;
-const proof = new ProofPty();
 
 function rendererEntry(): string {
     // electron-vite serves the renderer from a dev server URL in development and
@@ -297,7 +295,7 @@ function openWindow(): void {
 
     // Closing returns to the tray rather than quitting.
     win.on('close', (event) => {
-        if (proofQuitting) return;
+        if (quitting) return;
         event.preventDefault();
         win.hide();
     });
@@ -467,6 +465,17 @@ function buildDelivery(store: HireStore): void {
             });
             notifyChannelChanged();
         },
+        // Each tool the colleague used this turn, into the append-only activity store.
+        // The Transcript view and the Activity feed both read it back per hire. This
+        // re-feeds the activity feed the removed hooks used to, now from the runner.
+        recordToolUse: (hireId, sessionId, tool, target, status) => {
+            if (!repositories) return;
+            repositories.activity.append({
+                id: randomUUID(), hireId, sessionId, tool, target, status, at: new Date().toISOString()
+            });
+            // The open detail refreshes on this signal and its Transcript re-reads.
+            notifyChannelChanged();
+        },
         // The same bounded git checkpoint executor the registry drain uses, so a
         // colleague's tracked work is committed on quit through the runner path too.
         checkpointRunner: (cwd, hireId) =>
@@ -492,10 +501,9 @@ function buildDelivery(store: HireStore): void {
     smoke('runner manager ready (headless delivery path)');
 }
 
-let proofQuitting = false;
+let quitting = false;
 async function quit(): Promise<void> {
-    proofQuitting = true;
-    proof.kill();
+    quitting = true;
 
     // Drain the colleagues the runner served: checkpoint, bounded wait, force-kill what
     // remains, one durable report row per agent. Bounded by its own total cap, so a stuck
@@ -521,13 +529,10 @@ async function quit(): Promise<void> {
         }
     }
 
-    // Force the exit. node-pty can leave a non-unref'd five-second timer per
-    // Windows kill (issue 886) and stacking several holds the event loop, so a
-    // natural quit can look hung at the worst moment. A 3s timer turns quit into a
-    // hard app.exit(0). Everything that matters is already checkpointed and killed
-    // by the time the drain returns, so the forced exit only drops handles the OS
-    // reclaims anyway. The timer is unref'd so it never itself keeps the app alive.
-    // See plan 7.4.1: this containment is why the kill path is not changed.
+    // Force the exit as a backstop. Everything that matters is already checkpointed
+    // and its process tree reaped by the time the drain returns, so a 3s timer turning
+    // quit into a hard app.exit(0) only drops handles the OS reclaims anyway. The timer
+    // is unref'd so it never itself keeps the app alive.
     const forced = setTimeout(() => { app.exit(0); }, 3000);
     forced.unref();
     app.quit();
@@ -595,6 +600,13 @@ async function runDeliverySmoke(): Promise<void> {
     dump('colleague A', A);
     dump('colleague B', B);
 
+    out('=== Scenario 4: a tool use and a file write (transcript + drain source) ===');
+    await say(A, 'Use your Write tool to create a file named note.txt containing the single word hello, ' +
+        'then reply with exactly: WROTE');
+    const tools = repositories.activity.byHire(A, 50);
+    out('activity rows recorded for A: ' + tools.length);
+    for (const t of tools) out('    tool ' + t.tool + (t.target ? ' ' + t.target.slice(0, 60) : '') + ' [' + t.status + ']');
+
     out('A resume session id: ' + (repositories.hires.get(A)?.sessions[projectId] ?? 'none'));
     out('B resume session id: ' + (repositories.hires.get(B)?.sessions[projectId] ?? 'none'));
     out('=== delivery smoke done ===');
@@ -607,11 +619,10 @@ app.whenReady().then(async () => {
     // app has already quit inside openStore and there is nothing more to do.
     if (!openStore()) return;
 
-    // Build the headless delivery path. State, session id, replies, and the drain all
-    // flow through the runner now; there is no hook transport, socket, or registry any
-    // more. The activity feed's live writer was fed by those hooks and is gone with them;
-    // its persisted rows still read from the DB, and re-feeding it from the runner's
-    // transcript is future work.
+    // Build the headless delivery path. State, session id, replies, the tool feed, and
+    // the drain all flow through the runner now; there is no hook transport, socket, or
+    // registry any more. The activity feed is re-fed from the runner's own tool_use
+    // events, which is also what the Transcript tab reads.
     if (repositories) {
         const store = hireStoreOver(repositories);
         buildDelivery(store);
@@ -626,7 +637,6 @@ app.whenReady().then(async () => {
     registerHandlers(ipcMain, {
         startedAt: STARTED_AT,
         platformId: currentPlatform().id,
-        proof,
         sender: () => (window && !window.isDestroyed() ? window.webContents : null),
         // The store's one live consumer. Read-only, bounded, ids and names only.
         // repositories is set by openStore above, which the app quits without if
@@ -654,15 +664,6 @@ app.whenReady().then(async () => {
             return createHireService(createDeps(repositories), payload);
         },
         rosterSnapshot,
-        // The detail view's live terminal was fed by the pty, which is gone. There is
-        // no live pty stream to subscribe to or resize now; the Terminal tab shows an
-        // interim note and the rendered transcript replaces it in a later phase. These
-        // stay as no-ops so the IPC surface is unchanged for the renderer.
-        subscribeSession: () => () => {},
-        resizeSession: () => {},
-        hasSession: () => false,
-        // Delivery goes through the headless runner, the only path now.
-        submitMessage: (hireId, text) => (runnerManager ? runnerManager.submit(hireId, text) : Promise.resolve()),
         // The timeline reads: the newest page, older rows for scroll-back, and the
         // tail after a cursor for the append on channel:changed.
         channelPage: (before, limit) => (repositories

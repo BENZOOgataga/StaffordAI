@@ -7,11 +7,6 @@
  * of the list being data both sides import rather than two strings that can
  * drift.
  *
- * Task 7a carries the smallest set that proves the shell works end to end:
- *  - health, a status call replacing the retired token endpoint;
- *  - the proof window's pty channels, deliberately minimal and thrown away with
- *    that window when real UI lands.
- *
  * The renderer acts on ids, never on filesystem paths. Nothing here lets a
  * renderer name a directory to spawn in or a file to read.
  */
@@ -23,30 +18,20 @@ export const INVOKE_CHANNELS = [
     'project:create',
     'hire:create',
     'roster:snapshot',
-    'session:open',
-    'session:close',
-    'session:resize',
-    'session:write',
     'channel:page',
     'channel:since',
     'channel:conversation',
     'channel:reply',
     'activity:by-hire',
     'checkpoints:saved',
-    'checkpoints:ack',
-    'proof:spawn',
-    'proof:write',
-    'proof:kill'
+    'checkpoints:ack'
 ] as const;
 
 /** Main pushes to the renderer. One-way, no reply. */
 export const EVENT_CHANNELS = [
     'roster:changed',
     'channel:changed',
-    'activity:appended',
-    'session:data',
-    'proof:data',
-    'proof:exit'
+    'activity:appended'
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
@@ -64,7 +49,6 @@ export interface HealthReport {
     readonly ok: boolean;
     readonly platform: string;
     readonly startedAt: string;
-    readonly ptyOpen: boolean;
 }
 
 /**
@@ -150,29 +134,6 @@ export interface RosterCard {
 /** The reply to `roster:snapshot`. Bounded: one card per hire, hires are capped. */
 export interface RosterSnapshot {
     readonly cards: readonly RosterCard[];
-}
-
-/** Opening a card's live terminal. Ids only, never a path or a session id. */
-export interface SessionOpen {
-    readonly hireId: string;
-}
-
-/** The reply to session:open: whether a live session is streaming. */
-export interface SessionOpened {
-    readonly live: boolean;
-}
-
-/** A pane resize propagated to the pty. Ids and bounded sizes only. */
-export interface SessionResize {
-    readonly hireId: string;
-    readonly cols: number;
-    readonly rows: number;
-}
-
-/** A typed message to the open card's session. A hire id and bounded text, no path. */
-export interface SessionWrite {
-    readonly hireId: string;
-    readonly text: string;
 }
 
 /**
@@ -284,12 +245,3 @@ export interface CheckpointAck {
     readonly drainId: string;
 }
 
-/** What the proof window sends to open a pty. Ids only, no paths. */
-export interface ProofSpawn {
-    readonly cols: number;
-    readonly rows: number;
-}
-
-export interface ProofWrite {
-    readonly data: string;
-}

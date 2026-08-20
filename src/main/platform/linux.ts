@@ -12,7 +12,7 @@
  */
 
 import nodePath from 'node:path';
-import type { CommandSpec, InputSocketDisposal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
+import type { CommandSpec, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
 import { posixKillTreePlan } from './posix-kill.ts';
 
 // POSIX semantics regardless of the machine running this. Plain path.join on
@@ -65,16 +65,6 @@ export const linux: Platform = {
 
     processTreeCommand(): CommandSpec {
         return { file: 'ps', args: ['-Ao', 'pid=,ppid=,pgid=,comm='] };
-    },
-
-    inputSocketDisposal(): InputSocketDisposal {
-        // Same as darwin, and unexercised here only because linux refuses to
-        // run at all.
-        return {
-            required: false,
-            path: [],
-            detail: 'node-pty exposes no input socket to release on POSIX.'
-        };
     },
 
     ownerOnlyAclPlan(_target: string, _opts: { tree: boolean; account: string }): CommandSpec | null {

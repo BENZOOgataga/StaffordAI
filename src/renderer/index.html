@@ -515,8 +515,8 @@
   .reply-hint { color: var(--muted); font-size: 0.78rem; margin: 0; }
 
   /* The Terminal tab: the existing xterm, unchanged, filling its panel. */
-  .panel-terminal { padding: 6px 8px; }
-  .term { flex: 1 1 auto; min-width: 0; background: #0A0A0A; overflow: hidden; }
+  .panel-transcript { padding: 0; }
+  .transcript { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 4px 0; }
 
   /* The Activity tab: a colleague's stored events as a quiet feed. Hairline row
      separation, a small line icon per type, timestamps de-emphasized, one amber
@@ -738,7 +738,7 @@
           <div class="tabbar" role="tablist" aria-label="Colleague detail tabs">
             <button class="tab active" type="button" role="tab" data-tab="conversation" id="tab-conversation" aria-selected="true">Conversation</button>
             <button class="tab" type="button" role="tab" data-tab="activity" id="tab-activity" aria-selected="false">Activity</button>
-            <button class="tab" type="button" role="tab" data-tab="terminal" id="tab-terminal" aria-selected="false">Terminal</button>
+            <button class="tab" type="button" role="tab" data-tab="transcript" id="tab-transcript" aria-selected="false">Transcript</button>
           </div>
           <div class="panels">
             <div id="panel-conversation" class="panel" role="tabpanel" aria-labelledby="tab-conversation">
@@ -750,8 +750,8 @@
               </div>
             </div>
             <div id="panel-activity" class="panel panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden></div>
-            <div id="panel-terminal" class="panel panel-terminal" role="tabpanel" aria-labelledby="tab-terminal" hidden>
-              <div id="term" class="term"></div>
+            <div id="panel-transcript" class="panel panel-transcript" role="tabpanel" aria-labelledby="tab-transcript" hidden>
+              <div id="transcript" class="transcript" aria-live="polite"></div>
             </div>
           </div>
         </div>

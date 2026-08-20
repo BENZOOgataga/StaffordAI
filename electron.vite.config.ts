@@ -44,9 +44,8 @@ function copyMigrations() {
  * The list is `NATIVE_EXTERNALS`, in `src/build/native-externals.ts` so a test
  * can read it without executing this config, and guarded by
  * `native-externals.test.ts` so every entry is a declared, installed
- * dependency. It carries `node-pty` only. `better-sqlite3` is NOT here: it
- * arrives with storage in Task 8, and naming a module that is not installed is
- * the drift this project keeps paying for.
+ * dependency. It carries `better-sqlite3`, the storage module: naming a module
+ * that is not installed is the drift this project keeps paying for.
  *
  * The renderer gets no Node integration and no filesystem access. Everything
  * privileged happens in main behind validated IPC handlers, per section 6 of
