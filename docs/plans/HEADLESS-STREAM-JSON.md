@@ -2,7 +2,7 @@
 
 This scopes moving Stafford off driving Claude Code's interactive terminal and onto
 running Claude Code headless through its stream-json control protocol. It is a plan.
-No code changes land with this document. Benzoo approves it before any build.
+No code changes land with this document. I approve it before any build.
 
 ## Why this exists
 
@@ -181,17 +181,17 @@ protocol change as known, scheduled maintenance rather than a surprise. State th
 whoever owns the upgrade cadence, because it is a real cost, not a hidden one.
 
 The raw-stream debug view. Retiring the raw Terminal removes the raw session view that
-a power user, Benzoo especially, may want when something misbehaves. The migration
+a power user, me especially, may want when something misbehaves. The migration
 should keep a raw-stream or debug view reachable, showing the JSON lines as they
 arrive, rather than dropping the affordance entirely. It need not be the default tab,
-only reachable. This is a small product decision for Benzoo: keep a debug view (the
+only reachable. This is a small product decision for me: keep a debug view (the
 recommendation) or accept that debugging happens through the delivery log instead.
 
 ## v0.1.0 sequencing
 
 Stafford was one Mac session from cutting v0.1.0 on the pty approach, which is now
-stabilized after the recent fixes. This migration is larger than v0.1.0. Benzoo
-decides the order from here. The two options, fairly:
+stabilized after the recent fixes. This migration is larger than v0.1.0. I decide
+the order from here. The two options, fairly:
 
 Option A, ship v0.1.0 on the current pty stack first, then migrate to headless for
 v0.2.0. What ships: a real v0.1.0 sooner, on the code that exists today. The risk: it
@@ -211,8 +211,8 @@ Recommendation: Option A. The pty stack is stabilized enough to ship, a real v0.
 buys real feedback and a milestone, and the migration is lower risk built behind a
 shipped release than as the blocker to the first one. The cost, shipping code you are
 about to delete, is small next to the value of a real release and the safety of
-migrating without a launch deadline on top of it. Benzoo chooses; both are laid out so
-the choice is his.
+migrating without a launch deadline on top of it. The choice is mine; both are laid
+out so I can make it cleanly.
 
 ## Phasing
 
@@ -233,9 +233,9 @@ Each step is its own PR, each provable, in order.
 
 ## Next action and recommendation
 
-Next action: Benzoo reviews this doc and decides the v0.1.0 sequencing (Option A or B)
-and the debug-view question (keep a reachable raw-stream view or not). Nothing builds
-until he does.
+Next action: I review this doc and decide the v0.1.0 sequencing (Option A or B) and
+the debug-view question (keep a reachable raw-stream view or not). Nothing builds until
+I do.
 
 Recommendation: approve Option A, ship v0.1.0 on the stabilized pty stack first and
 build the headless migration behind it for v0.2.0, and keep a reachable raw-stream
