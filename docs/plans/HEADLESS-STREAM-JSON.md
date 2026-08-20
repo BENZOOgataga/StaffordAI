@@ -53,7 +53,8 @@ These are decided, recorded here so a later reader does not reopen them.
 
 4. The raw Terminal tab is retired in favour of a rendered transcript built from the
    stream (the assistant's text and its tool calls). There is no TUI to show any more.
-   A raw-stream debug view stays reachable for debugging, see the debug-view note.
+   No raw-stream debug view is kept; debugging happens through the delivery log
+   instead, which is required to capture the raw wire. See the debug-view section.
 
 ## The command and the protocol
 
@@ -180,39 +181,30 @@ stream defensively so an unknown event type is ignored rather than fatal, and tr
 protocol change as known, scheduled maintenance rather than a surprise. State this to
 whoever owns the upgrade cadence, because it is a real cost, not a hidden one.
 
-The raw-stream debug view. Retiring the raw Terminal removes the raw session view that
-a power user, me especially, may want when something misbehaves. The migration
-should keep a raw-stream or debug view reachable, showing the JSON lines as they
-arrive, rather than dropping the affordance entirely. It need not be the default tab,
-only reachable. This is a small product decision for me: keep a debug view (the
-recommendation) or accept that debugging happens through the delivery log instead.
+The raw-stream debug view, decided: dropped. Retiring the raw Terminal removes the raw
+session view that a power user, me especially, might reach for when something
+misbehaves, and I am not keeping a reachable debug view for it. Debugging happens
+through the delivery log instead. That only works if the log carries the wire, so it
+becomes a requirement, not a nice-to-have: the delivery log must record the raw
+stream-json lines exactly as they are received, not only the parsed events, so that
+with no debug view the exchange with Claude is still fully inspectable from logs. This
+requirement is folded into the phasing below.
 
-## v0.1.0 sequencing
+## v0.1.0 sequencing, decided
 
-Stafford was one Mac session from cutting v0.1.0 on the pty approach, which is now
-stabilized after the recent fixes. This migration is larger than v0.1.0. I decide
-the order from here. The two options, fairly:
+Decided: Option A. Ship v0.1.0 on the current pty stack first, which is stabilized
+after the recent fixes, then build the headless migration behind it for v0.2.0. The
+pty stack is shippable now, a real v0.1.0 buys real user feedback and a milestone, and
+the migration is lower risk built behind a shipped release than as the blocker to the
+first one. Holding v0.1.0 for headless would have pushed the first release out and
+front-loaded the migration's risk onto the launch, which is not worth it when the pty
+stack already works.
 
-Option A, ship v0.1.0 on the current pty stack first, then migrate to headless for
-v0.2.0. What ships: a real v0.1.0 sooner, on the code that exists today. The risk: it
-ships a session stack that is scheduled for deletion, so the first release carries
-code with a short life, and any v0.1.0 session bug is fixed twice, once on the way out.
-The upside is a real release and real user feedback while the migration is built
-behind it.
-
-Option B, hold v0.1.0 and make headless the first release. What ships: nothing until
-the migration lands, but the first release is on the architecture Stafford keeps. The
-risk: no release until a bigger change is done, which pushes the first real user
-milestone out and front-loads the risk of the migration onto the launch. The upside is
-that the first thing users touch is the stable architecture, with none of the pty
-lifecycle behind it.
-
-Recommendation: Option A. The pty stack is stabilized enough to ship, a real v0.1.0
-buys real feedback and a milestone, and the migration is lower risk built behind a
-shipped release than as the blocker to the first one. The cost, shipping code you are
-about to delete, is small next to the value of a real release and the safety of
-migrating without a launch deadline on top of it. The choice is mine; both are laid
-out so I can make it cleanly.
+A discipline comes with this decision, to avoid the fix-it-twice cost named above.
+Once v0.1.0 ships, the pty session stack is maintenance-only. Only a release-critical
+pty bug gets fixed on it. All new session-layer work goes to the headless runner, not
+the pty stack. This keeps the effort flowing into the code being kept rather than the
+code being deleted.
 
 ## Phasing
 
@@ -221,23 +213,32 @@ Each step is its own PR, each provable, in order.
 1. This scope doc.
 2. ClaudeRunner. Headless spawn, the stream-json parser, and one full turn end to end
    (send a message, read to `result`, capture the session id), proven against real
-   Claude through the same probe harness that has been finding the delivery bugs. No
-   wiring into the app yet.
+   Claude through the same probe harness that has been finding the delivery bugs. The
+   runner records the raw stream-json lines as received into the delivery log, since no
+   debug view is kept and the log is now the only window on the wire. No wiring into
+   the app yet.
 3. Wire the runner behind the existing `submitMessage`. Record Claude's replies into
    the #62 conversation store, keep #61 isolation by passing CLAUDE_CONFIG_DIR, and
-   resume with the stored session id per turn. The app now talks to Claude headless.
+   resume with the stored session id per turn. The raw stream-json is captured to the
+   log in the app too, so a misbehaving session is inspectable without a debug view.
+   The app now talks to Claude headless.
 4. Rip out the pty, the hook socket and forwarder, the readiness marker, the retry,
    and the warm-session lifecycle, once the runner is proven in the app. This is the
    net deletion the migration exists for.
-5. Move the Terminal tab to the rendered transcript, and land the debug-view decision.
+5. Move the Terminal tab to the rendered transcript. No raw-stream debug view is added;
+   the raw wire lives in the log per the decision above.
 
-## Next action and recommendation
+## Ordering, unambiguous
 
-Next action: I review this doc and decide the v0.1.0 sequencing (Option A or B) and
-the debug-view question (keep a reachable raw-stream view or not). Nothing builds until
-I do.
+Both open questions are now decided (Option A above, and the debug view dropped), so
+the plan is fixed. The immediate next work is not the headless migration. It is
+cutting v0.1.0 on the current pty stack, per the Mac runbook in `docs/HANDOFF.md`: the
+owed real-spawn verification, plus the macOS checks folded into that one real spawn
+(#61 isolation and the Keychain credential path, #63 cold-start first-message, #65
+hooks firing in the managed dir, and #67 five-fast delivery), then the darwin build and
+the v0.1.0 tag.
 
-Recommendation: approve Option A, ship v0.1.0 on the stabilized pty stack first and
-build the headless migration behind it for v0.2.0, and keep a reachable raw-stream
-debug view. Then start phase 2, the ClaudeRunner, proven against real Claude before it
-touches the app.
+The headless migration starts only after v0.1.0 ships. Phase 2, the ClaudeRunner, does
+not begin until the release is out. So the order is: cut v0.1.0 on pty first, then
+begin the headless migration for v0.2.0, with the pty stack maintenance-only from the
+moment v0.1.0 ships.
