@@ -465,6 +465,17 @@ function buildDelivery(store: HireStore): void {
             });
             notifyChannelChanged();
         },
+        // Each tool the colleague used this turn, into the append-only activity store.
+        // The Transcript view and the Activity feed both read it back per hire. This
+        // re-feeds the activity feed the removed hooks used to, now from the runner.
+        recordToolUse: (hireId, sessionId, tool, target, status) => {
+            if (!repositories) return;
+            repositories.activity.append({
+                id: randomUUID(), hireId, sessionId, tool, target, status, at: new Date().toISOString()
+            });
+            // The open detail refreshes on this signal and its Transcript re-reads.
+            notifyChannelChanged();
+        },
         // The same bounded git checkpoint executor the registry drain uses, so a
         // colleague's tracked work is committed on quit through the runner path too.
         checkpointRunner: (cwd, hireId) =>
@@ -589,6 +600,13 @@ async function runDeliverySmoke(): Promise<void> {
     dump('colleague A', A);
     dump('colleague B', B);
 
+    out('=== Scenario 4: a tool use and a file write (transcript + drain source) ===');
+    await say(A, 'Use your Write tool to create a file named note.txt containing the single word hello, ' +
+        'then reply with exactly: WROTE');
+    const tools = repositories.activity.byHire(A, 50);
+    out('activity rows recorded for A: ' + tools.length);
+    for (const t of tools) out('    tool ' + t.tool + (t.target ? ' ' + t.target.slice(0, 60) : '') + ' [' + t.status + ']');
+
     out('A resume session id: ' + (repositories.hires.get(A)?.sessions[projectId] ?? 'none'));
     out('B resume session id: ' + (repositories.hires.get(B)?.sessions[projectId] ?? 'none'));
     out('=== delivery smoke done ===');
@@ -601,11 +619,10 @@ app.whenReady().then(async () => {
     // app has already quit inside openStore and there is nothing more to do.
     if (!openStore()) return;
 
-    // Build the headless delivery path. State, session id, replies, and the drain all
-    // flow through the runner now; there is no hook transport, socket, or registry any
-    // more. The activity feed's live writer was fed by those hooks and is gone with them;
-    // its persisted rows still read from the DB, and re-feeding it from the runner's
-    // transcript is future work.
+    // Build the headless delivery path. State, session id, replies, the tool feed, and
+    // the drain all flow through the runner now; there is no hook transport, socket, or
+    // registry any more. The activity feed is re-fed from the runner's own tool_use
+    // events, which is also what the Transcript tab reads.
     if (repositories) {
         const store = hireStoreOver(repositories);
         buildDelivery(store);
@@ -647,15 +664,6 @@ app.whenReady().then(async () => {
             return createHireService(createDeps(repositories), payload);
         },
         rosterSnapshot,
-        // The detail view's live terminal was fed by the pty, which is gone. There is
-        // no live pty stream to subscribe to or resize now; the Terminal tab shows an
-        // interim note and the rendered transcript replaces it in a later phase. These
-        // stay as no-ops so the IPC surface is unchanged for the renderer.
-        subscribeSession: () => () => {},
-        resizeSession: () => {},
-        hasSession: () => false,
-        // Delivery goes through the headless runner, the only path now.
-        submitMessage: (hireId, text) => (runnerManager ? runnerManager.submit(hireId, text) : Promise.resolve()),
         // The timeline reads: the newest page, older rows for scroll-back, and the
         // tail after a cursor for the append on channel:changed.
         channelPage: (before, limit) => (repositories

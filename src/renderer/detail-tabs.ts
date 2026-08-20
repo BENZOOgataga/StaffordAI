@@ -1,25 +1,28 @@
 /**
  * The detail pane's tabs, kept as data so the order and the default are tested
  * without a browser. The inversion from the old app lives here: Conversation
- * leads and is the default, Terminal is the last, advanced tab.
+ * leads and is the default, Transcript is the last, advanced tab. Transcript
+ * replaced the old raw Terminal in that slot once the pty was removed: it is a
+ * rendered turn view (the colleague's replies and its tool calls) from the
+ * headless runner's stream, not a raw terminal.
  */
 
-export type TabId = 'conversation' | 'activity' | 'terminal';
+export type TabId = 'conversation' | 'activity' | 'transcript';
 
-/** The tabs in priority order: the message exchange first, the raw terminal last. */
-export const TAB_ORDER: readonly TabId[] = ['conversation', 'activity', 'terminal'];
+/** The tabs in priority order: the message exchange first, the transcript last. */
+export const TAB_ORDER: readonly TabId[] = ['conversation', 'activity', 'transcript'];
 
-/** Conversation is the front door now, not the terminal. */
+/** Conversation is the front door, not the transcript. */
 export const DEFAULT_TAB: TabId = 'conversation';
 
 export interface Lang {
     readonly conversation: string;
     readonly activity: string;
-    readonly terminal: string;
+    readonly transcript: string;
 }
 
-const EN: Lang = { conversation: 'Conversation', activity: 'Activity', terminal: 'Terminal' };
-const FR: Lang = { conversation: 'Conversation', activity: 'Activité', terminal: 'Terminal' };
+const EN: Lang = { conversation: 'Conversation', activity: 'Activity', transcript: 'Transcript' };
+const FR: Lang = { conversation: 'Conversation', activity: 'Activité', transcript: 'Transcription' };
 
 export function tabLabels(lang: 'en' | 'fr'): Lang {
     return lang === 'fr' ? FR : EN;

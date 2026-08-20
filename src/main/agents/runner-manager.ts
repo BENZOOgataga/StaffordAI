@@ -57,6 +57,13 @@ export interface RunnerManagerDeps {
     readonly bindSession: (hireId: string, projectId: string, sessionId: string) => void;
     /** Records Claude's reply into the #62 conversation store, keyed by hireId. */
     readonly recordReply: (hireId: string, projectId: string, text: string) => void;
+    /**
+     * Records one tool the colleague used this turn, for the Activity feed and the
+     * Transcript view. status is 'ok' when the turn completed, 'incomplete' otherwise.
+     */
+    readonly recordToolUse?: (
+        hireId: string, sessionId: string | null, tool: string, target: string | null, status: 'ok' | 'incomplete'
+    ) => void;
     /** Writes a colleague's roster state. */
     readonly setState: (hireId: string, state: AgentState) => void;
     /** Signals the roster changed, so the renderer re-reads. */
@@ -222,6 +229,16 @@ export class ClaudeRunnerManager {
             this.#deps.recordReply(hireId, target.projectId, result.assistantText);
         }
 
+        // Record the tools the colleague used this turn, for the Activity feed and the
+        // Transcript view. The runner sees the tool_use blocks but not each tool's own
+        // result, so status is the turn's: ok on a clean turn, incomplete otherwise.
+        if (this.#deps.recordToolUse && result.toolUses.length > 0) {
+            const status = result.status === 'completed' ? 'ok' : 'incomplete';
+            for (const use of result.toolUses) {
+                this.#deps.recordToolUse(hireId, result.sessionId, use.name, toolTarget(use.name, use.input), status);
+            }
+        }
+
         // Idle when the turn ends, whatever the outcome, so the card accepts input
         // again rather than sticking on working after an error.
         this.#setState(hireId, AGENT_STATES.IDLE);
@@ -231,4 +248,22 @@ export class ClaudeRunnerManager {
         this.#deps.setState(hireId, state);
         this.#deps.onStateChanged();
     }
+}
+
+/**
+ * A short, human-readable target for a tool use, from its input: the file path for a
+ * file tool, the command for a shell tool, the pattern for a search, else null. Bounded
+ * so a huge input never becomes a huge row. Never returns raw structured input.
+ */
+function toolTarget(_tool: string, input: unknown): string | null {
+    if (typeof input !== 'object' || input === null) return null;
+    const i = input as Record<string, unknown>;
+    const first = (...keys: string[]): string | null => {
+        for (const k of keys) if (typeof i[k] === 'string' && (i[k] as string).length > 0) return i[k] as string;
+        return null;
+    };
+    const value = first('file_path', 'path', 'notebook_path', 'command', 'pattern', 'query', 'url', 'prompt', 'description');
+    if (value === null) return null;
+    const oneLine = value.replace(/\s+/g, ' ').trim();
+    return oneLine.length > 120 ? oneLine.slice(0, 120) + '...' : oneLine;
 }

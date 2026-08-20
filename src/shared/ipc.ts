@@ -18,10 +18,6 @@ export const INVOKE_CHANNELS = [
     'project:create',
     'hire:create',
     'roster:snapshot',
-    'session:open',
-    'session:close',
-    'session:resize',
-    'session:write',
     'channel:page',
     'channel:since',
     'channel:conversation',
@@ -35,8 +31,7 @@ export const INVOKE_CHANNELS = [
 export const EVENT_CHANNELS = [
     'roster:changed',
     'channel:changed',
-    'activity:appended',
-    'session:data'
+    'activity:appended'
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
@@ -139,29 +134,6 @@ export interface RosterCard {
 /** The reply to `roster:snapshot`. Bounded: one card per hire, hires are capped. */
 export interface RosterSnapshot {
     readonly cards: readonly RosterCard[];
-}
-
-/** Opening a card's live terminal. Ids only, never a path or a session id. */
-export interface SessionOpen {
-    readonly hireId: string;
-}
-
-/** The reply to session:open: whether a live session is streaming. */
-export interface SessionOpened {
-    readonly live: boolean;
-}
-
-/** A pane resize propagated to the pty. Ids and bounded sizes only. */
-export interface SessionResize {
-    readonly hireId: string;
-    readonly cols: number;
-    readonly rows: number;
-}
-
-/** A typed message to the open card's session. A hire id and bounded text, no path. */
-export interface SessionWrite {
-    readonly hireId: string;
-    readonly text: string;
 }
 
 /**

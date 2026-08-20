@@ -43,7 +43,7 @@ const ICON_PATHS: Record<FeedIcon, readonly string[]> = {
     tool: ['M10 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z', 'M10 9.5v.01']
 };
 
-function icon(kind: FeedIcon): SVGElement {
+export function icon(kind: FeedIcon): SVGElement {
     const svg = document.createElementNS(SVG, 'svg');
     svg.setAttribute('viewBox', '0 0 20 20');
     svg.setAttribute('width', '15');

@@ -12,7 +12,6 @@
  */
 
 import type {
-    SessionOpen, SessionResize, SessionWrite,
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
     ProjectCreate, HireCreate
 } from '../shared/ipc.ts';
@@ -24,23 +23,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /** A non-empty hire id, bounded, so a renderer cannot hand over nonsense. */
 function isHireId(value: unknown): value is string {
     return typeof value === 'string' && value.length > 0 && value.length <= 256;
-}
-
-/** Opening a card's terminal. A hire id, never a path or a session id. */
-export function isSessionOpen(value: unknown): value is SessionOpen {
-    return isObject(value) && isHireId(value.hireId);
-}
-
-/** A pane resize. A hire id and a bounded terminal size. */
-export function isSessionResize(value: unknown): value is SessionResize {
-    if (!isObject(value)) return false;
-    return isHireId(value.hireId) && isBoundedInt(value.cols, 1, 1000) && isBoundedInt(value.rows, 1, 1000);
-}
-
-/** A typed message. A hire id and a bounded string; a renderer cannot hand over an unbounded one. */
-export function isSessionWrite(value: unknown): value is SessionWrite {
-    if (!isObject(value)) return false;
-    return isHireId(value.hireId) && typeof value.text === 'string' && value.text.length <= 64 * 1024;
 }
 
 function isBoundedString(value: unknown, max: number): boolean {

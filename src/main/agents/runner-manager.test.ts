@@ -234,6 +234,34 @@ test('a turn that dies without a result records no reply and leaves the colleagu
     assert.equal(rec.replies.length, 0, 'still no reply (auto off), but no throw and the queue advanced');
 });
 
+test('a completed turn records each tool it used, with a derived target and ok status', async () => {
+    const { spawn, children } = responder({ auto: false });
+    const recorded: Array<{ h: string; s: string | null; tool: string; target: string | null; status: string }> = [];
+    const { deps } = fakeDeps(spawn, {
+        recordToolUse: (h, s, tool, target, status) => { recorded.push({ h, s, tool, target, status }); }
+    });
+    const manager = new ClaudeRunnerManager(deps);
+
+    const turn = manager.submit('hireA', 'do it');
+    await tick();
+    const child = children[0];
+    child?.emit('{"type":"system","subtype":"init","session_id":"sess-9"}\n');
+    child?.emit(JSON.stringify({
+        type: 'assistant',
+        message: { content: [
+            { type: 'tool_use', name: 'Bash', id: 'tu1', input: { command: 'ls -la' } },
+            { type: 'tool_use', name: 'Read', id: 'tu2', input: { file_path: '/src/x.ts' } }
+        ] }
+    }) + '\n');
+    child?.emit('{"type":"result","is_error":false,"session_id":"sess-9"}\n');
+    await turn;
+
+    assert.deepEqual(recorded, [
+        { h: 'hireA', s: 'sess-9', tool: 'Bash', target: 'ls -la', status: 'ok' },
+        { h: 'hireA', s: 'sess-9', tool: 'Read', target: '/src/x.ts', status: 'ok' }
+    ]);
+});
+
 test('a finished turn reaps the child by its exact pid (tree reap), not by image name', async () => {
     const { spawn } = responder();
     const reaped: number[] = [];

@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    isSessionOpen, isSessionResize, isSessionWrite,
     isChannelPage, isChannelSince, isProjectCreate, isHireCreate
 } from './guards.ts';
 
@@ -25,33 +24,6 @@ test('hire:create needs bounded name, type, title, and project id', () => {
     assert.equal(isHireCreate({ name: 'M', type: 'lead-developer', title: 't' }), false, 'no project id');
     assert.equal(isHireCreate({ name: 'M', type: 'lead-developer', title: 't', projectId: 42 }), false, 'project id not a string');
     assert.equal(isHireCreate(null), false);
-});
-
-test('opening a session needs a bounded, non-empty hire id and never a path', () => {
-    assert.equal(isSessionOpen({ hireId: 'h1' }), true);
-    assert.equal(isSessionOpen({ hireId: '' }), false, 'empty is refused');
-    assert.equal(isSessionOpen({ hireId: 'x'.repeat(257) }), false, 'over the cap');
-    assert.equal(isSessionOpen({ hireId: 42 }), false, 'not a string');
-    assert.equal(isSessionOpen({}), false);
-    assert.equal(isSessionOpen(null), false);
-});
-
-test('a session resize needs a hire id and a bounded terminal size', () => {
-    assert.equal(isSessionResize({ hireId: 'h1', cols: 80, rows: 24 }), true);
-    assert.equal(isSessionResize({ hireId: 'h1', cols: 0, rows: 24 }), false, 'zero cols out of bounds');
-    assert.equal(isSessionResize({ hireId: 'h1', cols: 80, rows: 5000 }), false, 'over the ceiling');
-    assert.equal(isSessionResize({ hireId: '', cols: 80, rows: 24 }), false, 'empty hire id');
-    assert.equal(isSessionResize({ cols: 80, rows: 24 }), false, 'no hire id');
-    assert.equal(isSessionResize(null), false);
-});
-
-test('a session write needs a hire id and a bounded string', () => {
-    assert.equal(isSessionWrite({ hireId: 'h1', text: 'do the thing' }), true);
-    assert.equal(isSessionWrite({ hireId: 'h1', text: '' }), true, 'empty text is a valid shape');
-    assert.equal(isSessionWrite({ hireId: 'h1', text: 42 }), false, 'text must be a string');
-    assert.equal(isSessionWrite({ hireId: 'h1', text: 'x'.repeat(64 * 1024 + 1) }), false, 'over the cap');
-    assert.equal(isSessionWrite({ text: 'hi' }), false, 'no hire id');
-    assert.equal(isSessionWrite(null), false);
 });
 
 test('a channel page read takes a null-or-cursor before and a bounded limit', () => {

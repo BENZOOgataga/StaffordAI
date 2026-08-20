@@ -14,16 +14,14 @@
 import type { IpcMain, WebContents } from 'electron';
 import {
     INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot,
-    type SessionOpened, type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
+    type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
     type ProjectCreated, type HireCreated, type ActivityRow, type ActivityByHireReply,
     type SavedCheckpoints
 } from '../../shared/ipc.ts';
 import {
-    isSessionOpen, isSessionResize, isSessionWrite,
     isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
-import { OutputCoalescer } from './output-coalescer.ts';
 
 export interface HandlerDeps {
     readonly startedAt: string;
@@ -56,22 +54,6 @@ export interface HandlerDeps {
      * registry directly.
      */
     readonly rosterSnapshot: () => RosterSnapshot;
-    /**
-     * Subscribes to a hire's live terminal output, returning an unsubscribe. The
-     * listener is called with the replayed buffer first, then live chunks, per the
-     * PtySession replay-then-stream contract. A hire with no live session returns a
-     * no-op unsubscribe.
-     */
-    readonly subscribeSession: (hireId: string, listener: (data: string) => void) => () => void;
-    /** Propagates a pane resize to the pty. */
-    readonly resizeSession: (hireId: string, cols: number, rows: number) => void;
-    /** Whether a live session is up for a hire, so the renderer knows to expect output. */
-    readonly hasSession: (hireId: string) => boolean;
-    /**
-     * Submits a sanitised message to a hire's session, spawning or resuming if
-     * none is up. The handler sanitises and scopes; this delivers it.
-     */
-    readonly submitMessage: (hireId: string, text: string) => Promise<void>;
     /** A page of the timeline: the newest when `before` is null, else older rows. */
     readonly channelPage: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     /** Rows newer than a cursor, for the tail append. */
@@ -98,19 +80,6 @@ export interface HandlerDeps {
  * a throw becomes a rejected invoke on the renderer side.
  */
 export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload: unknown) => unknown> {
-    // The one open terminal's subscription and coalescer. Only the open card
-    // streams: opening closes any previous one first, so a card that is not open
-    // receives nothing, and closing stops the stream. Held here because streaming
-    // is stateful where the rest of the handlers are not.
-    let open: { hireId: string; unsubscribe: () => void; coalescer: OutputCoalescer } | null = null;
-
-    function closeOpen(): void {
-        if (!open) return;
-        open.unsubscribe();
-        open.coalescer.dispose();
-        open = null;
-    }
-
     return {
         health: (): HealthReport => ({
             ok: true,
@@ -152,27 +121,6 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         // than being pushed a card per hook event.
         'roster:snapshot': (): RosterSnapshot => deps.rosterSnapshot(),
 
-        // Opening a card's terminal. Closes any previously open one first, so only
-        // the open card streams. The coalescer batches a burst of pty output into
-        // one push over session:data. Replay comes through the same path first.
-        'session:open': (payload: unknown): SessionOpened => {
-            if (!isSessionOpen(payload)) throw new Error('session:open requires {hireId}');
-            closeOpen();
-            const coalescer = new OutputCoalescer({
-                sink: (data) => deps.sender()?.send('session:data', data)
-            });
-            const unsubscribe = deps.subscribeSession(payload.hireId, (data) => coalescer.push(data));
-            open = { hireId: payload.hireId, unsubscribe, coalescer };
-            return { live: deps.hasSession(payload.hireId) };
-        },
-
-        'session:close': (): void => { closeOpen(); },
-
-        'session:resize': (payload: unknown): void => {
-            if (!isSessionResize(payload)) throw new Error('session:resize requires {hireId,cols,rows}');
-            deps.resizeSession(payload.hireId, payload.cols, payload.rows);
-        },
-
         // The timeline, read-only and paginated. `before` null loads the newest
         // page; a cursor loads older rows for scroll-back. Never a read-everything.
         'channel:page': (payload: unknown): ChannelPageReply => {
@@ -213,19 +161,6 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'channel:reply': (payload: unknown): Promise<void> => {
             if (!isChannelReply(payload)) throw new Error('channel:reply requires {hireId,text}');
             return deps.channelReply(payload.hireId, sanitiseMessage(payload.text));
-        },
-
-        // A typed message. Scoped to the open card: the renderer names the hire, and
-        // main only writes to the session whose card is currently open, so a stale
-        // write from a card no longer open cannot land on the previous session and
-        // the renderer cannot reach a process it does not have open. The text is
-        // sanitised here, at the trust boundary, before it reaches stdin.
-        'session:write': (payload: unknown): Promise<void> => {
-            if (!isSessionWrite(payload)) throw new Error('session:write requires {hireId,text}');
-            if (!open || open.hireId !== payload.hireId) {
-                throw new Error('session:write refused: that session is not the open card');
-            }
-            return deps.submitMessage(open.hireId, sanitiseMessage(payload.text));
         }
     };
 }
