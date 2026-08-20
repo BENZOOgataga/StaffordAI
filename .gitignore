@@ -36,3 +36,7 @@ desktop.ini
 # Build output
 out/
 dist/
+
+# electron-vite writes a temporary resolved config beside the real one during dev.
+electron.vite.config.*.timestamp-*.mjs
+electron.vite.config.*.mjs
