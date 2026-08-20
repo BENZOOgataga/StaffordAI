@@ -16,7 +16,6 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog, screen } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
-import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { currentPlatform } from './platform/index.ts';
@@ -30,46 +29,34 @@ import { openDatabase, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
-import { preTrustDirectory } from './agents/pre-trust.ts';
 import { seedManagedConfig, type ManagedFs } from './agents/managed-config.ts';
-import { buildCommand, hookShellFor, claudeShellFor, desiredHooks, unregister, addExcludeEntry, type Settings } from './hooks/registration.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
-import { startHookTransport, stopHookTransport, assertLaunchable, type HookTransport } from './hooks/transport.ts';
 import { runDrain, type DrainableAgent, type CheckpointResult } from './agents/drain.ts';
 import { checkpointRepo } from './agents/checkpoint-executor.ts';
 import { realCheckpointDeps } from './agents/checkpoint-git.ts';
-import { SessionRegistry, hireStoreOver, coerceHookEvent, type HireStore } from './hooks/session-registry.ts';
+import { killTree } from './agents/kill-tree.ts';
+import { hireStoreOver, type HireStore } from './storage/hire-store.ts';
 import { assembleRoster } from './roster/snapshot.ts';
-import { SessionLifecycle } from './agents/session-lifecycle.ts';
 import { ClaudeRunnerManager } from './agents/runner-manager.ts';
 import { locateClaude } from './agents/claude-locator.ts';
-import { readTrust } from './agents/trust.ts';
-import { recordTransition } from './channel/channel-events.ts';
-import { TranscriptManager, coerceObservation } from './activity/transcript-manager.ts';
 import { savedNoticeFor } from './checkpoints/saved-work.ts';
-import { ActivityCoalescer, shouldPersist, type CoalescedAction } from './activity/activity-coalesce.ts';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { RosterSnapshot, ActivityRow, SavedCheckpoints } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
-import type { PtyLike } from './agents/pty-session.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
 // The runtime app id, `Stafford` by default. STAFFORD_APP_ID overrides it for an
 // isolated verification run, scoping the hook pipe and the data dir together so
 // the run coexists with a running Stafford instead of colliding on its endpoints.
-const { appId: APP_ID, overridden: APP_ID_OVERRIDDEN } = resolveAppId(process.env);
+const { appId: APP_ID } = resolveAppId(process.env);
 
 let store: OpenResult | null = null;
 let repositories: Repositories | null = null;
-let transport: HookTransport | null = null;
-let registry: SessionRegistry | null = null;
-let lifecycle: SessionLifecycle | null = null;
-// The headless delivery path (phase 3 of the stream-json migration). When present, it
-// is the path that actually handles messages; the pty lifecycle above goes dormant.
+// The headless delivery path (the stream-json runner). It is the only path that
+// handles messages now; the old pty/hook/lifecycle stack was removed in phase 4.
 let runnerManager: ClaudeRunnerManager | null = null;
-let transcriptManager: TranscriptManager | null = null;
 
 /**
  * Opens the database and brings it to the current schema, before anything a user
@@ -153,82 +140,6 @@ function restrictToOwner(target: string, opts: { tree: boolean }): void {
     } catch {
         process.stderr.write('[managed-config] ACL tool unavailable; managed config relies on the inherited ACL\n');
     }
-}
-
-/**
- * A real on-disk path to the hook forwarder that the hook can read.
- *
- * The forwarder is bundled next to the built main (`out/main/claude-hook.cjs`),
- * which in a packaged app is inside `app.asar`. The hook launches the forwarder
- * with `ELECTRON_RUN_AS_NODE`, where Electron's asar support is off, so a path
- * inside the asar would not be readable. This process is asar-aware, so it reads
- * the bundled copy and writes it once to a real path under userData, and the hook
- * points at that. In development the bundled copy is already a real file, but the
- * same copy keeps the two paths identical. Falls back to the source tree if the
- * bundled copy is somehow absent.
- */
-function resolveForwarder(): string {
-    const bundled = path.join(dir, 'claude-hook.cjs');
-    try {
-        const source = fs.readFileSync(bundled);
-        const target = path.join(app.getPath('userData'), 'claude-hook.cjs');
-        let current: Buffer | null = null;
-        try { current = fs.readFileSync(target); } catch { current = null; }
-        if (!current || !current.equals(source)) fs.writeFileSync(target, source);
-        return target;
-    } catch {
-        return path.join(process.cwd(), 'hooks', 'claude-hook.cjs');
-    }
-}
-
-/**
- * Registers Stafford's hooks in a project's own `.claude/settings.local.json`,
- * merging with whatever is there, and keeps the file out of the user's git via
- * `.git/info/exclude`. Runs before each spawn; merge is idempotent, so a
- * re-registration cannot double an entry. This is what makes a spawned colleague's
- * state actually reach Stafford.
- */
-/**
- * Removes Stafford's hooks from a project's `.claude/settings.local.json`.
- *
- * Stafford's hooks now live in the managed config dir, scoped to colleague sessions
- * by `CLAUDE_CONFIG_DIR`. An earlier build wrote them into the shared project file,
- * where the user's own Claude Code session in the same repo reads them and fails,
- * on Windows with a bash syntax error because the command is PowerShell. So this
- * strips any Stafford entries left in the project file, healing that leak, and never
- * writes new ones there. The exclude entry stays as defence against a future write.
- */
-function cleanupProjectHooks(cwd: string): void {
-    const settingsPath = path.join(cwd, '.claude', 'settings.local.json');
-    try {
-        const existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Settings;
-        const next = unregister(existing);
-        const before = JSON.stringify(existing);
-        const after = JSON.stringify(next);
-        if (after !== before) writeConfigAtomic(settingsPath, JSON.stringify(next, null, 2) + '\n');
-    } catch {
-        // No project settings file, or unreadable: nothing of ours to clean.
-    }
-
-    // Local to this clone, never committed, so an agent running git status in the
-    // project cannot commit a stale Stafford entry into the user's repository.
-    try {
-        if (!fs.existsSync(path.join(cwd, '.git'))) return;
-        const excludePath = path.join(cwd, '.git', 'info', 'exclude');
-        fs.mkdirSync(path.dirname(excludePath), { recursive: true });
-        const content = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
-        const next = addExcludeEntry(content);
-        if (next !== content) fs.writeFileSync(excludePath, next);
-    } catch {
-        // Best effort: a missing or unwritable .git is not worth failing the spawn.
-    }
-}
-
-/** Stafford's hook settings, shell-pinned, for the managed config dir the colleague reads. */
-function staffordHookSettings(): { hooks: ReturnType<typeof desiredHooks> } {
-    const shellId = hookShellFor(currentPlatform().id);
-    const command = buildCommand(process.execPath, resolveForwarder(), shellId);
-    return { hooks: desiredHooks(command, claudeShellFor(shellId)) };
 }
 
 /** True iff the path is an existing directory. The create flow's load-bearing check. */
@@ -397,86 +308,20 @@ function openWindow(): void {
 }
 
 /**
- * Brings the hook transport up at launch, and runs the agent-readiness gate.
- *
- * Placed after the DB open and before the tray. The socket is security-critical
- * and must be up before the UI can offer any action that spawns an agent, and
- * the bring-up is cheap: a named pipe create on Windows, a directory chmod plus a
- * bind on macOS, no migration-sized I/O. So it sits ahead of the tray at no
- * perceptible cost, and the transport is proven up before anything can connect.
- *
- * Two separate gates, two separate failures. `assertLaunchable` refuses if the
- * Claude binary is absent or a self-check fails, because a machine that cannot
- * run an agent should refuse rather than present a tray that does nothing.
- * `startHookTransport` refuses on a socket mode mismatch or a bind failure,
- * because a hook socket in the wrong place is an exposure. Either failure shows a
- * visible error and quits, rather than half-starting.
- *
- * Nothing consumes a hook event yet. A connection is accepted and acknowledged;
- * mapping an event to agent state is the next step, kept separate on purpose.
- */
-/**
- * Spawns a throwaway pty and kills it, to prove the spawn-and-kill layer works
- * before the app claims it can run agents. The same shape the harness uses.
- *
- * process.execPath is the Electron binary in a packaged app, so it is run with
- * ELECTRON_RUN_AS_NODE to evaluate a no-op and exit, rather than launching a
- * second Stafford. In development, where execPath is already node, the env is
- * harmless.
- */
-function canSpawnAndKill(): boolean {
-    const require = createRequire(import.meta.url);
-    const nodePty = require('node-pty') as {
-        spawn: (file: string, args: readonly string[], options: Record<string, unknown>) => { kill(): void };
-    };
-    const term = nodePty.spawn(process.execPath, ['-e', '0'], {
-        name: 'xterm-256color', cols: 80, rows: 24, cwd: process.cwd(),
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: process.env.PATH ?? '' }
-    });
-    try { term.kill(); } catch { /* opening it is the question, not closing it */ }
-    return true;
-}
-
-async function startTransport(): Promise<boolean> {
-    const platform = currentPlatform();
-    const home = os.homedir();
-    try {
-        assertLaunchable(platform, home, APP_ID, canSpawnAndKill);
-        transport = await startHookTransport({ platform, home, appId: APP_ID });
-        smoke('app id ' + APP_ID + (APP_ID_OVERRIDDEN ? ' (overridden, isolated run)' : ' (default)'));
-        smoke('hook transport up at ' + transport.socketPath + ' | ' + transport.accessDetail);
-        smoke('socket setup: ' + JSON.stringify(transport.report));
-        return true;
-    } catch (error) {
-        const message = 'Stafford could not start its hook transport and will not run:\n\n' +
-            (error instanceof Error ? error.message : String(error));
-        process.stderr.write('[fatal] ' + message + '\n');
-        try { dialog.showErrorBox('Stafford', message); } catch { /* headless */ }
-        app.quit();
-        return false;
-    }
-}
-
-/**
- * The active agent sessions the drain checkpoints. Empty until a roster maps hook
- * events to live agents, which is the step after this one. The drain runs against
- * an empty set now, so the quit path is wired and proven end to end while the
- * behaviour that fills it is tested with stubs in drain.test.ts.
+ * The active colleagues the drain checkpoints on quit: whichever the runner served
+ * this run. Each carries its in-flight child pid (or null between turns) and a
+ * checkpoint that commits its tracked work.
  */
 function activeDrainables(): DrainableAgent[] {
-    // Both paths contribute: the registry drains live pty sessions (dormant in phase 3
-    // but harmless), the runner manager drains the colleagues it served headless, so a
-    // colleague's tracked work is still checkpointed on quit whichever path ran it.
-    return [
-        ...(registry ? registry.drainables() : []),
-        ...(runnerManager ? runnerManager.drainables() : [])
-    ];
+    return runnerManager ? runnerManager.drainables() : [];
 }
 
 /**
- * The roster as cards, assembled from the persisted hires and the live registry.
- * Read-only and bounded, one card per hire. The task line is null until task
- * dispatch exists; the field is a real seam, not invented data.
+ * The roster as cards, assembled from the persisted hires. Read-only and bounded,
+ * one card per hire. State is written by the runner on the hire itself, so a card
+ * reads its state straight from the store; the live overlay (elapsed time) and the
+ * context-lost flag belonged to the removed pty lifecycle and are null/false now.
+ * The task line is null until task dispatch exists; the field is a real seam.
  */
 function rosterSnapshot(): RosterSnapshot {
     if (!repositories) return { cards: [] };
@@ -484,9 +329,9 @@ function rosterSnapshot(): RosterSnapshot {
     return assembleRoster({
         hires: repositories.hires.all(),
         projectName: (id) => names.get(id) ?? null,
-        live: (hireId) => (registry ? registry.liveInfoByHire(hireId) : null),
+        live: () => null,
         currentTask: () => null,
-        contextLost: (hireId) => (lifecycle ? lifecycle.contextLost(hireId) : false)
+        contextLost: () => false
     });
 }
 
@@ -500,20 +345,14 @@ function notifyChannelChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('channel:changed');
 }
 
-/** Pushes one activity action to the Activity feed, so it appends the row live. */
-function notifyActivityAppended(row: ActivityRow): void {
-    if (window && !window.isDestroyed()) window.webContents.send('activity:appended', row);
-}
 
 /**
- * Builds the session lifecycle: the owner of live Claude sessions. It is dormant
- * until the first message (the detail view is 3b), but constructing it wires the
- * shared teardown into the registry, so at quit the drain reaps a real session
- * through the same path an idle shutdown will. If no Claude binary is located, the
- * shell runs without it and a spawn would surface the error when 3b lands.
+ * Builds the headless delivery path: the ClaudeRunnerManager, the only thing that
+ * runs Claude sessions now. If no Claude binary is located, the shell runs without
+ * it and a submit would surface the error.
  */
-function buildLifecycle(store: HireStore): void {
-    if (!repositories || !transport || !registry) return;
+function buildDelivery(store: HireStore): void {
+    if (!repositories) return;
     const platform = currentPlatform();
     const home = os.homedir();
 
@@ -523,14 +362,10 @@ function buildLifecycle(store: HireStore): void {
             platform, home, pathValue: process.env.PATH ?? '', exists: (c) => fs.existsSync(c)
         }).path;
     } catch (error) {
-        smoke('lifecycle unavailable, no Claude binary located: ' +
+        smoke('delivery unavailable, no Claude binary located: ' +
             (error instanceof Error ? error.message : String(error)));
         return;
     }
-
-    const nodePty = createRequire(import.meta.url)('node-pty') as {
-        spawn: (file: string, args: readonly string[], options: Record<string, unknown>) => PtyLike;
-    };
 
     // Stafford's own Claude config dir, under userData and so outside every project
     // repo: the checkpoint executor only commits tracked files inside the project
@@ -538,12 +373,9 @@ function buildLifecycle(store: HireStore): void {
     // it relocates Claude's config off the user's ~/.claude, which is what keeps the
     // user's global plugins and foreign hooks out of a colleague session.
     const managedConfigDir = path.join(app.getPath('userData'), 'claude-config');
-    const managedConfigJson = path.join(managedConfigDir, '.claude.json');
 
     // The key Claude matches a cwd to: real case, forward slashes. Shared by the seed
-    // and pre-trust so their keys agree, which keeps pre-trust a no-op after the seed
-    // has already set the trust key (so it never rewrites the credential-bearing
-    // .claude.json at broadened permissions).
+    // so the trust key it writes matches the cwd Claude resolves.
     const resolveTrustKey = (dir: string): string => {
         try {
             return fs.realpathSync.native(dir).replace(/\\/g, '/');
@@ -583,81 +415,10 @@ function buildLifecycle(store: HireStore): void {
         join: (...parts) => path.join(...parts)
     };
 
-    lifecycle = new SessionLifecycle({
-        platform,
-        socketPath: transport.socketPath,
-        secrets: transport.secrets,
-        registry,
-        claudePath,
-        nodeDir: path.dirname(process.execPath),
-        parentEnv: process.env,
-        spawn: (file, args, options) => nodePty.spawn(file, args, options),
-        resolveTarget: (hireId) => {
-            const hire = repositories?.hires.get(hireId);
-            if (!hire || !hire.activeProjectId) return null;
-            const project = repositories?.projects.get(hire.activeProjectId);
-            const cwd = project?.repos[0]?.path;
-            if (!cwd) return null;
-            // A stored session id for this project resumes; nothing cold-spawns.
-            return {
-                projectId: hire.activeProjectId, cwd,
-                resumeSessionId: hire.sessions[hire.activeProjectId] ?? null
-            };
-        },
-        setState: (hireId, state) => store.setState(hireId, state),
-        // Trust is read from the managed config the isolated session actually reads,
-        // not the user's ~/.claude.json.
-        trustFor: (cwd) => readTrust({
-            platform, dir: cwd, configPath: managedConfigJson,
-            readFile: (p) => fs.readFileSync(p, 'utf8')
-        }),
-        // Seed the managed config dir: credential carried in, project trust and
-        // account written, plugin-free settings. This is what isolates the user's
-        // global plugins from the colleague. Directory 0700, credential 0600.
-        seedManagedConfig: (cwd) => {
-            const result = seedManagedConfig(
-                { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
-                    settings: staffordHookSettings(),
-                    warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
-                cwd
-            );
-            // A one-line log with no token and no listing: just whether auth was carried.
-            smoke('managed config seeded, credential carried: ' + result.credentialCopied);
-        },
-        claudeConfigDir: managedConfigDir,
-        // Pre-trust the project directory the user chose, so the spawn skips the
-        // startup trust prompt. Writes into the managed config the isolated session
-        // reads. Idempotent after the seed, which already set this key.
-        preTrust: (cwd) => preTrustDirectory({
-            configPath: managedConfigJson,
-            readFile: (p) => fs.readFileSync(p, 'utf8'),
-            writeFile: writeConfigAtomic,
-            resolveKey: resolveTrustKey,
-            warn: (message) => process.stderr.write('[pre-trust] ' + message + '\n')
-        }, cwd),
-        // Stafford's hooks live in the managed config dir (seeded above), scoped to
-        // the colleague session. This only strips any stale copies an older build
-        // left in the shared project file, so the user's own session does not fail.
-        registerHooks: (cwd) => cleanupProjectHooks(cwd),
-        // Drop a stale session id whose resume failed, so the next open does not
-        // resume it again. The fresh session records its own id through the rendezvous.
-        clearStoredSession: (hireId) => {
-            const hire = repositories?.hires.get(hireId);
-            if (!hire || !hire.activeProjectId) return;
-            if (!(hire.activeProjectId in hire.sessions)) return;
-            const sessions = { ...hire.sessions };
-            delete sessions[hire.activeProjectId];
-            repositories?.hires.update({ ...hire, sessions });
-        },
-        onStateChanged: () => notifyRosterChanged()
-    });
-    smoke('lifecycle ready, claude at ' + claudePath);
-
-    // The headless delivery path (phase 3). It routes a colleague's messages through
-    // the stream-json ClaudeRunner instead of typing into a pty, which removes the
-    // whole class of TUI delivery bugs (swallowed first message, concatenation, drops).
-    // It reuses the same isolation seed and CLAUDE_CONFIG_DIR as the pty path, resolves
-    // the same target, persists the session id in the same hires.sessions slot, and
+    // The headless delivery path. It routes a colleague's messages through the
+    // stream-json ClaudeRunner: no pty, no typing, no readiness wait, no retry. It
+    // seeds the managed config and passes CLAUDE_CONFIG_DIR for #61 isolation, resolves
+    // the cwd and resume id, persists the session id in the hires.sessions slot, and
     // records Claude's replies into the #62 conversation so both sides are visible.
     runnerManager = new ClaudeRunnerManager({
         claudePath,
@@ -675,16 +436,22 @@ function buildLifecycle(store: HireStore): void {
                 resumeSessionId: hire.sessions[hire.activeProjectId] ?? null
             };
         },
-        // #61 isolation, unchanged: seed the managed dir before every turn.
+        // #61 isolation, unchanged: seed the managed dir before every turn. Settings are
+        // hook-free now: the runner derives state from the stream, so no Stafford hooks
+        // are registered into the managed config any more (the hook stack was removed).
         seedManagedConfig: (cwd) => {
             const result = seedManagedConfig(
                 { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
-                    settings: staffordHookSettings(),
+                    settings: {},
                     warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
                 cwd
             );
             smoke('managed config seeded (runner), credential carried: ' + result.credentialCopied);
         },
+        // Reap a finished turn's whole process tree from its own child pid down, so a
+        // tool grandchild in its own group is not orphaned. killTree walks only that pid;
+        // it never kills by image name, so the host's own Claude session is untouched.
+        reapChild: (pid) => { void killTree(currentPlatform(), pid); },
         // The session id persists in the same place the pty path stored it.
         bindSession: (hireId, projectId, sessionId) => store.bindSession(hireId, projectId, sessionId),
         setState: (hireId, state) => store.setState(hireId, state),
@@ -730,32 +497,10 @@ async function quit(): Promise<void> {
     proofQuitting = true;
     proof.kill();
 
-    // Stop the transcript tailers. They only read files and hold an unref'd timer,
-    // so they cannot block the quit, but stopping them is tidy and deterministic.
-    transcriptManager?.stopAll();
-    transcriptManager = null;
-
-    // Socket first, then sessions. The hook socket is the inbound agent-event
-    // channel and holds no state worth saving, so closing it first shuts the gate:
-    // the drain then checkpoints a stable set of sessions with nothing new arriving.
-    // The sessions hold the working trees, the valuable resource, so they get the
-    // full drain grace after the gate is shut. Awaited so no stale pipe or socket
-    // file lingers.
-    if (transport) {
-        await stopHookTransport(transport).catch(() => {});
-        transport = null;
-    }
-
-    // Disarm every session's idle and not-reporting timers before the drain, so
-    // neither can fire mid-drain and race the drain's own teardown. The shared
-    // teardown is idempotent, so a race would still resolve cleanly, but ordering
-    // it this way means the drain owns teardown for the whole shutdown.
-    lifecycle?.disarmTimers();
-
-    // Drain the active sessions: checkpoint, bounded wait, force-kill what remains,
-    // one durable report row per agent. Bounded by its own total cap, so a stuck
-    // agent cannot hold the quit. A drain failure must not block the quit either,
-    // so it is caught and the quit proceeds.
+    // Drain the colleagues the runner served: checkpoint, bounded wait, force-kill what
+    // remains, one durable report row per agent. Bounded by its own total cap, so a stuck
+    // agent cannot hold the quit. A drain failure must not block the quit either, so it is
+    // caught and the quit proceeds.
     if (repositories) {
         try {
             await runDrain({
@@ -764,15 +509,10 @@ async function quit(): Promise<void> {
                 sink: repositories.drainReports,
                 drainId: 'drain-' + new Date().toISOString(),
                 now: () => new Date().toISOString(),
-                // Force-kill reaps a timed-out session. The runner manager disposes its
-                // in-flight child by exact pid (never by image name), and the lifecycle
-                // tears down any pty session, so a colleague from either path is reaped.
-                // When neither is up, the drain falls back to its own killTree.
-                ...((runnerManager || lifecycle) ? {
-                    forceKill: (agent) => {
-                        runnerManager?.dispose(agent.agentId);
-                        return lifecycle ? lifecycle.teardown(agent.agentId) : Promise.resolve();
-                    }
+                // Force-kill reaps a timed-out turn: the runner manager disposes its
+                // in-flight child through a tree reap by exact pid, never by image name.
+                ...(runnerManager ? {
+                    forceKill: (agent) => { runnerManager?.dispose(agent.agentId); return Promise.resolve(); }
                 } : {})
             });
         } catch (error) {
@@ -867,99 +607,14 @@ app.whenReady().then(async () => {
     // app has already quit inside openStore and there is nothing more to do.
     if (!openStore()) return;
 
-    // The hook transport next, after the store gives its socket somewhere to
-    // live and before the tray can offer to spawn anything. If it cannot come
-    // up, the app has already quit inside startTransport.
-    if (!(await startTransport())) return;
-
-    // Connect the live listener to the state machine. A real inbound hook event
-    // now drives a hire's state through the existing applyEvent path and registers
-    // its session into the drainable set, so the drain no longer drains nothing.
-    // repositories and transport are both set above, or the app already quit.
-    if (repositories && transport) {
+    // Build the headless delivery path. State, session id, replies, and the drain all
+    // flow through the runner now; there is no hook transport, socket, or registry any
+    // more. The activity feed's live writer was fed by those hooks and is gone with them;
+    // its persisted rows still read from the DB, and re-feeding it from the runner's
+    // transcript is future work.
+    if (repositories) {
         const store = hireStoreOver(repositories);
-        registry = new SessionRegistry(store);
-        // The git checkpoint executor. On drain, a session's tracked work is committed
-        // to a checkpoint branch before the session is reaped, so committed=true in the
-        // drain report is real. The executor is bounded and always resolves, so it fits
-        // inside the drain's per-agent budget without a new unbounded path.
-        registry.setCheckpointRunner((cwd, hireId) =>
-            checkpointRepo(realCheckpointDeps(currentPlatform()), {
-                cwd, hireId, stamp: new Date().toISOString()
-            }).then((o): CheckpointResult => ({
-                committed: o.committed, branch: o.branch, commitId: o.commitId,
-                reason: o.committed ? null : (o.reason === 'error' && o.detail ? 'error: ' + o.detail : o.reason)
-            })));
-        transport.listener.on('event', (raw: Record<string, unknown>) => {
-            const now = new Date().toISOString();
-            const result = registry?.ingest(coerceHookEvent(raw), now);
-            if (result?.changed) {
-                smoke('hook drove ' + result.hireId + ' to ' + result.state);
-                // A transition, so the roster changed. The renderer re-reads on
-                // this signal rather than being pushed a card per hook event.
-                notifyRosterChanged();
-                // The same real-change signal drives a channel timeline row, when
-                // the state earns one. A card-only state writes nothing.
-                if (repositories && recordTransition(repositories.channel, result, now, randomUUID())) {
-                    smoke('channel event for ' + result.hireId + ' ' + result.state);
-                    // A row landed, so the channel view fetches the new tail.
-                    notifyChannelChanged();
-                }
-            }
-        });
-        buildLifecycle(store);
-
-        // A second, independent consumer of the same hook stream, for the rich
-        // activity feed. It reads only the transcript path off each record and
-        // tails Claude's own transcript for tool events. It is wrapped so a fault
-        // in it can never reach the state path above: a throw here is swallowed,
-        // and the module cannot even import the registry, state, or drain, which a
-        // test asserts.
-        //
-        // The events are coalesced (a use plus its result become one action) and the
-        // accomplishment set is persisted per colleague, resolving the hire from the
-        // session read-only. This write path is separate from the state path: it
-        // touches only activity_events, never a state table, the registry, or the
-        // turn-paced transition writes, so it cannot regress the state cadence or the
-        // drain. The rich rows are piece 3.
-        const coalescer = new ActivityCoalescer();
-        const handleAction = (action: CoalescedAction): void => {
-            const sessionId = action.sessionId;
-            const binding = sessionId ? store.findBySession(sessionId) : null;
-            if (!binding || !repositories) return; // unattributable, so neither stored nor shown
-            // The accomplishment set is persisted; a read or search is live-only, shown
-            // while the colleague is open and gone on reopen. Either way the action is
-            // pushed to the open renderer so the feed is rich in the moment.
-            const id = randomUUID();
-            const stored = shouldPersist(action.tool);
-            if (stored) {
-                repositories.activity.append({
-                    id, hireId: binding.hireId, sessionId,
-                    tool: action.tool, target: action.target, status: action.status, at: action.at
-                });
-            }
-            notifyActivityAppended({
-                id, hireId: binding.hireId, tool: action.tool, target: action.target,
-                status: action.status, at: action.at, live: !stored
-            });
-            smoke('activity ' + (stored ? 'persisted' : 'live') + ' ' + binding.hireId + ' ' +
-                action.tool + (action.target ? ' ' + action.target : '') + ' [' + action.status + ']');
-        };
-        transcriptManager = new TranscriptManager({
-            now: () => new Date().toISOString(),
-            onEvents: (events) => { for (const action of coalescer.ingest(events)) handleAction(action); },
-            onSessionEnd: (agentId) => { for (const action of coalescer.flush(agentId)) handleAction(action); },
-            onDebug: (message) => smoke('transcript: ' + message)
-        });
-        transport.listener.on('event', (raw: Record<string, unknown>) => {
-            try {
-                transcriptManager?.observe(coerceObservation(raw));
-            } catch (error) {
-                // The rich feed must never disturb the state feed. Swallow and note.
-                smoke('transcript observe error (ignored): ' +
-                    (error instanceof Error ? error.message : String(error)));
-            }
-        });
+        buildDelivery(store);
     }
 
     // Never register the login item during a smoke run. A smoke run launches
@@ -999,16 +654,15 @@ app.whenReady().then(async () => {
             return createHireService(createDeps(repositories), payload);
         },
         rosterSnapshot,
-        // The detail view's live terminal, over the session the lifecycle owns.
-        // No lifecycle (no Claude located) means no session to stream or resize.
-        subscribeSession: (hireId, listener) => (lifecycle ? lifecycle.subscribe(hireId, listener) : () => {}),
-        resizeSession: (hireId, cols, rows) => { lifecycle?.resize(hireId, cols, rows); },
-        hasSession: (hireId) => (lifecycle ? lifecycle.has(hireId) : false),
-        // Delivery goes through the headless runner when it is up (phase 3); the pty
-        // lifecycle stays only as a dormant fallback until phase 4 removes it.
-        submitMessage: (hireId, text) => (runnerManager
-            ? runnerManager.submit(hireId, text)
-            : (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve())),
+        // The detail view's live terminal was fed by the pty, which is gone. There is
+        // no live pty stream to subscribe to or resize now; the Terminal tab shows an
+        // interim note and the rendered transcript replaces it in a later phase. These
+        // stay as no-ops so the IPC surface is unchanged for the renderer.
+        subscribeSession: () => () => {},
+        resizeSession: () => {},
+        hasSession: () => false,
+        // Delivery goes through the headless runner, the only path now.
+        submitMessage: (hireId, text) => (runnerManager ? runnerManager.submit(hireId, text) : Promise.resolve()),
         // The timeline reads: the newest page, older rows for scroll-back, and the
         // tail after a cursor for the append on channel:changed.
         channelPage: (before, limit) => (repositories
@@ -1031,11 +685,8 @@ app.whenReady().then(async () => {
         // The saved-work notice: the most recent committed drain, and the dismissal.
         savedCheckpoints: () => savedCheckpoints(),
         ackCheckpoints: (drainId) => ackCheckpoints(drainId),
-        // A reply records a message from the person in the timeline, then delivers
-        // it to the colleague through the lifecycle, the same submitMessage path a
-        // first message and the 3b input use. No second session path: the lifecycle
-        // spawns, resumes, or writes to a live session, and a fresh start after a
-        // dead session surfaces the existing context-lost note.
+        // A reply records the person's message in the timeline, then delivers it to the
+        // colleague through the runner, the same submitMessage path the detail input uses.
         channelReply: async (hireId, text) => {
             if (repositories) {
                 const hire = repositories.hires.get(hireId);
@@ -1048,9 +699,7 @@ app.whenReady().then(async () => {
                 });
                 notifyChannelChanged();
             }
-            await (runnerManager
-                ? runnerManager.submit(hireId, text)
-                : (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve()));
+            await (runnerManager ? runnerManager.submit(hireId, text) : Promise.resolve());
         }
     });
 

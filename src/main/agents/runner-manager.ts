@@ -31,7 +31,7 @@
  * Tested against Claude Code 2.1.237 (same as phase 2).
  */
 
-import { ClaudeRunner, autoApproveTool, type CanUseTool, type SpawnFn, type WireDirection } from './claude-runner.ts';
+import { ClaudeRunner, autoApproveTool, type CanUseTool, type RunnerChild, type SpawnFn, type WireDirection } from './claude-runner.ts';
 import { AGENT_STATES, type AgentState } from '../../domain/agent-state.ts';
 import type { CheckpointResult, DrainableAgent } from './drain.ts';
 
@@ -65,6 +65,13 @@ export interface RunnerManagerDeps {
     readonly checkpointRunner?: (cwd: string, hireId: string) => Promise<CheckpointResult>;
     /** The raw wire tap, env-gated by the caller. Both directions, verbatim. */
     readonly traceWire?: (hireId: string, line: string, direction: WireDirection) => void;
+    /**
+     * Reaps a finished turn's whole process tree from its own child pid down, so a tool
+     * grandchild in its own process group is not left orphaned. The caller supplies a
+     * killTree walk rooted at that pid; it never kills by image name. When absent, the
+     * runner falls back to a single-pid kill.
+     */
+    readonly reapChild?: (pid: number) => void;
     /** The spawn seam, passed to each ClaudeRunner. Defaults to node's spawn. */
     readonly spawn?: SpawnFn;
     /** The permission seam. Defaults to auto-approve. */
@@ -185,6 +192,13 @@ export class ClaudeRunnerManager {
             canUseTool: this.#deps.canUseTool ?? autoApproveTool,
             ...(this.#deps.spawn ? { spawn: this.#deps.spawn } : {}),
             ...(this.#deps.timeoutMs !== undefined ? { timeoutMs: this.#deps.timeoutMs } : {}),
+            // Reap the whole tree when a turn's child is disposed, so no tool grandchild
+            // is orphaned. Falls back to the runner's single-pid kill if no reaper is set.
+            ...(this.#deps.reapChild
+                ? { killChild: (child: RunnerChild) => {
+                    if (child.pid) this.#deps.reapChild!(child.pid); else child.kill();
+                } }
+                : {}),
             ...(this.#deps.traceWire
                 ? { onRawLine: (l: string, d: WireDirection) => this.#deps.traceWire!(hireId, l, d) }
                 : {})

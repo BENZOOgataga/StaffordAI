@@ -89,31 +89,6 @@ export interface KillTreePlan {
     readonly detail: string;
 }
 
-/**
- * Everything needed to bring up the hook socket, as data.
- *
- * `path` is a pipe name on Windows and a filesystem path on POSIX, which is why
- * the other fields exist: a pipe has no parent directory to create and leaves
- * no file behind, a socket file has both.
- */
-export interface SocketPlan {
-    readonly path: string;
-    /** Directory to create first, or null when the OS namespace needs none. */
-    readonly parentDir: string | null;
-    /** Mode to apply to that directory, or null when the OS carries no mode. */
-    readonly parentMode: number | null;
-    /** Unix sockets leave a file behind after a crash. Named pipes do not. */
-    readonly removeStaleFile: boolean;
-    /**
-     * What the operating system actually guarantees about who can connect.
-     * Measured, not assumed: on Windows the default named pipe descriptor
-     * grants Everyone read access, which is why per-agent secrets exist.
-     */
-    readonly ownerOnly: boolean;
-    /** Written to the log at startup so the guarantee is visible, not implied. */
-    readonly accessDetail: string;
-}
-
 /** A registry value to read. Empty on platforms without a registry. */
 export interface RegistryLookup {
     readonly key: string;
@@ -212,10 +187,6 @@ export interface Platform {
      */
     readonly supported: boolean;
 
-    // --- hook transport -----------------------------------------------------
-
-    hookSocket(appId: string, home: string): SocketPlan;
-
     // --- agent environment --------------------------------------------------
 
     /** Copied from the parent environment. Nothing else is. */
@@ -271,8 +242,7 @@ export interface Platform {
      * and left the tool child running, because Claude Code runs its Bash tool
      * through a wrapper that leads its own process group.
      *
-     * Same reasoning as `hookSocket` returning a `SocketPlan` rather than a
-     * path. The platform says what to do; `kill-tree.ts` does it.
+     * The platform says what to do as data; `kill-tree.ts` does it.
      */
     killTreePlan(pid: number): KillTreePlan;
 

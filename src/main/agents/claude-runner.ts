@@ -155,6 +155,13 @@ export interface ClaudeRunnerDeps {
     readonly timeoutMs?: number;
     /** The spawn seam. Defaults to node's spawn. */
     readonly spawn?: SpawnFn;
+    /**
+     * How the child is torn down. Defaults to a single-pid `child.kill()`. The manager
+     * injects a full process-tree reap (killTree from the child's own pid down), so a
+     * tool grandchild in its own process group is reaped too, not left orphaned. It
+     * still only ever walks the runner's own child pid; it never kills by image name.
+     */
+    readonly killChild?: (child: RunnerChild) => void;
     /** Escape hatch for extra CLI args (for example a model pin). Rarely needed. */
     readonly extraArgs?: readonly string[];
 }
@@ -168,6 +175,7 @@ export class ClaudeRunner {
     readonly #deps: ClaudeRunnerDeps;
     readonly #spawn: SpawnFn;
     readonly #canUseTool: CanUseTool;
+    readonly #killChild: (child: RunnerChild) => void;
     #child: RunnerChild | null = null;
     #interrupted = false;
 
@@ -175,6 +183,7 @@ export class ClaudeRunner {
         this.#deps = deps;
         this.#spawn = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
         this.#canUseTool = deps.canUseTool ?? autoApproveTool;
+        this.#killChild = deps.killChild ?? ((child) => { child.kill(); });
     }
 
     /** The spawned child's pid, or null before spawn / after teardown. */
@@ -359,7 +368,7 @@ export class ClaudeRunner {
         if (!child) return;
         this.#child = null;
         try {
-            child.kill();
+            this.#killChild(child);
         } catch {
             // Already gone. Killing a dead pid is not an error worth surfacing.
         }

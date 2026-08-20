@@ -29,27 +29,6 @@ function copyMigrations() {
 }
 
 /**
- * Copies the hook forwarder next to the built main bundle.
- *
- * `index.ts` resolves the forwarder relative to its own module directory
- * (`out/main`), which is where a spawned Claude Code session's hook launches it
- * from. The forwarder is a `.cjs` script, not part of the bundle graph, so rollup
- * does not carry it there. This lands it at `out/main/claude-hook.cjs` in dev and
- * packaged both, so the registered hook command points at a real file. Without
- * it, a packaged app has no forwarder and state reporting is silent.
- */
-function copyForwarder() {
-    return {
-        name: 'stafford-copy-forwarder',
-        writeBundle(): void {
-            const to = resolve(__dirname, 'out/main');
-            mkdirSync(to, { recursive: true });
-            copyFileSync(resolve(__dirname, 'hooks/claude-hook.cjs'), join(to, 'claude-hook.cjs'));
-        }
-    };
-}
-
-/**
  * Build layout only. The entry points it names are placeholders until Task 7,
  * which is where the app first runs.
  *
@@ -75,7 +54,7 @@ function copyForwarder() {
  */
 export default defineConfig({
     main: {
-        plugins: [copyMigrations(), copyForwarder()],
+        plugins: [copyMigrations()],
         build: {
             outDir: 'out/main',
             lib: { entry: resolve(__dirname, 'src/main/index.ts') },
