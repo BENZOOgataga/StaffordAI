@@ -1,0 +1,65 @@
+'use strict';
+
+/*
+ * Renders a built renderer page in Electron and writes a PNG, so the UI can be seen
+ * without a human at the window. Dev tool only, never shipped or wired into the app.
+ *
+ * Usage: electron scripts/ui-screenshot.cjs <page> <out.png>
+ *   page    a file under out/renderer, e.g. preview.html
+ *   out.png where to write the screenshot
+ *
+ * It serves out/renderer over a local http server so the page's absolute asset paths and
+ * ES module scripts load the same way the real app loads them, then captures the page.
+ */
+
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const { app, BrowserWindow } = require('electron');
+
+const PAGE = process.argv[2] || 'preview.html';
+const OUT = process.argv[3] || 'ui-shot.png';
+const ROOT = path.resolve(__dirname, '..', 'out', 'renderer');
+
+const TYPES = {
+    '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+    '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2'
+};
+
+function serve() {
+    return new Promise((resolve) => {
+        const server = http.createServer((req, res) => {
+            const url = decodeURIComponent((req.url || '/').split('?')[0]);
+            const rel = url === '/' ? '/index.html' : url;
+            const file = path.join(ROOT, rel);
+            if (!file.startsWith(ROOT)) { res.statusCode = 403; res.end(); return; }
+            fs.readFile(file, (err, data) => {
+                if (err) { res.statusCode = 404; res.end('not found: ' + rel); return; }
+                res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');
+                res.end(data);
+            });
+        });
+        server.listen(0, '127.0.0.1', () => resolve(server));
+    });
+}
+
+async function main() {
+    const server = await serve();
+    const port = server.address().port;
+    await app.whenReady();
+    const win = new BrowserWindow({
+        width: 1280, height: 900, show: false,
+        webPreferences: { offscreen: true }
+    });
+    await win.loadURL('http://127.0.0.1:' + port + '/' + PAGE);
+    // Let React mount and paint. Offscreen needs a moment after load.
+    await new Promise((r) => setTimeout(r, 1500));
+    const image = await win.webContents.capturePage();
+    fs.writeFileSync(OUT, image.toPNG());
+    process.stdout.write('wrote ' + OUT + ' (' + image.getSize().width + 'x' + image.getSize().height + ')\n');
+    server.close();
+    win.destroy();
+    app.quit();
+}
+
+main().catch((err) => { process.stderr.write(String(err && err.stack || err) + '\n'); app.exit(1); });

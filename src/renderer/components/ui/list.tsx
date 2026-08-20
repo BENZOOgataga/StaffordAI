@@ -12,7 +12,7 @@ function List({ className, ...props }: React.ComponentProps<'div'>): React.JSX.E
         <div
             data-slot="list"
             role="list"
-            className={cn('divide-border divide-y overflow-hidden rounded-lg border', className)}
+            className={cn('bg-card text-card-foreground divide-border divide-y overflow-hidden rounded-lg border', className)}
             {...props}
         />
     );

@@ -68,11 +68,10 @@
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
-    /* A quiet solid neutral, kept in step with dashboard.css so the preview and the real
-       dashboard read the same. White-alpha borders showed as bright outlines on the
-       near-black surfaces, so this uses a solid neutral just above the card fill. */
-    --border: oklch(0.24 0 0);
-    --input: oklch(0.27 0 0);
+    /* Dokploy's exact dark border and input, a low-alpha white, kept in step with
+       dashboard.css so the preview and the real dashboard read the same. */
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
 
     --status-working: oklch(0.68 0.16 250);
