@@ -156,5 +156,6 @@ function main() {
 }
 
 function rel(p) { return path.relative(DIST, p); }
+function sep(name) { return path.sep + name + path.sep; }
 
 main();
