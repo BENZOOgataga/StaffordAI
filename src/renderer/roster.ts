@@ -237,10 +237,14 @@ function main(): void {
     // off. React is loaded lazily the first time Home is opened, so the vanilla bundle
     // never carries it and the dashboard's own chunk is code-split out.
     const homeView = document.getElementById('home') as HTMLElement;
+    const appEl = document.querySelector('.app') as HTMLElement;
     let dashboardMounted = false;
     const showView = (view: string): void => {
         const isChannel = view === 'channel';
         const isHome = view === 'home';
+        // Home hides the vanilla rail and content outright and shows the React island;
+        // the other views restore the vanilla chrome.
+        appEl.classList.toggle('home-active', isHome);
         homeView.hidden = !isHome;
         workspace.hidden = isChannel || isHome;
         channelView.hidden = !isChannel || isHome;

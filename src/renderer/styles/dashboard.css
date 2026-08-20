@@ -31,8 +31,10 @@
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
+    /* A subtle dark-gray line rather than white-alpha, which read as bright outlines on
+       the near-black surfaces. */
+    --border: oklch(0.27 0 0);
+    --input: oklch(0.3 0 0);
     --ring: oklch(0.556 0 0);
     --status-working: oklch(0.68 0.16 250);
     --status-idle: oklch(0.708 0 0);
