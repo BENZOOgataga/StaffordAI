@@ -1,0 +1,148 @@
+/*
+ * The design-system foundation, Tailwind v4 with the shadcn token model.
+ *
+ * This is imported only by the dev-only preview entry. The shipped index.html app is
+ * vanilla and never imports this, so its look is untouched until later phases migrate
+ * screens onto these primitives.
+ *
+ * The look is the shadcn dark register Dokploy ships with: near-dark neutral surfaces,
+ * rounded corners, quiet grays, one primary. Retinting is a token edit: change a value
+ * under .dark and every primitive that reads it recolors, because the primitives use
+ * the semantic utilities (bg-background, text-foreground, border-border, and so on),
+ * never raw colors.
+ */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Semantic tokens. :root is the light register; .dark is the app's target register.
+ * Stafford runs dark, so the preview mounts under .dark. Values are the shadcn neutral
+ * defaults, plus three status tokens for a colleague's state, which replaces the old
+ * amber-only rule with a proper themeable accent set.
+ */
+:root {
+    --radius: 0.625rem;
+
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.708 0 0);
+
+    /* Colleague-state accents, as tokens rather than one hardcoded amber. */
+    --status-working: oklch(0.62 0.19 250);
+    --status-idle: oklch(0.556 0 0);
+    --status-waiting: oklch(0.769 0.14 70);
+    --status-error: oklch(0.577 0.245 27.325);
+}
+
+.dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+
+    --status-working: oklch(0.68 0.16 250);
+    --status-idle: oklch(0.708 0 0);
+    --status-waiting: oklch(0.82 0.13 75);
+    --status-error: oklch(0.704 0.191 22.216);
+}
+
+/* Map the semantic tokens to Tailwind's theme so utilities like bg-background exist. */
+@theme inline {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    --color-status-working: var(--status-working);
+    --color-status-idle: var(--status-idle);
+    --color-status-waiting: var(--status-waiting);
+    --color-status-error: var(--status-error);
+
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+    * {
+        border-color: var(--color-border);
+        outline-color: var(--color-ring);
+    }
+    body {
+        background-color: var(--color-background);
+        color: var(--color-foreground);
+    }
+}
+
+/*
+ * Accessibility. A viewer who asks for less motion gets none, and one who asks for less
+ * transparency gets opaque surfaces rather than translucent ones.
+ */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+    :root {
+        --border: oklch(0.922 0 0);
+        --input: oklch(0.922 0 0);
+    }
+    .dark {
+        --border: oklch(0.34 0 0);
+        --input: oklch(0.34 0 0);
+    }
+}
