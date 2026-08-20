@@ -108,6 +108,21 @@
     }
 }
 
+/*
+ * The border-color fix. Tailwind v4's `border` utility sets only the width, and its
+ * default border color is currentColor. Without the global preflight (skipped here so it
+ * cannot touch the vanilla shell), the card and list borders fell back to currentColor,
+ * the near-white text color, and painted bright white outlines. This unlayered rule wins
+ * over the utility layer and pins the surface borders to the quiet --border token, so a
+ * card reads as a raised panel with a soft edge. Badges keep their own border-transparent.
+ */
+.dashboard-scope [data-slot="card"],
+.dashboard-scope [data-slot="list"],
+.dashboard-scope [data-slot="input"],
+.dashboard-scope [data-slot="textarea"] {
+    border-color: var(--border);
+}
+
 @media (prefers-reduced-motion: reduce) {
     .dashboard-scope *,
     .dashboard-scope ::before,
