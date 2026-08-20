@@ -3,9 +3,25 @@
 A single accounting of everything parked, taken from the plan and the tree rather than memory, so the
 next build is chosen against the whole board. Read-only: this decides nothing and builds nothing.
 
-## Update, 2026-08-20, v0.1.0 is Windows only and macOS is deferred
+## Update, 2026-08-20, the headless migration is done and v0.1.0 ships clean
 
 Read this block first. It is the newest.
+
+The headless stream-json migration is complete, phases 2 to 5 in `docs/plans/HEADLESS-STREAM-JSON.md`. Message
+delivery no longer drives a pty: a colleague runs headless through the stream-json protocol, state comes from
+the runner's own stream, replies and tool calls feed the conversation and the new Transcript tab, and node-pty
+is gone from the app entirely. That removed the cause of the rc.1 first-message quirk rather than patching it,
+so the first message now sends like any other. It is human-verified in a real GUI run. So v0.1.0 ships clean,
+as a normal release with no known-issue asterisk, not a pre-release. The by-hand v0.1.0 checklist is in
+`docs/HANDOFF.md`.
+
+The macOS blockers below that named the pty delivery path (the cold-start first message from #63, the five-fast
+serial delivery from #67) are moot as written, since that path is deleted. macOS still owes a real-run
+verification of the runner path when it is picked up, but not of the pty machinery that no longer exists.
+
+## Update, 2026-08-20, v0.1.0 is Windows only and macOS is deferred
+
+Read the block above first; this one is older.
 
 v0.1.0 ships Windows only. macOS is deferred to a later release, then Linux after that. I develop on Windows,
 and switching machines to verify macOS is too much friction to gate the first release on. This takes the Mac

@@ -47,12 +47,12 @@ v0.1.0 is Windows only. There is no code signing yet, so the binary is unsigned,
 you the first time you open the app. You approve it once. This is expected for an unsigned build, not a sign
 anything is wrong.
 
-Download `Stafford-0.1.0-rc.1-win-x64.zip` from the [latest release](https://github.com/BENZOOgataga/StaffordAI/releases/latest),
+Download `Stafford-0.1.0-win-x64.zip` from the [latest release](https://github.com/BENZOOgataga/StaffordAI/releases/latest),
 unzip it, and follow the steps below. There is no installer; you run the app from the unzipped folder.
 
 ### Windows
 
-1. Unzip `Stafford-0.1.0-rc.1-win-x64.zip`. You get a `Stafford-0.1.0-rc.1-win-x64` folder.
+1. Unzip `Stafford-0.1.0-win-x64.zip`. You get a `Stafford-0.1.0-win-x64` folder.
 2. Open the folder and run `Stafford.exe`.
 3. Windows SmartScreen will stop it with "Windows protected your PC" and say it prevented an unrecognized app
    from starting, because the app is unsigned.
