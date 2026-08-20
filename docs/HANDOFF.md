@@ -7,8 +7,8 @@ from a chat log it does not have.
 
 Read these three, in order:
 
-1. `docs/owed-review.md`, the newest top block dated 2026-08-18 (the git executor loop and the release). What
-   is built, what is next, what is deferred, and what the release waits on.
+1. `docs/owed-review.md`, the newest top block dated 2026-08-20 (the headless migration done and v0.1.0
+   shipping clean). What is built, what is next, what is deferred, and what the release waits on.
 2. `docs/plans/design-spec.md`. The decided layout and visual direction that the shipped UI is built to.
 3. `docs/KNOWN-ISSUES.md`. The screenshot and signing leaks to check before anything public, and the
    third-party plugin noise that is not ours.
@@ -20,46 +20,38 @@ cutting it. The macOS verification checks that were release blockers (the Keycha
 the cold-start first message from #63, the hooks from #65, the five-fast delivery from #67) are no longer
 v0.1.0 blockers. They move to whenever macOS is picked up, tracked in `docs/owed-review.md`.
 
-The first build ships as a pre-release, tagged v0.1.0-rc.1 and marked as a GitHub pre-release. Sending messages
-works, with one known quirk: the first message to a colleague right after opening the app sometimes does not go
-through, and sending it again works. Every message after the first is fine. It is a startup timing issue in the
-pty delivery path, documented in the release notes so a user is not surprised. I am not patching the pty
-delivery again for this; the permanent fix is the headless engine change scoped in
-`docs/plans/HEADLESS-STREAM-JSON.md`. Because a clean v0.1.0 is what the headless change unblocks, that change
-has effectively moved up in priority, from later toward next. The clean v0.1.0 tag stays reserved for when the
-first-message quirk is gone.
+v0.1.0 ships clean, as a normal release, not a pre-release. The rc.1 first-message quirk is gone at the root:
+the headless stream-json migration (phases 2 to 5 in `docs/plans/HEADLESS-STREAM-JSON.md`) replaced the whole
+pty delivery path, so there is no terminal to race and the first message sends like any other. That is
+human-verified in a real GUI run. So the release notes carry no known-issue asterisk, and the release is marked
+latest, not pre-release. The rc.1 pre-release stays as the earlier one.
 
 The Windows distributable comes from CI, because the work PC cannot run electron-builder (the corporate network
-blocks the Electron fetch it needs). The Windows package leg now builds a real zip and uploads it as an Actions
-artifact, so I download it from CI rather than building locally. With `package.json` at 0.1.0-rc.1, the zip is
-named `Stafford-0.1.0-rc.1-win-x64.zip`.
+blocks the Electron fetch it needs). The Windows package leg builds a real zip and uploads it as an Actions
+artifact, so I download it from CI rather than building locally. With `package.json` at 0.1.0, the zip is named
+`Stafford-0.1.0-win-x64.zip`.
 
-## The by-hand v0.1.0-rc.1 pre-release checklist, Windows only
+## The by-hand v0.1.0 release checklist, Windows only
 
 I perform these. Nothing here is automated yet; the tag-triggered release automation is deferred.
 
 1. Make sure main is clean and green. `git checkout main && git pull`, then confirm the latest CI run on main
-   is green on every leg. `package.json` is at 0.1.0-rc.1.
+   is green on every leg. `package.json` is at 0.1.0.
 2. Download the Windows artifact from CI. On the green Actions run for the main commit being released, open the
-   run, go to Artifacts, and download `Stafford-windows-x64`. Unzip it to get `Stafford-0.1.0-rc.1-win-x64.zip`.
-   This zip is the release binary. It is unsigned by the deterministic config, which the packaged-bundle check
-   on that same run already asserted.
-3. Run the five-fast real-use check on that exact zip, the last gate before tagging. Unzip
-   `Stafford-0.1.0-rc.1-win-x64.zip` outside the repo, run `Stafford.exe`, approve the SmartScreen warning, hire
-   a colleague onto a project, and send five messages fast to it (for example one, two, three, four, five). The
-   first message may need sending twice, which is the known quirk; that is expected. Confirm the messages then
-   arrive as separate submitted turns in order, none merged into one and none dropped. Then open a second
-   colleague and send messages to both close together, and confirm each one's turns are its own and do not
-   cross-trigger. If it misbehaves beyond the known first-message quirk, capture the delivery log
-   (`$env:STAFFORD_DELIVERY_LOG = "1"` before launch, log at `%TEMP%\stafford-delivery.log`).
-4. Tag v0.1.0-rc.1. From a clean main, `git tag v0.1.0-rc.1` and `git push origin v0.1.0-rc.1`. Pushing the tag
-   is the live action, and it is mine to take. Keep the clean v0.1.0 tag for later, once the first-message
-   quirk is fixed.
-5. Create the GitHub release. On the v0.1.0-rc.1 tag, create a release, tick the pre-release checkbox, upload
-   `Stafford-0.1.0-rc.1-win-x64.zip`, and paste the notes from `docs/releases/0.1.0-rc.1.md`. Title it Stafford
-   v0.1.0-rc.1.
+   run, go to Artifacts, and download `Stafford-windows-x64`. GitHub wraps an artifact in an outer zip, so if it
+   comes down double-zipped, unwrap it to get `Stafford-0.1.0-win-x64.zip`. This zip is the release binary. It
+   is unsigned by the deterministic config, which the packaged-bundle check on that same run already asserted.
+3. Optional light confirm on that exact zip. Unzip `Stafford-0.1.0-win-x64.zip` outside the repo, run
+   `Stafford.exe`, approve the SmartScreen warning, hire a colleague, send a first message, and confirm it
+   answers with no resend, then open the Transcript tab and confirm the reply and any tool calls show. This is
+   already human-verified, so it is a light confirm, not a gate.
+4. Tag v0.1.0. From a clean main, `git tag v0.1.0` and `git push origin v0.1.0`. Pushing the tag is the live
+   action, and it is mine to take.
+5. Create the GitHub release. On the v0.1.0 tag, create a release, leave the pre-release checkbox unticked and
+   mark it the latest release, upload `Stafford-0.1.0-win-x64.zip`, and paste the notes from
+   `docs/releases/0.1.0.md`. Title it Stafford v0.1.0.
 
-That is the whole pre-release. No Mac, no local build, no signing.
+That is the whole release. No Mac, no local build, no signing.
 
 ## The Mac can finally verify locally
 
