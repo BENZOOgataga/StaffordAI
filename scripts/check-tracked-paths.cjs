@@ -49,6 +49,9 @@ const ALLOWED_TOP_LEVEL = new Set([
     'CHANGELOG.md',
     'CODE_OF_CONDUCT.md',
     'CONTRIBUTING.md',
+    // shadcn's config, at the project root by its convention, so the shadcn CLI
+    // finds it when adding a primitive. Added with the UI design-system foundation.
+    'components.json',
     'LICENSE',
     'README.md',
     'SECURITY.md',
@@ -95,7 +98,10 @@ const ALLOWED_EXTENSIONS = {
     hooks: ['.cjs', '.md', '.ps1'],
     runner: ['.js'],
     scripts: ['.cjs', '.js', '.json'],
-    src: ['.html', '.json', '.md', '.sql', '.ts']
+    // .tsx and .css joined with the UI design-system foundation: the renderer now
+    // carries React primitives (.tsx) and a Tailwind base stylesheet (.css) for the
+    // dev-only preview, alongside the existing vanilla .ts renderer.
+    src: ['.css', '.html', '.json', '.md', '.sql', '.ts', '.tsx']
 };
 
 /**
