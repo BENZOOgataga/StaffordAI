@@ -232,15 +232,27 @@ function main(): void {
     // workspace now, not an overlay, so hiding the workspace hides both together.
     const workspace = document.getElementById('workspace') as HTMLElement;
     const channelView = document.getElementById('channel') as HTMLElement;
+    // The Home view is the React dashboard island. It is fixed and full-bleed, so it
+    // covers the vanilla chrome when active; the vanilla views only toggle when Home is
+    // off. React is loaded lazily the first time Home is opened, so the vanilla bundle
+    // never carries it and the dashboard's own chunk is code-split out.
+    const homeView = document.getElementById('home') as HTMLElement;
+    let dashboardMounted = false;
     const showView = (view: string): void => {
         const isChannel = view === 'channel';
-        workspace.hidden = isChannel;
-        channelView.hidden = !isChannel;
+        const isHome = view === 'home';
+        homeView.hidden = !isHome;
+        workspace.hidden = isChannel || isHome;
+        channelView.hidden = !isChannel || isHome;
         for (const item of document.querySelectorAll('.rail-item')) {
             item.classList.toggle('active', item.getAttribute('data-view') === view);
         }
         if (isChannel) void activateChannel();
         else deactivateChannel();
+        if (isHome && !dashboardMounted) {
+            dashboardMounted = true;
+            void import('./dashboard/mount.tsx').then((m) => m.mountDashboard(homeView, showView));
+        }
     };
     for (const item of document.querySelectorAll('.rail-item')) {
         item.addEventListener('click', () => showView(item.getAttribute('data-view') ?? 'roster'));
