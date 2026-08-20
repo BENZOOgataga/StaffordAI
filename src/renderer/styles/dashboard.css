@@ -1,0 +1,114 @@
+/*
+ * The dashboard's styles, scoped so they cannot touch the vanilla shell.
+ *
+ * The dashboard is a React island inside the vanilla index.html document, so a global
+ * Tailwind preflight would reset the vanilla screens too. This imports Tailwind's theme
+ * and utilities but NOT the preflight, and adds a small reset scoped to .dashboard-scope
+ * instead. Utilities are class-scoped, so they only affect elements that opt in; the
+ * only global-selector rules here live under .dashboard-scope. The tokens are defined on
+ * the scope as well, so the dashboard is always the dark register regardless of the host.
+ */
+
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+
+.dashboard-scope {
+    --radius: 0.625rem;
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+    --status-working: oklch(0.68 0.16 250);
+    --status-idle: oklch(0.708 0 0);
+    --status-waiting: oklch(0.82 0.13 75);
+    --status-error: oklch(0.704 0.191 22.216);
+    color-scheme: dark;
+}
+
+@theme inline {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+    --color-status-working: var(--status-working);
+    --color-status-idle: var(--status-idle);
+    --color-status-waiting: var(--status-waiting);
+    --color-status-error: var(--status-error);
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* The scoped reset. Everything here is under .dashboard-scope, so the vanilla shell,
+   which is not, is untouched. */
+@layer base {
+    .dashboard-scope,
+    .dashboard-scope *,
+    .dashboard-scope ::before,
+    .dashboard-scope ::after {
+        box-sizing: border-box;
+        border: 0 solid var(--color-border);
+    }
+    .dashboard-scope {
+        background-color: var(--color-background);
+        color: var(--color-foreground);
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        line-height: 1.5;
+    }
+    .dashboard-scope h1,
+    .dashboard-scope h2,
+    .dashboard-scope h3,
+    .dashboard-scope p {
+        margin: 0;
+        font: inherit;
+    }
+    .dashboard-scope button {
+        background: none;
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
+    }
+    .dashboard-scope svg {
+        display: block;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dashboard-scope *,
+    .dashboard-scope ::before,
+    .dashboard-scope ::after {
+        animation-duration: 0.001ms !important;
+        transition-duration: 0.001ms !important;
+    }
+}

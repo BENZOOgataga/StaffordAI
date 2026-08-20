@@ -317,6 +317,10 @@
      as siblings, the detail overlay sitting on top of whichever is active. Quiet
      and native, and the labels flex for longer translated words. */
   .app { display: flex; min-height: 100vh; }
+  /* The React dashboard island covers the vanilla chrome when the Home view is active.
+     Fixed and full-bleed so it needs no change to the flex shell around it. */
+  #home { position: fixed; inset: 0; z-index: 20; overflow: auto; }
+  #home[hidden] { display: none; }
   .rail {
     flex: 0 0 clamp(140px, 16%, 200px);
     display: flex;
@@ -713,6 +717,7 @@
     <span class="rail-brand">Stafford</span>
     <button class="rail-item active" type="button" data-view="roster">Roster</button>
     <button class="rail-item" type="button" data-view="channel">Channel</button>
+    <button class="rail-item" type="button" data-view="home">Home</button>
   </nav>
   <div class="content">
     <header>
@@ -761,6 +766,7 @@
       <div id="timeline" class="timeline" aria-live="polite"></div>
     </section>
   </div>
+  <div id="home" class="dashboard-scope" hidden aria-label="Home dashboard"></div>
 </div>
 
 <section id="project-sheet" class="sheet-backdrop" hidden aria-label="Add a project">
