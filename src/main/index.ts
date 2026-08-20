@@ -41,6 +41,7 @@ import { realCheckpointDeps } from './agents/checkpoint-git.ts';
 import { SessionRegistry, hireStoreOver, coerceHookEvent, type HireStore } from './hooks/session-registry.ts';
 import { assembleRoster } from './roster/snapshot.ts';
 import { SessionLifecycle } from './agents/session-lifecycle.ts';
+import { ClaudeRunnerManager } from './agents/runner-manager.ts';
 import { locateClaude } from './agents/claude-locator.ts';
 import { readTrust } from './agents/trust.ts';
 import { recordTransition } from './channel/channel-events.ts';
@@ -65,6 +66,9 @@ let repositories: Repositories | null = null;
 let transport: HookTransport | null = null;
 let registry: SessionRegistry | null = null;
 let lifecycle: SessionLifecycle | null = null;
+// The headless delivery path (phase 3 of the stream-json migration). When present, it
+// is the path that actually handles messages; the pty lifecycle above goes dormant.
+let runnerManager: ClaudeRunnerManager | null = null;
 let transcriptManager: TranscriptManager | null = null;
 
 /**
@@ -460,7 +464,13 @@ async function startTransport(): Promise<boolean> {
  * behaviour that fills it is tested with stubs in drain.test.ts.
  */
 function activeDrainables(): DrainableAgent[] {
-    return registry ? registry.drainables() : [];
+    // Both paths contribute: the registry drains live pty sessions (dormant in phase 3
+    // but harmless), the runner manager drains the colleagues it served headless, so a
+    // colleague's tracked work is still checkpointed on quit whichever path ran it.
+    return [
+        ...(registry ? registry.drainables() : []),
+        ...(runnerManager ? runnerManager.drainables() : [])
+    ];
 }
 
 /**
@@ -642,6 +652,77 @@ function buildLifecycle(store: HireStore): void {
         onStateChanged: () => notifyRosterChanged()
     });
     smoke('lifecycle ready, claude at ' + claudePath);
+
+    // The headless delivery path (phase 3). It routes a colleague's messages through
+    // the stream-json ClaudeRunner instead of typing into a pty, which removes the
+    // whole class of TUI delivery bugs (swallowed first message, concatenation, drops).
+    // It reuses the same isolation seed and CLAUDE_CONFIG_DIR as the pty path, resolves
+    // the same target, persists the session id in the same hires.sessions slot, and
+    // records Claude's replies into the #62 conversation so both sides are visible.
+    runnerManager = new ClaudeRunnerManager({
+        claudePath,
+        claudeConfigDir: managedConfigDir,
+        parentEnv: process.env,
+        // The same resolution the pty path used: cwd, project, and the resume id.
+        resolveTarget: (hireId) => {
+            const hire = repositories?.hires.get(hireId);
+            if (!hire || !hire.activeProjectId) return null;
+            const project = repositories?.projects.get(hire.activeProjectId);
+            const cwd = project?.repos[0]?.path;
+            if (!cwd) return null;
+            return {
+                cwd, projectId: hire.activeProjectId,
+                resumeSessionId: hire.sessions[hire.activeProjectId] ?? null
+            };
+        },
+        // #61 isolation, unchanged: seed the managed dir before every turn.
+        seedManagedConfig: (cwd) => {
+            const result = seedManagedConfig(
+                { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
+                    settings: staffordHookSettings(),
+                    warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
+                cwd
+            );
+            smoke('managed config seeded (runner), credential carried: ' + result.credentialCopied);
+        },
+        // The session id persists in the same place the pty path stored it.
+        bindSession: (hireId, projectId, sessionId) => store.bindSession(hireId, projectId, sessionId),
+        setState: (hireId, state) => store.setState(hireId, state),
+        onStateChanged: () => notifyRosterChanged(),
+        // Claude's reply, recorded into the colleague's own conversation thread: a
+        // message whose sender is the hire and whose target is null, the shape the
+        // Conversation renders as the colleague rather than as "You".
+        recordReply: (hireId, projectId, text) => {
+            if (!repositories) return;
+            repositories.channel.append({
+                id: randomUUID(), projectId, senderId: hireId, targetHireId: null,
+                kind: 'message', body: text, reference: null, at: new Date().toISOString()
+            });
+            notifyChannelChanged();
+        },
+        // The same bounded git checkpoint executor the registry drain uses, so a
+        // colleague's tracked work is committed on quit through the runner path too.
+        checkpointRunner: (cwd, hireId) =>
+            checkpointRepo(realCheckpointDeps(currentPlatform()), {
+                cwd, hireId, stamp: new Date().toISOString()
+            }).then((o): CheckpointResult => ({
+                committed: o.committed, branch: o.branch, commitId: o.commitId,
+                reason: o.committed ? null : (o.reason === 'error' && o.detail ? 'error: ' + o.detail : o.reason)
+            })),
+        // The raw wire, env-gated, since the migration keeps no debug view: with
+        // STAFFORD_DELIVERY_LOG set, every stream-json line in both directions is
+        // appended to a temp log. Hire ids and event lines only; it never adds message
+        // text beyond what the wire already carries, which is inspection, not a leak.
+        ...(process.env.STAFFORD_DELIVERY_LOG
+            ? { traceWire: (hireId: string, line: string, direction: string) => {
+                try {
+                    fs.appendFileSync(path.join(os.tmpdir(), 'stafford-delivery.log'),
+                        new Date().toISOString() + ' ' + hireId + ' ' + (direction === 'out' ? '>>' : '<<') + ' ' + line + '\n');
+                } catch { /* logging must never break delivery */ }
+            } }
+            : {})
+    });
+    smoke('runner manager ready (headless delivery path)');
 }
 
 let proofQuitting = false;
@@ -683,10 +764,16 @@ async function quit(): Promise<void> {
                 sink: repositories.drainReports,
                 drainId: 'drain-' + new Date().toISOString(),
                 now: () => new Date().toISOString(),
-                // Force-kill through the lifecycle's one teardown, so a timed-out
-                // session is reaped the same way a checkpointed one is. When there
-                // is no lifecycle, the drain falls back to its own killTree.
-                ...(lifecycle ? { forceKill: (agent) => lifecycle!.teardown(agent.agentId) } : {})
+                // Force-kill reaps a timed-out session. The runner manager disposes its
+                // in-flight child by exact pid (never by image name), and the lifecycle
+                // tears down any pty session, so a colleague from either path is reaped.
+                // When neither is up, the drain falls back to its own killTree.
+                ...((runnerManager || lifecycle) ? {
+                    forceKill: (agent) => {
+                        runnerManager?.dispose(agent.agentId);
+                        return lifecycle ? lifecycle.teardown(agent.agentId) : Promise.resolve();
+                    }
+                } : {})
             });
         } catch (error) {
             process.stderr.write('[warn] drain did not complete cleanly: ' +
@@ -704,6 +791,73 @@ async function quit(): Promise<void> {
     const forced = setTimeout(() => { app.exit(0); }, 3000);
     forced.unref();
     app.quit();
+}
+
+/**
+ * Drives the phase-3 delivery proof inside the running app against real Claude. Gated
+ * by STAFFORD_DELIVERY_SMOKE=1; the project cwd comes from STAFFORD_DELIVERY_SMOKE_CWD
+ * (a git repo). It calls the real runnerManager.submit path, the same one the IPC uses,
+ * and reports each colleague's conversation and state so the rc.1 bugs can be seen gone.
+ */
+async function runDeliverySmoke(): Promise<void> {
+    const out = (line: string): void => { process.stderr.write('[delivery-smoke] ' + line + '\n'); };
+    const cwd = process.env.STAFFORD_DELIVERY_SMOKE_CWD;
+    if (!repositories || !runnerManager || !cwd) { out('missing repositories, runner, or cwd'); return; }
+    const started = new Date().toISOString();
+    const projectId = 'dsmoke-' + started;
+    repositories.projects.insert({
+        id: projectId, name: 'delivery-smoke', repos: [{ path: cwd, label: 'repo' }],
+        policy: {
+            push: 'none' as const, allowedRoles: [], toolCeiling: null, writePaths: null,
+            requirePipeline: false, allowWebFetch: false, permissionMode: 'default', maxConcurrentAgents: 2
+        }
+    });
+    const A = 'dsmoke-A-' + started;
+    const B = 'dsmoke-B-' + started;
+    for (const [id, name] of [[A, 'Ada'], [B, 'Boris']] as const) {
+        repositories.hires.insert({
+            id, name, type: 'lead-developer', title: 'Lead developer', seniority: 2, ownerId: 'owner',
+            sessions: {}, activeProjectId: projectId, state: 'idle', hiredAt: started, firedAt: null
+        });
+    }
+
+    const say = async (hireId: string, text: string): Promise<void> => {
+        repositories!.channel.append({
+            id: randomUUID(), projectId, senderId: CHANNEL_SELF_SENDER, targetHireId: hireId,
+            kind: 'message', body: text, reference: null, at: new Date().toISOString()
+        });
+        await runnerManager!.submit(hireId, text);
+    };
+    const dump = (label: string, hireId: string): void => {
+        const rows = repositories!.channel.conversationFor(hireId, 50).filter((r) => r.kind === 'message');
+        out(label + ' [' + hireId.slice(-6) + '] state=' + (repositories!.hires.get(hireId)?.state ?? '?') +
+            ', rows=' + rows.length);
+        for (const r of rows) {
+            const who = r.targetHireId ? 'You      ' : 'Colleague';
+            out('    ' + who + ': ' + r.body.replace(/\s+/g, ' ').slice(0, 80));
+        }
+    };
+
+    out('=== Scenario 1: first message to a fresh colleague, no resend ===');
+    await say(A, 'Reply with exactly this token and nothing else: FIRST-OK');
+    dump('after ONE message', A);
+
+    out('=== Scenario 2: five fast messages to one colleague ===');
+    await Promise.all([1, 2, 3, 4, 5].map((n) =>
+        say(A, 'Reply with exactly this token and nothing else: FAST-' + n)));
+    dump('after FIVE fast', A);
+
+    out('=== Scenario 3: two colleagues concurrent ===');
+    await Promise.all([
+        say(A, 'Reply with exactly this token and nothing else: A-ONLY'),
+        say(B, 'Reply with exactly this token and nothing else: B-ONLY')
+    ]);
+    dump('colleague A', A);
+    dump('colleague B', B);
+
+    out('A resume session id: ' + (repositories.hires.get(A)?.sessions[projectId] ?? 'none'));
+    out('B resume session id: ' + (repositories.hires.get(B)?.sessions[projectId] ?? 'none'));
+    out('=== delivery smoke done ===');
 }
 
 app.whenReady().then(async () => {
@@ -850,7 +1004,11 @@ app.whenReady().then(async () => {
         subscribeSession: (hireId, listener) => (lifecycle ? lifecycle.subscribe(hireId, listener) : () => {}),
         resizeSession: (hireId, cols, rows) => { lifecycle?.resize(hireId, cols, rows); },
         hasSession: (hireId) => (lifecycle ? lifecycle.has(hireId) : false),
-        submitMessage: (hireId, text) => (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve()),
+        // Delivery goes through the headless runner when it is up (phase 3); the pty
+        // lifecycle stays only as a dormant fallback until phase 4 removes it.
+        submitMessage: (hireId, text) => (runnerManager
+            ? runnerManager.submit(hireId, text)
+            : (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve())),
         // The timeline reads: the newest page, older rows for scroll-back, and the
         // tail after a cursor for the append on channel:changed.
         channelPage: (before, limit) => (repositories
@@ -890,12 +1048,27 @@ app.whenReady().then(async () => {
                 });
                 notifyChannelChanged();
             }
-            await (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve());
+            await (runnerManager
+                ? runnerManager.submit(hireId, text)
+                : (lifecycle ? lifecycle.submitMessage(hireId, text) : Promise.resolve()));
         }
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +
         ', windows open now ' + BrowserWindow.getAllWindows().length);
+
+    // The phase-3 delivery proof, driven inside the real running app. STAFFORD_DELIVERY_SMOKE=1
+    // with STAFFORD_DELIVERY_SMOKE_CWD pointing at a git repo drives the real headless
+    // delivery path (runnerManager.submit -> ClaudeRunner -> real Claude -> conversation
+    // store) through the exact scenarios rc.1 got wrong: one first message with no resend,
+    // five fast, and two colleagues concurrent. It dumps each colleague's conversation and
+    // state to stderr, then quits. No renderer clicks; this exercises the main-process path
+    // that the "green tests, broken in the real app" regression always lived in.
+    if (process.env.STAFFORD_DELIVERY_SMOKE === '1' && repositories && runnerManager) {
+        await runDeliverySmoke();
+        void quit();
+        return;
+    }
 
     if (SMOKE && repositories) {
         // A real repository write and read from the running app, not a test, the
