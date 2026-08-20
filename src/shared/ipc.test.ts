@@ -5,12 +5,12 @@ import { isInvokeChannel, isEventChannel, INVOKE_CHANNELS, EVENT_CHANNELS } from
 
 test('the channel allowlist is an exact set, not a prefix pattern', () => {
     assert.equal(isInvokeChannel('health'), true);
-    assert.equal(isInvokeChannel('proof:spawn'), true);
+    assert.equal(isInvokeChannel('channel:conversation'), true);
 
     // A name that merely starts like an allowed one is refused. The list is
     // exhaustive, not a prefix.
     assert.equal(isInvokeChannel('health:secret'), false);
-    assert.equal(isInvokeChannel('proof:'), false);
+    assert.equal(isInvokeChannel('channel:'), false);
     assert.equal(isInvokeChannel(''), false);
     assert.equal(isInvokeChannel(42), false);
 

@@ -12,7 +12,7 @@
  */
 
 import type {
-    ProofSpawn, ProofWrite, SessionOpen, SessionResize, SessionWrite,
+    SessionOpen, SessionResize, SessionWrite,
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
     ProjectCreate, HireCreate
 } from '../shared/ipc.ts';
@@ -108,19 +108,6 @@ export function isHireCreate(value: unknown): value is HireCreate {
         && isBoundedString(value.projectId, 256);
 }
 
-/** A terminal size the proof window may ask for, bounded so a renderer cannot ask for nonsense. */
-export function isProofSpawn(value: unknown): value is ProofSpawn {
-    if (!isObject(value)) return false;
-    const { cols, rows } = value;
-    return isBoundedInt(cols, 1, 1000) && isBoundedInt(rows, 1, 1000);
-}
-
-export function isProofWrite(value: unknown): value is ProofWrite {
-    if (!isObject(value)) return false;
-    // A cap, because a renderer handing over an unbounded string is a memory
-    // question rather than a feature. The proof window types a line at a time.
-    return typeof value.data === 'string' && value.data.length <= 64 * 1024;
-}
 
 function isBoundedInt(value: unknown, min: number, max: number): boolean {
     return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;

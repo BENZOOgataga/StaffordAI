@@ -44,7 +44,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
  * never appears in this set. It is guarded instead by native-externals and
  * native-prebuilds.
  */
-const ALLOWED_INSTALL_SCRIPTS = new Set(['node-pty', 'esbuild', 'fsevents', 'electron-winstaller']);
+const ALLOWED_INSTALL_SCRIPTS = new Set(['esbuild', 'fsevents', 'electron-winstaller']);
 
 function installScriptDeps(): string[] {
     const lock = JSON.parse(readFileSync(root + 'package-lock.json', 'utf8')) as {

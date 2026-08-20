@@ -6,16 +6,6 @@ import {
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
     type ProjectCreated, type HireCreated, type ActivityRow, type SavedCheckpoints
 } from '../../shared/ipc.ts';
-import type { ProofPty } from './proof-pty.ts';
-
-function fakeProof(open = false): ProofPty {
-    return {
-        isOpen: () => open,
-        spawn: () => {},
-        write: () => {},
-        kill: () => {}
-    } as unknown as ProofPty;
-}
 
 interface SessionOverrides {
     sender?: () => { send: (channel: string, data: string) => void } | null;
@@ -35,7 +25,6 @@ interface SessionOverrides {
 }
 
 function deps(
-    proof = fakeProof(),
     projects: ProjectsList = { projects: [] },
     roster: RosterSnapshot = { cards: [] },
     over: SessionOverrides = {}
@@ -43,7 +32,6 @@ function deps(
     return {
         startedAt: '2026-08-08T00:00:00.000Z',
         platformId: 'darwin',
-        proof,
         sender: (over.sender ?? (() => null)) as unknown as HandlerDepsSender,
         listProjects: () => projects,
         createProject: over.createProject
@@ -76,24 +64,23 @@ test('there is exactly one handler per invoke channel, no more and no fewer', ()
         'the handler map and the channel allowlist must match exactly');
 });
 
-test('health reports the platform and whether a pty is open', () => {
-    const handlers = buildHandlers(deps(fakeProof(true)));
+test('health reports the platform', () => {
+    const handlers = buildHandlers(deps());
     const report = handlers.health(undefined) as HealthReport;
     assert.equal(report.ok, true);
     assert.equal(report.platform, 'darwin');
-    assert.equal(report.ptyOpen, true);
 });
 
 test('projects:list returns the summaries and takes no payload', () => {
     const rows: ProjectsList = { projects: [{ id: 'p1', name: 'Stafford' }, { id: 'p2', name: 'other' }] };
-    const handlers = buildHandlers(deps(fakeProof(), rows));
+    const handlers = buildHandlers(deps(rows));
     const result = handlers['projects:list'](undefined) as ProjectsList;
     assert.deepEqual(result, rows);
 });
 
 test('project:create is guarded and routes a valid payload to createProject', () => {
     let seen: { name: string; repoPaths: readonly string[] } | null = null;
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         createProject: (payload) => { seen = payload; return { id: 'p9', name: payload.name }; }
     }));
     const result = handlers['project:create']({ name: 'Stafford', repoPaths: ['C:/repo'] }) as ProjectCreated;
@@ -103,7 +90,7 @@ test('project:create is guarded and routes a valid payload to createProject', ()
 
 test('project:create refuses a malformed payload before reaching createProject', () => {
     let called = false;
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         createProject: () => { called = true; return { id: 'x', name: 'x' }; }
     }));
     assert.throws(() => handlers['project:create']({ name: '', repoPaths: [] }), /project:create requires/);
@@ -113,7 +100,7 @@ test('project:create refuses a malformed payload before reaching createProject',
 
 test('hire:create is guarded and routes a valid payload to createHire', () => {
     let seen: unknown = null;
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         createHire: (payload) => { seen = payload; return { id: 'h9', name: payload.name, title: payload.title, projectId: payload.projectId }; }
     }));
     const result = handlers['hire:create'](
@@ -125,7 +112,7 @@ test('hire:create is guarded and routes a valid payload to createHire', () => {
 
 test('hire:create refuses a malformed payload before reaching createHire', () => {
     let called = false;
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         createHire: () => { called = true; return { id: 'x', name: 'x', title: 'x', projectId: 'x' }; }
     }));
     assert.throws(() => handlers['hire:create']({ name: 'Marion', type: 'lead-developer' }), /hire:create requires/);
@@ -139,7 +126,7 @@ test('roster:snapshot returns the cards and takes no payload', () => {
             project: 'Stafford', task: null, apprentices: 0, queued: 0, since: null, contextLost: false
         }]
     };
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, cards));
+    const handlers = buildHandlers(deps({ projects: [] }, cards));
     const result = handlers['roster:snapshot'](undefined) as RosterSnapshot;
     assert.deepEqual(result, cards);
 });
@@ -150,7 +137,7 @@ test('session:open subscribes and streams coalesced output; close stops it', asy
     const sent: string[] = [];
     let listener: (data: string) => void = () => {};
     let unsubscribed = false;
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         sender: () => ({ send: (_ch, data) => { sent.push(data); } }),
         subscribeSession: (_hireId, l) => { listener = l; return () => { unsubscribed = true; }; },
         hasSession: () => true
@@ -178,7 +165,7 @@ test('session:open subscribes and streams coalesced output; close stops it', asy
 
 test('opening a second card closes the first, so only the open card streams', () => {
     const unsubscribed: string[] = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         sender: () => ({ send: () => {} }),
         subscribeSession: (hireId) => () => { unsubscribed.push(hireId); },
         hasSession: () => true
@@ -189,7 +176,7 @@ test('opening a second card closes the first, so only the open card streams', ()
 });
 
 test('session:open on a hire with no live session reports not live', () => {
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         sender: () => ({ send: () => {} }),
         hasSession: () => false
     }));
@@ -199,7 +186,7 @@ test('session:open on a hire with no live session reports not live', () => {
 
 test('session:resize propagates the hire and bounded size to the pty', () => {
     const resizes: Array<{ hireId: string; cols: number; rows: number }> = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         resizeSession: (hireId, cols, rows) => { resizes.push({ hireId, cols, rows }); }
     }));
     handlers['session:resize']({ hireId: 'h1', cols: 120, rows: 40 });
@@ -208,7 +195,7 @@ test('session:resize propagates the hire and bounded size to the pty', () => {
 
 test('session:write routes a sanitised message to the open card and strips control bytes', async () => {
     const submitted: Array<{ hireId: string; text: string }> = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         sender: () => ({ send: () => {} }),
         hasSession: () => true,
         submitMessage: (hireId, text) => { submitted.push({ hireId, text }); return Promise.resolve(); }
@@ -225,7 +212,7 @@ test('session:write routes a sanitised message to the open card and strips contr
 
 test('session:write is scoped to the open card: a write to another session is refused', () => {
     const submitted: string[] = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         sender: () => ({ send: () => {} }),
         hasSession: () => true,
         submitMessage: (hireId) => { submitted.push(hireId); return Promise.resolve(); }
@@ -239,7 +226,7 @@ test('session:write is scoped to the open card: a write to another session is re
 
 test('session:write with no card open is refused, so a stale write lands nowhere', () => {
     const submitted: string[] = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         sender: () => ({ send: () => {} }),
         submitMessage: (hireId) => { submitted.push(hireId); return Promise.resolve(); }
     }));
@@ -254,7 +241,7 @@ test('session:write with no card open is refused, so a stale write lands nowhere
 
 test('switching cards rebinds the write target', async () => {
     const submitted: string[] = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         sender: () => ({ send: () => {} }),
         hasSession: () => true,
         submitMessage: (hireId) => { submitted.push(hireId); return Promise.resolve(); }
@@ -280,7 +267,7 @@ function chRow(id: string): ChannelMessageRow {
 
 test('channel:page returns rows and passes the cursor and limit through', () => {
     const calls: Array<{ before: ChannelCursor | null; limit: number }> = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         channelPage: (before, limit) => { calls.push({ before, limit }); return [chRow('a'), chRow('b')]; }
     }));
     const newest = handlers['channel:page']({ before: null, limit: 50 }) as ChannelPageReply;
@@ -293,7 +280,7 @@ test('channel:page returns rows and passes the cursor and limit through', () => 
 
 test('channel:conversation reads one colleague thread by hire id, and rejects a bad shape', () => {
     const calls: Array<{ hireId: string; limit: number }> = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         channelConversation: (hireId, limit) => { calls.push({ hireId, limit }); return [chRow('a')]; }
     }));
     const reply = handlers['channel:conversation']({ hireId: 'h1', limit: 100 }) as ChannelPageReply;
@@ -304,7 +291,7 @@ test('channel:conversation reads one colleague thread by hire id, and rejects a 
 });
 
 test('channel:since returns rows newer than the cursor', () => {
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         channelSince: () => [chRow('c')]
     }));
     const reply = handlers['channel:since']({ after: { at: 't', id: 'b' }, limit: 50 }) as ChannelPageReply;
@@ -313,7 +300,7 @@ test('channel:since returns rows newer than the cursor', () => {
 
 test('channel:reply sanitises the message and routes it by hire id through the one write path', async () => {
     const replied: Array<{ hireId: string; text: string }> = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         channelReply: (hireId, text) => { replied.push({ hireId, text }); return Promise.resolve(); }
     }));
 
@@ -346,36 +333,16 @@ test('session:open and session:resize refuse arguments that fail the guard', () 
     assert.throws(() => handlers['session:resize']({ cols: 80, rows: 24 }), /requires/);
 });
 
-test('proof:spawn refuses arguments that fail the guard', () => {
-    const handlers = buildHandlers(deps());
-    assert.throws(() => handlers['proof:spawn']({ cols: 0, rows: 0 }), /requires/);
-    assert.throws(() => handlers['proof:spawn'](null), /requires/);
-});
-
-test('proof:write refuses a non-string payload', () => {
-    const handlers = buildHandlers(deps());
-    assert.throws(() => handlers['proof:write']({ data: 123 }), /requires/);
-});
-
-test('proof:spawn passes a valid size to the pty', () => {
-    let spawned: unknown = null;
-    const proof = { ...fakeProof(), spawn: (size: unknown) => { spawned = size; } } as unknown as ProofPty;
-    const handlers = buildHandlers(deps(proof));
-    const result = handlers['proof:spawn']({ cols: 80, rows: 24 });
-    assert.deepEqual(result, { ok: true });
-    assert.deepEqual(spawned, { cols: 80, rows: 24 });
-});
-
 test('checkpoints:saved returns the deps result, or null when nothing to show', () => {
     const saved = { drainId: 'd1', saves: [{ name: 'Marion', branch: 'stafford/checkpoint/marion/S1' }] };
-    const withSaved = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, { savedCheckpoints: () => saved }));
+    const withSaved = buildHandlers(deps({ projects: [] }, { cards: [] }, { savedCheckpoints: () => saved }));
     assert.deepEqual(withSaved['checkpoints:saved'](undefined), saved);
     assert.equal(buildHandlers(deps())['checkpoints:saved'](undefined), null);
 });
 
 test('checkpoints:ack is guarded and routes the drain id to ack', () => {
     const acked: string[] = [];
-    const handlers = buildHandlers(deps(fakeProof(), { projects: [] }, { cards: [] }, { ackCheckpoints: (d) => acked.push(d) }));
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, { ackCheckpoints: (d) => acked.push(d) }));
     handlers['checkpoints:ack']({ drainId: 'd1' });
     assert.deepEqual(acked, ['d1']);
     assert.throws(() => handlers['checkpoints:ack']({}), /checkpoints:ack requires/);

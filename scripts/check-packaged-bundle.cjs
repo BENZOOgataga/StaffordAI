@@ -7,14 +7,10 @@
  * a green job is a job that demonstrably ran the check rather than one that
  * found nothing and passed.
  *
- * The darwin spawn-helper invariant is the reason 7b exists: node-pty's darwin
- * spawn-helper must be executable inside the bundle or posix_spawnp fails and no
- * pty opens, and the postinstall repair does nothing for a packaged app. That
- * invariant is darwin only. On a Windows bundle there is no darwin helper, so a
- * guard that looked for one and passed would be reading as coverage while
- * proving nothing. Instead this says the invariant is not applicable, and checks
- * the Windows equivalent: node-pty's native .node files are unpacked from the
- * asar, which is the same asarUnpack concern in the form Windows has.
+ * The invariants it checks: better-sqlite3's native .node binary is unpacked from
+ * the asar (or the database module cannot load in the packaged app), every
+ * migration .sql survives into the asar at the runtime path openDatabase resolves,
+ * and Stafford.exe ships unsigned (no local or work cert identity in a public build).
  *
  * CommonJS and cross-platform: no `find`, no shell, a plain recursive walk, so
  * it runs identically on a macOS and a Windows runner.
@@ -82,13 +78,10 @@ function main() {
     }
 
     const files = walk(DIST, []);
-    const unpacked = files.filter((f) => f.includes('app.asar.unpacked') && f.includes(sep('node-pty')));
 
-    // better-sqlite3 is the second native external, added in Task 8. It has no
-    // spawn-helper, so its only invariant is the same one node-pty has on
-    // Windows: its .node binary must be unpacked from the asar rather than sealed
-    // inside it, or it fails to load at runtime in the packaged app. Checked on
-    // every bundle, darwin and windows both, because it ships on both.
+    // better-sqlite3's .node binary must be unpacked from the asar rather than
+    // sealed inside it, or it fails to load at runtime in the packaged app.
+    // Checked on every bundle, darwin and windows both, because it ships on both.
     const sqliteUnpacked = files.filter(
         (f) => f.includes('app.asar.unpacked') && f.includes(sep('better-sqlite3')) && f.endsWith('.node'));
     if (sqliteUnpacked.length === 0) {
@@ -136,58 +129,12 @@ function main() {
         console.log('  OK    migration in asar at runtime path: ' + runtimePath + ' (' + stat.size + ' bytes)');
     }
 
-    const darwinHelpers = unpacked.filter((f) =>
-        path.basename(f) === 'spawn-helper' && !f.includes('win32'));
-    const nodeBinaries = unpacked.filter((f) => f.endsWith('.node'));
-
-    // Which kind of bundle is this? By the .app, not by the presence of a
-    // spawn-helper. node-pty ships the darwin spawn-helpers in its prebuilds on
-    // every platform, so a Windows bundle carries them too, at a mode Windows
-    // never sets an execute bit on and never needs, since it never runs them.
-    // Keying on the helper would classify a Windows bundle as darwin and then
-    // fail on a helper that does not matter there. The .app is the darwin
-    // signal; win-unpacked has none.
-    const isDarwinBundle = files.some((f) => f.endsWith('.app') || f.includes('.app' + path.sep));
-
     console.log('packaged bundle check, platform ' + process.platform + ':');
-    console.log('  unpacked node-pty files found: ' + unpacked.length);
-
-    if (isDarwinBundle) {
-        if (darwinHelpers.length === 0) {
-            fail('a darwin bundle with no unpacked spawn-helper. asarUnpack for node-pty is broken, ' +
-                'so the helper is sealed in the asar and no pty can open.');
-        }
-        let checked = 0;
-        for (const helper of darwinHelpers) {
-            const mode = fs.statSync(helper).mode & 0o777;
-            if ((mode & 0o111) === 0) {
-                fail('spawn-helper is mode 0' + mode.toString(8) + ' with no execute bit: ' + helper +
-                    '. posix_spawnp cannot run it, so every pty spawn fails in the packaged app.');
-            }
-            console.log('  OK    executable spawn-helper: 0' + mode.toString(8) + '  ' + rel(helper));
-            checked += 1;
-        }
-        console.log('  darwin spawn-helper invariant: checked ' + checked + ' helpers, all executable');
-        console.log('PASS  darwin bundle, ' + checked + ' spawn-helpers executable');
-        return;
-    }
-
-    // Not a darwin bundle. Say so rather than passing on an absent invariant.
-    console.log('  darwin spawn-helper invariant: NOT APPLICABLE, this is not a darwin bundle');
-    if (nodeBinaries.length === 0) {
-        fail('no unpacked node-pty .node files. asarUnpack for node-pty is broken here too, ' +
-            'so the native module cannot load from inside the asar.');
-    }
-    for (const bin of nodeBinaries) console.log('  OK    unpacked native module: ' + rel(bin));
-    console.log('  windows equivalent invariant: checked ' + nodeBinaries.length + ' node-pty .node files unpacked');
 
     // The app exe must ship unsigned, deterministically. A public build must not carry
     // a local or work-issued cert, which would leak an employer identity into the
-    // binary. This checks Stafford.exe itself, our artifact; node-pty's bundled
-    // conpty.dll and OpenConsole.exe are Microsoft's own files, signed by Microsoft
-    // upstream, which is not ours to strip and is not an employer leak. On a bundle
-    // with no app exe (a darwin build reaches this only if misclassified), there is
-    // nothing to check.
+    // binary. This checks Stafford.exe itself, our artifact. A darwin bundle has no
+    // Stafford.exe, so there is nothing to check there.
     const appExe = files.find((f) => path.basename(f) === 'Stafford.exe');
     if (appExe) {
         const sig = peSignatureSize(appExe);
@@ -200,12 +147,14 @@ function main() {
                 'hook and that no CSC_* env is applied.');
         }
         console.log('  OK    Stafford.exe is unsigned (no Authenticode signature): ' + rel(appExe));
+    } else {
+        console.log('  Stafford.exe unsigned check: NOT APPLICABLE, no app exe in this bundle');
     }
 
-    console.log('PASS  non-darwin bundle, ' + nodeBinaries.length + ' native modules unpacked');
+    console.log('PASS  bundle checks complete (better-sqlite3 unpacked, migrations present' +
+        (appExe ? ', exe unsigned' : '') + ')');
 }
 
 function rel(p) { return path.relative(DIST, p); }
-function sep(name) { return path.sep + name + path.sep; }
 
 main();

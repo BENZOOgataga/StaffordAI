@@ -139,15 +139,6 @@ export interface RegistryLookup {
  * so the disposal and the test that guards it read one source instead of
  * agreeing with each other.
  */
-export interface InputSocketDisposal {
-    /** Whether anything has to be destroyed by hand after a kill. */
-    readonly required: boolean;
-    /** Property chain from the terminal to the socket. Empty when not required. */
-    readonly path: readonly string[];
-    /** Why, said back when a guard or an assertion refers to it. */
-    readonly detail: string;
-}
-
 export interface ResizeObservation {
     /** Which of the two mechanisms this platform uses. */
     readonly mechanism: 'emitted-size-report' | 'child-reads-winsize';
@@ -286,12 +277,6 @@ export interface Platform {
      * mechanisms stay named rather than becoming a branch in a test fixture.
      */
     resizeObservation(cols: number, rows: number): ResizeObservation;
-
-    /**
-     * Whether node-pty leaves an input socket open here, and the property chain
-     * to it. Data, so the disposal and its guard test cannot drift apart.
-     */
-    inputSocketDisposal(): InputSocketDisposal;
 
     // --- paths --------------------------------------------------------------
 

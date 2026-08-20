@@ -24,7 +24,6 @@ import { resolveWindowBounds, readWindowState, saveWindowState, WINDOW_DEFAULTS,
 import { installTray } from './tray.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
-import { ProofPty } from './ipc/proof-pty.ts';
 import { openDatabase, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
@@ -180,7 +179,6 @@ function smoke(line: string): void { if (SMOKE) process.stderr.write('[smoke] ' 
 
 let tray: Tray | null = null;
 let window: BrowserWindow | null = null;
-const proof = new ProofPty();
 
 function rendererEntry(): string {
     // electron-vite serves the renderer from a dev server URL in development and
@@ -297,7 +295,7 @@ function openWindow(): void {
 
     // Closing returns to the tray rather than quitting.
     win.on('close', (event) => {
-        if (proofQuitting) return;
+        if (quitting) return;
         event.preventDefault();
         win.hide();
     });
@@ -492,10 +490,9 @@ function buildDelivery(store: HireStore): void {
     smoke('runner manager ready (headless delivery path)');
 }
 
-let proofQuitting = false;
+let quitting = false;
 async function quit(): Promise<void> {
-    proofQuitting = true;
-    proof.kill();
+    quitting = true;
 
     // Drain the colleagues the runner served: checkpoint, bounded wait, force-kill what
     // remains, one durable report row per agent. Bounded by its own total cap, so a stuck
@@ -521,13 +518,10 @@ async function quit(): Promise<void> {
         }
     }
 
-    // Force the exit. node-pty can leave a non-unref'd five-second timer per
-    // Windows kill (issue 886) and stacking several holds the event loop, so a
-    // natural quit can look hung at the worst moment. A 3s timer turns quit into a
-    // hard app.exit(0). Everything that matters is already checkpointed and killed
-    // by the time the drain returns, so the forced exit only drops handles the OS
-    // reclaims anyway. The timer is unref'd so it never itself keeps the app alive.
-    // See plan 7.4.1: this containment is why the kill path is not changed.
+    // Force the exit as a backstop. Everything that matters is already checkpointed
+    // and its process tree reaped by the time the drain returns, so a 3s timer turning
+    // quit into a hard app.exit(0) only drops handles the OS reclaims anyway. The timer
+    // is unref'd so it never itself keeps the app alive.
     const forced = setTimeout(() => { app.exit(0); }, 3000);
     forced.unref();
     app.quit();
@@ -626,7 +620,6 @@ app.whenReady().then(async () => {
     registerHandlers(ipcMain, {
         startedAt: STARTED_AT,
         platformId: currentPlatform().id,
-        proof,
         sender: () => (window && !window.isDestroyed() ? window.webContents : null),
         // The store's one live consumer. Read-only, bounded, ids and names only.
         // repositories is set by openStore above, which the app quits without if

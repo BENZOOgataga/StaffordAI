@@ -14,7 +14,7 @@
  */
 
 import nodePath from 'node:path';
-import type { CommandSpec, InputSocketDisposal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
+import type { CommandSpec, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
 import { posixKillTreePlan } from './posix-kill.ts';
 
 // POSIX semantics regardless of the machine running this. Plain path.join on
@@ -98,27 +98,6 @@ export const darwin: Platform = {
         // Trailing `=` on each column suppresses the header, so the output is
         // data with no line to skip.
         return { file: 'ps', args: ['-Ao', 'pid=,ppid=,pgid=,comm='] };
-    },
-
-    inputSocketDisposal(): InputSocketDisposal {
-        // No agent and no second socket here, so there is nothing for the
-        // disposal path to release and reaching for a ConPTY agent finds
-        // nothing.
-        //
-        // This is not a statement that darwin leaks nothing. node-pty 1.1.0,
-        // which is what is pinned, leaks the pty master itself: one per
-        // session, measured, and unreachable from JavaScript because
-        // fs.closeSync on the descriptor JS is handed throws EBADF while lsof
-        // still shows the master open. A different defect, fixed upstream in
-        // 1.2.0-beta.4, and recorded as a known limitation in the migration
-        // plan rather than pretended away here.
-        return {
-            required: false,
-            path: [],
-            detail:
-                'node-pty exposes no input socket to release on POSIX. The master leak on 1.1.0 is a ' +
-                'separate, native defect that no disposal path can reach.'
-        };
     },
 
     ownerOnlyAclPlan(_target: string, _opts: { tree: boolean; account: string }): CommandSpec | null {

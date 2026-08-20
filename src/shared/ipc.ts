@@ -7,11 +7,6 @@
  * of the list being data both sides import rather than two strings that can
  * drift.
  *
- * Task 7a carries the smallest set that proves the shell works end to end:
- *  - health, a status call replacing the retired token endpoint;
- *  - the proof window's pty channels, deliberately minimal and thrown away with
- *    that window when real UI lands.
- *
  * The renderer acts on ids, never on filesystem paths. Nothing here lets a
  * renderer name a directory to spawn in or a file to read.
  */
@@ -33,10 +28,7 @@ export const INVOKE_CHANNELS = [
     'channel:reply',
     'activity:by-hire',
     'checkpoints:saved',
-    'checkpoints:ack',
-    'proof:spawn',
-    'proof:write',
-    'proof:kill'
+    'checkpoints:ack'
 ] as const;
 
 /** Main pushes to the renderer. One-way, no reply. */
@@ -44,9 +36,7 @@ export const EVENT_CHANNELS = [
     'roster:changed',
     'channel:changed',
     'activity:appended',
-    'session:data',
-    'proof:data',
-    'proof:exit'
+    'session:data'
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
@@ -64,7 +54,6 @@ export interface HealthReport {
     readonly ok: boolean;
     readonly platform: string;
     readonly startedAt: string;
-    readonly ptyOpen: boolean;
 }
 
 /**
@@ -284,12 +273,3 @@ export interface CheckpointAck {
     readonly drainId: string;
 }
 
-/** What the proof window sends to open a pty. Ids only, no paths. */
-export interface ProofSpawn {
-    readonly cols: number;
-    readonly rows: number;
-}
-
-export interface ProofWrite {
-    readonly data: string;
-}

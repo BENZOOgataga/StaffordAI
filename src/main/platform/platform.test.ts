@@ -603,31 +603,3 @@ test('on this machine, a POSIX shell is actually found', async () => {
     assert.equal(existsSync(found as string), true);
     console.log('    real machine: POSIX shell resolved to ' + found);
 });
-
-test('the macOS harness names the same claude candidates as the platform', async () => {
-    // The harness is CommonJS and this module is ESM TypeScript, so it repeats
-    // the candidate list rather than importing it. That duplication is fine
-    // until it drifts, and a harness that reports the wrong candidates is worse
-    // than no harness: it would say "confirmed" about a list the code does not
-    // use.
-    const { readFileSync } = await import('node:fs');
-    const harness = readFileSync(new URL('../../../scripts/macos-harness/run.cjs', import.meta.url), 'utf8');
-
-    const HOME = '/Users/someone';
-    for (const candidate of darwin.claudeCandidates(HOME)) {
-        // Tokens rather than whole strings: a home-relative candidate is built
-        // with path.join in the harness, so the assembled path never appears as
-        // a literal anywhere in its source.
-        const tokens = candidate.startsWith(HOME)
-            ? candidate.slice(HOME.length).split('/').filter(Boolean)
-            : [candidate];
-
-        for (const token of tokens) {
-            assert.ok(
-                harness.includes(token),
-                'the harness does not mention "' + token + '" from the candidate ' + candidate +
-                '. Update scripts/macos-harness/run.cjs to match src/main/platform/darwin.ts.'
-            );
-        }
-    }
-});

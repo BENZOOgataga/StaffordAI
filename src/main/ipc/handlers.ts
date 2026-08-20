@@ -19,18 +19,15 @@ import {
     type SavedCheckpoints
 } from '../../shared/ipc.ts';
 import {
-    isProofSpawn, isProofWrite, isSessionOpen, isSessionResize, isSessionWrite,
+    isSessionOpen, isSessionResize, isSessionWrite,
     isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 import { OutputCoalescer } from './output-coalescer.ts';
-import type { ProofPty } from './proof-pty.ts';
 
 export interface HandlerDeps {
     readonly startedAt: string;
     readonly platformId: string;
-    readonly proof: ProofPty;
-    /** Where proof:data and proof:exit are pushed. */
     readonly sender: () => WebContents | null;
     /**
      * A read-only, bounded list of projects as summaries, ids and names only.
@@ -118,8 +115,7 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         health: (): HealthReport => ({
             ok: true,
             platform: deps.platformId,
-            startedAt: deps.startedAt,
-            ptyOpen: deps.proof.isOpen()
+            startedAt: deps.startedAt
         }),
 
         // Read-only. No payload, like health, so no argument guard: it takes
@@ -230,23 +226,7 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
                 throw new Error('session:write refused: that session is not the open card');
             }
             return deps.submitMessage(open.hireId, sanitiseMessage(payload.text));
-        },
-
-        'proof:spawn': (payload: unknown): { ok: boolean } => {
-            if (!isProofSpawn(payload)) throw new Error('proof:spawn requires {cols,rows}');
-            deps.proof.spawn(payload, {
-                onData: (data) => deps.sender()?.send('proof:data', data),
-                onExit: (info) => deps.sender()?.send('proof:exit', info)
-            });
-            return { ok: true };
-        },
-
-        'proof:write': (payload: unknown): void => {
-            if (!isProofWrite(payload)) throw new Error('proof:write requires {data}');
-            deps.proof.write(payload.data);
-        },
-
-        'proof:kill': (): void => { deps.proof.kill(); }
+        }
     };
 }
 

@@ -116,19 +116,6 @@ const api = Object.freeze({
             invoke('session:write', { hireId, text }) as Promise<void>,
         onData: (listener: (data: string) => void): (() => void) =>
             on('session:data', (payload) => listener(String(payload)))
-    }),
-
-    // The proof window's surface, thrown away with that window when real UI
-    // lands. Ids and sizes only, never a path.
-    proof: Object.freeze({
-        spawn: (size: { cols: number; rows: number }): Promise<{ ok: boolean }> =>
-            invoke('proof:spawn', size) as Promise<{ ok: boolean }>,
-        write: (data: string): Promise<void> => invoke('proof:write', { data }) as Promise<void>,
-        kill: (): Promise<void> => invoke('proof:kill') as Promise<void>,
-        onData: (listener: (data: string) => void): (() => void) =>
-            on('proof:data', (payload) => listener(String(payload))),
-        onExit: (listener: (info: unknown) => void): (() => void) =>
-            on('proof:exit', listener)
     })
 });
 
