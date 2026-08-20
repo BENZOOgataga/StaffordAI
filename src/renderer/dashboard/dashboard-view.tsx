@@ -40,7 +40,7 @@ function ColleagueRow({ card }: { card: RosterCard }): React.JSX.Element {
                 <span className="text-muted-foreground truncate text-xs">{card.role}</span>
             </span>
             {card.project ? <span className="text-muted-foreground hidden truncate text-xs sm:block">{card.project}</span> : null}
-            <Badge variant={status === 'waiting' ? 'default' : 'outline'} className="shrink-0 capitalize">
+            <Badge variant="secondary" className="text-muted-foreground shrink-0 font-normal capitalize">
                 {card.state.replace(/_/g, ' ')}
             </Badge>
         </ListRow>
