@@ -108,7 +108,10 @@ jobs:
           # and unmade. See docs/stack-migration-verification.md.
           - name: windows-x64
             runner: windows-latest
-            builder: --win --x64 --dir
+            # No --dir: build the real zip distributable for the Windows-only
+            # v0.1.0 release, uploaded below for a hand-cut release. The mac legs
+            # stay --dir; they only prove compilation and are not shipped yet.
+            builder: --win --x64
 
     steps:
       - uses: actions/checkout@v5
@@ -146,6 +149,17 @@ jobs:
       # the check. On a Windows bundle it says the darwin invariant is not
       # applicable and checks the Windows equivalent instead of passing silently.
       - run: node scripts/check-packaged-bundle.cjs
+
+      # The Windows-only v0.1.0 distributable, downloadable from the Actions run so
+      # a hand-cut release can attach it. Windows leg only; the mac --dir legs
+      # produce nothing shippable yet. Unsigned by the config above and asserted so
+      # by the bundle check that just ran.
+      - if: matrix.name == 'windows-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Stafford-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
 
   # Agents commit to this repository, so this is not a formality.
   #

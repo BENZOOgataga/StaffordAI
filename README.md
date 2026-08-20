@@ -35,16 +35,19 @@ it is why the current build is unsigned.
 
 ## Platforms
 
-macOS and Windows, both first-class. Linux is written but unsupported, and the app refuses to start there
-rather than half working.
+v0.1.0 is Windows only. Windows is my daily platform and the one I verify on, so it ships first. macOS is
+written and builds, but I develop on Windows and verifying macOS means switching machines, so I am not gating
+the first release on it. It comes in a later release. Linux is written but unsupported, and the app refuses to
+start there rather than half working. The macOS install steps are kept below under a planned note so the
+knowledge is not lost.
 
 ## Install
 
-There is no code signing yet, so the binaries are unsigned. macOS Gatekeeper and Windows SmartScreen will both
-warn you the first time you open the app, and you approve it once. This is expected for an unsigned build, not
-a sign anything is wrong.
+v0.1.0 is Windows only. There is no code signing yet, so the binary is unsigned, and Windows SmartScreen warns
+you the first time you open the app. You approve it once. This is expected for an unsigned build, not a sign
+anything is wrong.
 
-Download the zip for your platform from the [latest release](https://github.com/BENZOOgataga/StaffordAI/releases/latest),
+Download `Stafford-0.1.0-win-x64.zip` from the [latest release](https://github.com/BENZOOgataga/StaffordAI/releases/latest),
 unzip it, and follow the steps below. There is no installer; you run the app from the unzipped folder.
 
 ### Windows
@@ -58,9 +61,12 @@ unzip it, and follow the steps below. There is no installer; you run the app fro
 
 You approve it once. Windows remembers the choice for that copy.
 
-### macOS
+### macOS (planned, not in v0.1.0)
 
-1. Unzip `Stafford-0.1.0-darwin-arm64.zip` and move `Stafford.app` to Applications.
+macOS is not shipped in v0.1.0. These steps are kept for when it lands in a later release, and describe the
+unsigned launch as it worked in development.
+
+1. Unzip `Stafford-<version>-darwin-arm64.zip` and move `Stafford.app` to Applications.
 2. Open it. Because the app is unsigned and not notarized, macOS Gatekeeper blocks the first launch and says it
    cannot verify the developer.
 3. On recent macOS, open **System Settings > Privacy & Security**, scroll to the message about Stafford being
@@ -106,7 +112,7 @@ earlier assumption. When I corrected a decision, I recorded the correction rathe
 
 - Node 22 or newer. CI runs on 26.
 - Claude Code, native installer.
-- Windows 11 or macOS.
+- Windows 11 for v0.1.0. macOS comes in a later release.
 
 ## Tests
 
