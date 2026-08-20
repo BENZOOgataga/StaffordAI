@@ -12,7 +12,7 @@
  */
 
 import nodePath from 'node:path';
-import type { CommandSpec, InputSocketDisposal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec, SocketPlan } from './types.ts';
+import type { CommandSpec, InputSocketDisposal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
 import { posixKillTreePlan } from './posix-kill.ts';
 
 // POSIX semantics regardless of the machine running this. Plain path.join on
@@ -27,25 +27,6 @@ const INHERITED = Object.freeze([
 export const linux: Platform = {
     id: 'linux',
     supported: false,
-
-    hookSocket(appId: string, home: string): SocketPlan {
-        // XDG_RUNTIME_DIR is the right home for a socket and is not readable
-        // here, so this falls back to the same shape macOS uses. The caller
-        // supplies the real runtime directory when there is one.
-        //
-        // Deliberately NOT appDataDir(), unlike darwin. XDG separates runtime
-        // state in ~/.local/state from data in ~/.local/share, so these are two
-        // different answers rather than one answer written twice.
-        const dir = path.join(home, '.local', 'state', appId);
-        return {
-            path: path.join(dir, 'hook.sock'),
-            parentDir: dir,
-            parentMode: 0o700,
-            removeStaleFile: true,
-            ownerOnly: true,
-            accessDetail: 'unix socket in a 0700 directory: owner only. Never verified.'
-        };
-    },
 
     inheritedEnvKeys: () => INHERITED,
 

@@ -234,6 +234,17 @@ test('a turn that dies without a result records no reply and leaves the colleagu
     assert.equal(rec.replies.length, 0, 'still no reply (auto off), but no throw and the queue advanced');
 });
 
+test('a finished turn reaps the child by its exact pid (tree reap), not by image name', async () => {
+    const { spawn } = responder();
+    const reaped: number[] = [];
+    const { deps } = fakeDeps(spawn, { reapChild: (pid) => { reaped.push(pid); } });
+    const manager = new ClaudeRunnerManager(deps);
+
+    await manager.submit('hireA', 'x');
+
+    assert.deepEqual(reaped, [1001], 'the runner disposed its own child pid through the tree reaper, exactly once');
+});
+
 test('drainables expose each served colleague with a checkpoint that disposes then commits', async () => {
     const { spawn } = responder();
     const committed: Array<{ cwd: string; hireId: string }> = [];

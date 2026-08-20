@@ -4,7 +4,7 @@
  */
 
 import nodePath from 'node:path';
-import type { CommandSpec, InputSocketDisposal, KillSignal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec, SocketPlan } from './types.ts';
+import type { CommandSpec, InputSocketDisposal, KillSignal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
 
 // win32 semantics regardless of the machine running this. On a macOS CI runner
 // plain path.join would produce forward slashes and the platform layer would
@@ -31,26 +31,6 @@ const GIT_ROOTS = Object.freeze([
 export const win32: Platform = {
     id: 'win32',
     supported: true,
-
-    hookSocket(appId: string): SocketPlan {
-        return {
-            path: '\\\\.\\pipe\\' + appId,
-            // The pipe namespace is not the filesystem. Nothing to create and
-            // nothing left behind.
-            parentDir: null,
-            parentMode: null,
-            removeStaleFile: false,
-            // Measured 2026-08-06, not assumed. The default descriptor on a
-            // pipe created through net.createServer grants FILE_GENERIC_READ to
-            // Everyone and to ANONYMOUS LOGON. Read only, so another account
-            // cannot forge events, but it is not owner-only and that is why
-            // per-agent secrets exist. Raw output in the verification log.
-            ownerOnly: false,
-            accessDetail:
-                'named pipe, default descriptor: Everyone and ANONYMOUS LOGON have read. ' +
-                'Not owner-only, so per-agent secrets carry authentication.'
-        };
-    },
 
     inheritedEnvKeys: () => INHERITED,
 

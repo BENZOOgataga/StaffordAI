@@ -31,7 +31,7 @@ function existsOnly(...paths: string[]) {
 
 test('every platform implements every member', () => {
     const members = [
-        'hookSocket', 'inheritedEnvKeys', 'pathDirectories', 'posixShellCandidates',
+        'inheritedEnvKeys', 'pathDirectories', 'posixShellCandidates',
         'shellRegistryLookups', 'shellPathDirectories', 'executableName',
         'claudeCandidates', 'killTreePlan', 'normalisePath', 'appDataDir', 'selfChecks'
     ] as const;
@@ -54,7 +54,6 @@ test('no member returns undefined on any platform', () => {
     for (const platform of ALL) {
         const input = inputs(platform);
         const answers: Record<string, unknown> = {
-            hookSocket: platform.hookSocket('stafford', input.home),
             inheritedEnvKeys: platform.inheritedEnvKeys(),
             pathDirectories: platform.pathDirectories(input),
             posixShellCandidates: platform.posixShellCandidates(input),
@@ -73,43 +72,6 @@ test('no member returns undefined on any platform', () => {
             assert.notEqual(value, null, platform.id + '.' + name + ' returned null');
         }
     }
-});
-
-test('a socket plan is complete on every platform, including the fields that do not apply', () => {
-    for (const platform of ALL) {
-        const plan = platform.hookSocket('stafford', inputs(platform).home);
-        assert.ok(plan.path.length > 0, platform.id + ' has no socket path');
-        assert.equal(typeof plan.removeStaleFile, 'boolean');
-        assert.equal(typeof plan.ownerOnly, 'boolean');
-        assert.ok(plan.accessDetail.length > 0, platform.id + ' does not say what the OS guarantees');
-        // parentDir and parentMode are null on Windows rather than absent: a
-        // named pipe has no directory, and null is an answer.
-        assert.ok(plan.parentDir === null || typeof plan.parentDir === 'string');
-        assert.ok(plan.parentMode === null || typeof plan.parentMode === 'number');
-    }
-});
-
-// ---------------------------------------------------------------------------
-// The measured facts, per platform
-// ---------------------------------------------------------------------------
-
-test('the windows pipe is not owner-only, which is why per-agent secrets exist', () => {
-    const plan = win32.hookSocket('stafford', HOME.win32);
-    assert.equal(plan.path, '\\\\.\\pipe\\stafford');
-    assert.equal(plan.ownerOnly, false);
-    assert.equal(plan.parentDir, null);
-    assert.equal(plan.removeStaleFile, false);
-    assert.match(plan.accessDetail, /Everyone/);
-});
-
-test('the posix socket lives in a 0700 directory and cleans up after a crash', () => {
-    for (const platform of [darwin, linux]) {
-        const plan = platform.hookSocket('stafford', HOME.posix);
-        assert.equal(plan.parentMode, 0o700);
-        assert.equal(plan.removeStaleFile, true);
-        assert.equal(plan.ownerOnly, true);
-    }
-    assert.match(darwin.hookSocket('stafford', HOME.posix).path, /Library\/Application Support\/stafford/);
 });
 
 test('environment allowlists are disjoint where the platforms genuinely differ', () => {
@@ -347,8 +309,7 @@ const CONSUMER_EXEMPT: Record<string, string> = {
         'platform, and there is no product code that should be asking.',
     appDataDir:
         'owed to Task 8, storage. Nothing should choose where the database lives before anything ' +
-        'needs a database. Tracked as an owed item in docs/agents/HANDOFF.md, and darwin already ' +
-        'derives its socket directory from it so the two cannot diverge.'
+        'needs a database. Tracked as an owed item in docs/agents/HANDOFF.md.'
 };
 
 /**

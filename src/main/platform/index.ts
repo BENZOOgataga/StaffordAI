@@ -14,7 +14,7 @@ import { darwin } from './darwin.ts';
 import { linux } from './linux.ts';
 import type { Platform, PlatformId } from './types.ts';
 
-export type { Platform, PlatformId, CommandSpec, SocketPlan, SelfCheckSpec, PathInputs, RegistryLookup } from './types.ts';
+export type { Platform, PlatformId, CommandSpec, SelfCheckSpec, PathInputs, RegistryLookup } from './types.ts';
 export { win32, darwin, linux };
 
 const PLATFORMS: Readonly<Record<PlatformId, Platform>> = Object.freeze({ win32, darwin, linux });

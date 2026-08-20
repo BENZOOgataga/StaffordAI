@@ -14,7 +14,7 @@
  */
 
 import nodePath from 'node:path';
-import type { CommandSpec, InputSocketDisposal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec, SocketPlan } from './types.ts';
+import type { CommandSpec, InputSocketDisposal, KillTreePlan, PathInputs, Platform, RegistryLookup, ResizeObservation, SelfCheckSpec } from './types.ts';
 import { posixKillTreePlan } from './posix-kill.ts';
 
 // POSIX semantics regardless of the machine running this. Plain path.join on
@@ -34,49 +34,6 @@ const INHERITED = Object.freeze([
 export const darwin: Platform = {
     id: 'darwin',
     supported: true,
-
-    hookSocket(appId: string, home: string): SocketPlan {
-        // Derived from appDataDir rather than recomputed. They were the same
-        // string written twice, which is one definition of where Stafford's
-        // data lives until the first time either changes.
-        //
-        // linux deliberately does not do this: XDG puts runtime state in
-        // ~/.local/state and data in ~/.local/share, so there the two are
-        // different answers rather than one answer duplicated. win32 has no
-        // parent directory at all, since a named pipe is not in the filesystem.
-        const dir = this.appDataDir(home, appId);
-        return {
-            path: path.join(dir, 'hook.sock'),
-            parentDir: dir,
-            // 0700. Owner only, which is what makes the cross-user story here
-            // different from Windows.
-            parentMode: 0o700,
-            // A unix socket file survives a crash and blocks the next bind.
-            removeStaleFile: true,
-            // Confirmed on hardware 2026-08-08, with a second principal, after
-            // the 6c harness created the socket through prepareSocketFor:
-            //
-            //   drwx------ 700 <user>:staff
-            //     /Users/<user>/Library/Application Support/Stafford
-            //   sudo -u nobody ls ...  ->  Permission denied
-            //
-            // The listing was empty because the harness cleans up on exit, and
-            // that does not weaken the result: a unix socket cannot be reached
-            // without traversing its parent, so the 0700 directory is the
-            // protection and the parent mode is exactly what this plan
-            // promised.
-            //
-            // This is the darwin counterpart to the Windows named pipe granting
-            // Everyone read, and the two platforms genuinely differ. Per-agent
-            // secrets exist because of the Windows answer and they stay
-            // regardless of this one: a true answer here relaxes an assumption,
-            // it cannot invalidate that design.
-            ownerOnly: true,
-            accessDetail:
-                'unix socket in a 0700 directory: owner only. Confirmed on hardware with stat ' +
-                'and a second principal, 2026-08-08.'
-        };
-    },
 
     inheritedEnvKeys: () => INHERITED,
 
