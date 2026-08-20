@@ -116,7 +116,7 @@ function buildDeps(over: {
     notReportingMs?: number;
     idleMs?: number;
     acceptTimeoutMs?: number;
-   
+    readyFallbackMs?: number;
     timers?: Timers;
     target?: { projectId: string; cwd: string } | null;
     resumeSessionId?: string | null;
@@ -155,6 +155,7 @@ function buildDeps(over: {
         // Drain the queue without waiting on real time.
         submitDelayMs: 0,
         acceptTimeoutMs: over.acceptTimeoutMs ?? 40,
+        ...(over.readyFallbackMs === undefined ? {} : { readyFallbackMs: over.readyFallbackMs }),
         notReportingMs: over.notReportingMs ?? 30_000,
         ...(over.idleMs === undefined ? {} : { idleMs: over.idleMs }),
         ...(over.timers ? { timers: over.timers } : {}),
@@ -502,8 +503,9 @@ test('a submitted message is held until the session reports ready, then written 
     // accepting input, which is what the swallowed-first-message bug was.
     assert.equal(pty.writes.includes('hello there'), false, 'nothing is written before the session reports ready');
     registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    pty.emit('\x1b[?2004h');   // the TUI signals input-ready
     await tick();
-    assert.equal(pty.writes.includes('hello there'), true, 'the message is written once the session reports ready');
+    assert.equal(pty.writes.includes('hello there'), true, 'the message is written once the session is input-ready');
 });
 
 // Drive the handshake for one hire. The accept receipt is a UserPromptSubmit event,
@@ -513,8 +515,38 @@ test('a submitted message is held until the session reports ready, then written 
 const AT2 = '2026-08-11T00:00:00Z';
 const accept = (registry: SessionRegistry, sessionId: string, agentId: string) =>
     registry.ingest(coerceHookEvent({ event: 'UserPromptSubmit', sessionId, agentId }), AT2);
-const live = (registry: SessionRegistry, sessionId: string, agentId: string) =>
+// The session becomes deliverable when its TUI signals input-ready (the
+// bracketed-paste marker in the pty output) and it has reported SessionStart.
+const READY_MARK = '\x1b[?2004h';
+const live = (registry: SessionRegistry, pty: ReturnType<typeof stubPty>, sessionId: string, agentId: string) => {
     registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId, agentId }), AT2);
+    pty.emit(READY_MARK);
+};
+
+test('the first message waits for the input-ready marker, not just SessionStart', async () => {
+    const pty = stubPty();
+    const { lifecycle, registry } = buildDeps({ spawn: pty, timers: fakeTimers().timers });
+    void lifecycle.submitMessage('h1', 'hi');
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), AT2);
+    await settle();
+    assert.deepEqual(pty.writes, [], 'not written on SessionStart alone; the TUI is ~150ms from accepting input');
+    pty.emit('\x1b[?2004h');   // bracketed-paste: the input line is live
+    await settle();
+    assert.deepEqual(pty.writes, ['hi', '\r'], 'written the instant the input-ready marker arrives');
+});
+
+test('a session that never emits the input-ready marker still delivers after the fallback', async () => {
+    const ft = fakeTimers();
+    const pty = stubPty();
+    const { lifecycle, registry } = buildDeps({ spawn: pty, timers: ft.timers, readyFallbackMs: 1500 });
+    void lifecycle.submitMessage('h1', 'hi');
+    registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's1', agentId: 'h1' }), AT2);
+    await settle();
+    assert.deepEqual(pty.writes, [], 'held: no marker yet');
+    ft.fireByMs(1500);         // the ready fallback fires
+    await settle();
+    assert.deepEqual(pty.writes, ['hi', '\r'], 'delivered after the ready fallback, no marker required');
+});
 
 test('a second message is not written until the first is accepted', async () => {
     const pty = stubPty();
@@ -524,7 +556,7 @@ test('a second message is not written until the first is accepted', async () => 
     void lifecycle.submitMessage('h1', 'test');
     assert.deepEqual(pty.writes, [], 'nothing is written while the session is cold');
 
-    live(registry, 's1', 'h1');           // SessionStart: first message goes
+    live(registry, pty, 's1', 'h1');           // SessionStart: first message goes
     await settle();
     assert.deepEqual(pty.writes, ['hi', '\r'], 'the first message is submitted, the second held for its accept');
 
@@ -540,7 +572,7 @@ test('five messages sent fast arrive as five ordered turns, none merged, none dr
     const msgs = ['one', 'two', 'three', 'four', 'five'];
     for (const m of msgs) void lifecycle.submitMessage('h1', m);
 
-    live(registry, 's1', 'h1');
+    live(registry, pty, 's1', 'h1');
     await settle();
     // Each message appears, then we drive its accept receipt, unblocking the next.
     // Nothing is ever written before its turn.
@@ -558,7 +590,7 @@ test('a warm idle session submits a single message on its own, promptly', async 
     const { lifecycle, registry } = buildDeps({ spawn: pty });
     // Warm it: reported and idle.
     void lifecycle.submitMessage('h1', 'first');
-    live(registry, 's1', 'h1');
+    live(registry, pty, 's1', 'h1');
     await tick();
     accept(registry, 's1', 'h1');
     await tick();
@@ -578,7 +610,7 @@ test('guard 1: a lost accept signal does not deadlock the queue; it advances aft
     void lifecycle.submitMessage('h1', 'hi');
     void lifecycle.submitMessage('h1', 'test');
 
-    live(registry, 's1', 'h1');           // idle: first goes
+    live(registry, pty, 's1', 'h1');           // idle: first goes
     await settle();
     assert.deepEqual(pty.writes.slice(0, 2), ['hi', '\r'], 'first attempted');
 
@@ -596,7 +628,7 @@ test('a first message swallowed by a cold session is re-sent until it is accepte
     const { lifecycle, registry } = buildDeps({ spawn: pty, timers: ft.timers, acceptTimeoutMs: 1000 });
     void lifecycle.submitMessage('h1', 'hi');
 
-    live(registry, 's1', 'h1');           // idle: first submit goes
+    live(registry, pty, 's1', 'h1');           // idle: first submit goes
     await settle();
     assert.deepEqual(pty.writes, ['hi', '\r'], 'first submit');
 
@@ -631,8 +663,8 @@ test('guard 2: one colleague accept never advances another colleague queue', asy
     void lifecycle.submitMessage('a', 'a1');
     void lifecycle.submitMessage('a', 'a2');
     void lifecycle.submitMessage('b', 'b1');
-    live(registry, 'sa', 'a');
-    live(registry, 'sb', 'b');
+    live(registry, ptyA, 'sa', 'a');
+    live(registry, ptyB, 'sb', 'b');
     await settle();
     assert.deepEqual(ptyA.writes, ['a1', '\r'], 'A first message out');
     assert.deepEqual(ptyB.writes, ['b1', '\r'], 'B first message out');
@@ -667,8 +699,9 @@ test('a message after teardown reaches a fresh session, never the dead one', asy
     await lifecycle.teardown('h1');
     void lifecycle.submitMessage('h1', 'second');
     const fresh = ptys[1];
-    // The fresh session reports ready, so its queue drains.
+    // The fresh session reports and signals input-ready, so its queue drains.
     registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's2', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    fresh?.emit('[?2004h');
     await tick();
 
     assert.notEqual(dead, fresh, 'a new session was spawned for the second message');
@@ -695,8 +728,9 @@ test('a failed resume re-delivers the triggering message to the fresh session, s
     resumeSession.fireExit(1);                            // the resume fails
     await tick();                                         // the fallback cold spawns
     const fresh = ptys[1]!;
-    // The fresh session reports ready, so the carried message drains into it.
+    // The fresh session reports and signals input-ready, so the carried message drains.
     registry.ingest(coerceHookEvent({ event: 'SessionStart', sessionId: 's2', agentId: 'h1' }), '2026-08-11T00:00:00Z');
+    fresh.emit('[?2004h');
     await tick();
 
     assert.notEqual(resumeSession, fresh, 'the fallback spawned a fresh session');

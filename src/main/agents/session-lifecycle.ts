@@ -65,6 +65,21 @@ export const DEFAULT_ACCEPT_TIMEOUT_MS = 2_000;
  */
 export const MAX_SUBMIT_ATTEMPTS = 3;
 
+/**
+ * The terminal sequence Claude Code emits when its input line is live: DEC private
+ * mode 2004, bracketed paste, set high. Measured ~150ms after SessionStart, and
+ * submitting once it is present lands the first message rather than being swallowed.
+ */
+export const INPUT_READY_MARKER = '\x1b[?2004h';
+
+/**
+ * How long after a session reports to wait for the input-ready marker before
+ * submitting anyway. A safety net for a terminal that does not emit the marker; the
+ * submit-and-retry then covers a swallow. Short, so a marker-less session is not
+ * held long.
+ */
+export const DEFAULT_READY_FALLBACK_MS = 1_500;
+
 
 /** A parked wait on a hire's next hook signal, resolved by an event or teardown. */
 interface StateWaiter {
@@ -165,6 +180,8 @@ export interface LifecycleDeps {
     readonly submitDelayMs?: number;
     /** How long to wait for a message's accept receipt before advancing. Test-injected. */
     readonly acceptTimeoutMs?: number;
+    /** How long after report to wait for the input-ready marker before submitting. Test-injected. */
+    readonly readyFallbackMs?: number;
     /** Injected so a test drives a virtual clock and sees the unref. Defaults to real. */
     readonly timers?: Timers;
     /** Injected so a unit test does not reap a real process tree. Defaults to the real one. */
@@ -181,7 +198,17 @@ interface Owned {
     readonly resuming: boolean;
     notReportTimer: TimerHandle | null;
     idleTimer: TimerHandle | null;
+    readyTimer: TimerHandle | null;
     reported: boolean;
+    /**
+     * True once the session's TUI is accepting input, so the first message lands
+     * rather than being swallowed. Set by the bracketed-paste marker in the pty
+     * output, measured ~150ms after SessionStart, or a short fallback if it never
+     * comes. The queue waits for this before its first submit.
+     */
+    inputReady: boolean;
+    /** Recent pty output while waiting for the input-ready marker, bounded. */
+    readyScan: string;
     tornDown: boolean;
 }
 
@@ -228,6 +255,7 @@ export class SessionLifecycle {
     readonly #notReportingMs: number;
     readonly #idleMs: number;
     readonly #acceptTimeoutMs: number;
+    readonly #readyFallbackMs: number;
     readonly #timers: Timers;
 
     constructor(deps: LifecycleDeps) {
@@ -235,6 +263,7 @@ export class SessionLifecycle {
         this.#notReportingMs = deps.notReportingMs ?? DEFAULT_NOT_REPORTING_MS;
         this.#idleMs = deps.idleMs ?? DEFAULT_IDLE_MS;
         this.#acceptTimeoutMs = deps.acceptTimeoutMs ?? DEFAULT_ACCEPT_TIMEOUT_MS;
+        this.#readyFallbackMs = deps.readyFallbackMs ?? DEFAULT_READY_FALLBACK_MS;
         this.#timers = deps.timers ?? realTimers;
         // The drainable checkpoint and the drain's force-kill both come back here,
         // so a session is torn down through one path however the drain reaches it.
@@ -419,9 +448,9 @@ export class SessionLifecycle {
     async #drainQueue(hireId: string): Promise<void> {
         if (this.#draining.has(hireId)) { this.#dlog('drain skip hire=' + hireId, 'already-draining'); return; }
         const owned = this.#owned.get(hireId);
-        if (!owned || owned.tornDown || !owned.reported) {
-            this.#dlog('drain wait hire=' + hireId, 'reported=' + (owned?.reported ?? 'no-session'),
-                'tornDown=' + (owned?.tornDown ?? 'no-session'));
+        if (!owned || owned.tornDown || !owned.inputReady) {
+            this.#dlog('drain wait hire=' + hireId, 'inputReady=' + (owned?.inputReady ?? 'no-session'),
+                'reported=' + (owned?.reported ?? 'no-session'), 'tornDown=' + (owned?.tornDown ?? 'no-session'));
             return;
         }
 
@@ -559,15 +588,43 @@ export class SessionLifecycle {
             agentId, hireId, cwd: target.cwd, pid, session, resuming: resumeSessionId !== null,
             notReportTimer: this.#arm(() => this.#onNotReporting(agentId), this.#notReportingMs),
             idleTimer: this.#arm(() => this.#onIdle(agentId), this.#idleMs),
-            reported: false, tornDown: false
+            readyTimer: null, reported: false, inputReady: false, readyScan: '', tornDown: false
         };
         this.#owned.set(agentId, owned);
         // A card opened before this spawn is waiting for output; attach it now so
         // its terminal streams from this session.
         this.#attachSubscribers(hireId, session);
 
+        // Watch the pty output for the input-ready marker, so the first message is
+        // submitted the instant Claude's TUI accepts input rather than at SessionStart,
+        // ~150ms too early, where it is swallowed.
+        session.on('data', (data: string) => this.#watchInputReady(agentId, data));
+
         session.once('exit', (info: { exitCode: number | null }) => this.#onExit(agentId, info));
         return owned;
+    }
+
+    /**
+     * Scans early pty output for the input-ready marker. Runs only until the session
+     * is ready, keeping a bounded tail so the marker is caught even across a chunk
+     * boundary, then does nothing.
+     */
+    #watchInputReady(agentId: string, data: string): void {
+        const owned = this.#owned.get(agentId);
+        if (!owned || owned.tornDown || owned.inputReady) return;
+        owned.readyScan = (owned.readyScan + data).slice(-64);
+        if (owned.readyScan.includes(INPUT_READY_MARKER)) this.#markInputReady(agentId);
+    }
+
+    /** Marks a session ready for input and drains anything queued, once. */
+    #markInputReady(agentId: string): void {
+        const owned = this.#owned.get(agentId);
+        if (!owned || owned.tornDown || owned.inputReady) return;
+        owned.inputReady = true;
+        owned.readyScan = '';
+        if (owned.readyTimer) { this.#timers.clear(owned.readyTimer); owned.readyTimer = null; }
+        this.#dlog('input-ready hire=' + agentId);
+        void this.#drainQueue(agentId);
     }
 
     /** Re-arms the idle clock on any activity, so a working session never idles down. */
@@ -623,9 +680,12 @@ export class SessionLifecycle {
         if (!owned.reported) {
             owned.reported = true;
             if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
-            // The session is ready to accept input now, so deliver anything queued
-            // before readiness, each as its own submitted turn.
-            void this.#drainQueue(agentId);
+            // The session started, but its TUI is not accepting input yet. Wait for
+            // the input-ready marker (arriving ~150ms later) before the first submit,
+            // with a fallback so a marker-less terminal is not held long.
+            if (!owned.inputReady && !owned.readyTimer) {
+                owned.readyTimer = this.#arm(() => this.#markInputReady(agentId), this.#readyFallbackMs);
+            }
         }
         this.#resetIdle(agentId);
     }
@@ -788,6 +848,7 @@ export class SessionLifecycle {
         this.#contextLost.delete(agentId);
         if (owned.notReportTimer) { this.#timers.clear(owned.notReportTimer); owned.notReportTimer = null; }
         if (owned.idleTimer) { this.#timers.clear(owned.idleTimer); owned.idleTimer = null; }
+        if (owned.readyTimer) { this.#timers.clear(owned.readyTimer); owned.readyTimer = null; }
 
         try {
             const kill = this.#deps.killTree ?? defaultKillTree;
