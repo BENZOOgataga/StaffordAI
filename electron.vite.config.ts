@@ -1,7 +1,6 @@
 import { defineConfig } from 'electron-vite';
 import { resolve, join } from 'node:path';
 import { mkdirSync, readdirSync, copyFileSync } from 'node:fs';
-import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { NATIVE_EXTERNALS } from './src/build/native-externals.ts';
 
@@ -80,12 +79,18 @@ export default defineConfig({
     },
     renderer: {
         root: resolve(__dirname, 'src/renderer'),
-        // React and Tailwind serve the new design-system foundation, which lives only
-        // in the dev-only preview entry. The shipped index.html is vanilla and imports
-        // none of it, so the react plugin transforms only the preview's .tsx and the
-        // tailwind plugin only processes the CSS the preview imports. index.html's
-        // output is unchanged.
-        plugins: [react(), tailwindcss()],
+        // Tailwind for the design-system styles. JSX is transformed by Vite's built-in
+        // esbuild (the `esbuild` block below), NOT @vitejs/plugin-react: that plugin
+        // injects an inline react-refresh preamble in dev, which the app's strict CSP
+        // (script-src 'self', no unsafe-inline) blocks, so the React island would fail
+        // to mount in a dev run. esbuild JSX needs no inline script and works under the
+        // same CSP in dev and production. The trade is no React Fast Refresh in dev,
+        // which is worth keeping the CSP strict.
+        plugins: [tailwindcss()],
+        esbuild: {
+            jsx: 'automatic',
+            jsxImportSource: 'react'
+        },
         resolve: {
             // The shadcn convention: `@/` points at the renderer root.
             alias: { '@': resolve(__dirname, 'src/renderer') }

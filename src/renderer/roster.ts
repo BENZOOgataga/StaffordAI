@@ -251,7 +251,14 @@ function main(): void {
         else deactivateChannel();
         if (isHome && !dashboardMounted) {
             dashboardMounted = true;
-            void import('./dashboard/mount.tsx').then((m) => m.mountDashboard(homeView, showView));
+            import('./dashboard/mount.tsx')
+                .then((m) => m.mountDashboard(homeView, showView))
+                .catch((error: unknown) => {
+                    dashboardMounted = false;
+                    // Surface a mount failure rather than leaving a blank overlay.
+                    homeView.textContent = 'The dashboard could not load.';
+                    console.error('[dashboard] mount failed:', error);
+                });
         }
     };
     for (const item of document.querySelectorAll('.rail-item')) {
