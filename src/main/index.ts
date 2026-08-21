@@ -20,6 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { currentPlatform } from './platform/index.ts';
 import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './window/security.ts';
+import { applyAppMenu, hideMenuBar } from './window/app-menu.ts';
 import { resolveWindowBounds, readWindowState, saveWindowState, WINDOW_DEFAULTS, type Rect } from './window/window-state.ts';
 import { installTray } from './tray.ts';
 import { configureLoginItem } from './login-item.ts';
@@ -263,6 +264,9 @@ function openWindow(): void {
         minHeight: min.height,
         show: false,
         title: 'Stafford',
+        // No visible menu bar on Windows and Linux; the application menu is still set so
+        // its accelerators stay live. hideMenuBar reinforces this after the window exists.
+        autoHideMenuBar: true,
         webPreferences: {
             ...WEB_PREFERENCES,
             // .cjs: a sandboxed preload is CommonJS. See electron.vite.config.ts.
@@ -272,6 +276,9 @@ function openWindow(): void {
 
     const entry = rendererEntry();
     applyWindowSecurity(win, entry);
+    // Hide the menu bar on Windows and Linux (macOS keeps its system bar). The menu is
+    // set once at startup, so the clipboard, quit, and close accelerators still work.
+    hideMenuBar(win, Boolean(app.dock));
     win.once('ready-to-show', () => win.show());
 
     // Remember the user's size and position after they adjust it. Debounced, and
@@ -614,6 +621,15 @@ async function runDeliverySmoke(): Promise<void> {
 
 app.whenReady().then(async () => {
     applySessionSecurity(session.defaultSession);
+
+    // Replace Electron's default File/Edit/View/Window menu with a minimal one, so the
+    // app does not read as a generic Electron shell. The menu is still set (not cleared),
+    // so its accelerators survive; the bar itself is hidden per window on Windows and
+    // Linux. DevTools is included only in a dev build (app.isPackaged is false there).
+    // isMac keyed on the capability, not the platform name: app.dock exists only where
+    // there is a Dock, which is macOS, so this needs no platform branch and the
+    // platform-leak guard stays satisfied, the same way app.dock.hide is keyed below.
+    applyAppMenu(Boolean(app.dock), !app.isPackaged);
 
     // The store first, before the tray or any handler. If it cannot open, the
     // app has already quit inside openStore and there is nothing more to do.
