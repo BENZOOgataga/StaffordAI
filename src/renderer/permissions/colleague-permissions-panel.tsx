@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { RulesPanel } from './rules-panel.tsx';
+import { BuiltInProtection } from './built-in-protection.tsx';
 import { EffectiveRuleRow } from './rule-row.tsx';
 import { useProjectRules, useEffectivePolicy } from './use-permissions.ts';
 import type { UiLang } from './rule-labels.ts';
@@ -47,6 +48,8 @@ export function ColleaguePermissionsPanel({ lang, projectId, hireId }: {
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto p-5">
+            <BuiltInProtection lang={lang} groups={effective.builtIn} />
+
             <section className="flex max-w-5xl flex-col gap-3" aria-label={lang === 'fr' ? 'Politique effective' : 'Effective policy'}>
                 <div className="flex flex-col gap-0.5">
                     <h2 className="text-sm font-medium">
@@ -54,8 +57,8 @@ export function ColleaguePermissionsPanel({ lang, projectId, hireId }: {
                     </h2>
                     <p className="text-muted-foreground text-xs">
                         {lang === 'fr'
-                            ? 'Ce qui s’applique réellement à ce collègue, et d’où chaque règle vient. La règle la plus précise gagne, et à égalité refuser l’emporte sur demander, qui l’emporte sur autoriser.'
-                            : 'What actually applies to this colleague, and where each rule comes from. The most specific rule wins, and on a tie deny beats ask beats allow.'}
+                            ? 'Les règles que vous avez écrites qui s’appliquent à ce collègue, et d’où chacune vient. Elles l’emportent sur la protection intégrée ci-dessus. La plus précise gagne, et à égalité refuser l’emporte sur demander, puis sur autoriser.'
+                            : 'The rules you wrote that apply to this colleague, and where each comes from. They win over the built-in protection above. The most specific wins, and on a tie deny beats ask beats allow.'}
                     </p>
                 </div>
 
@@ -68,7 +71,9 @@ export function ColleaguePermissionsPanel({ lang, projectId, hireId }: {
                         <li role="alert" className="text-destructive px-4 py-6 text-center text-sm">{effective.error}</li>
                     ) : effective.rules.length === 0 ? (
                         <li className="text-muted-foreground px-4 py-6 text-center text-sm">
-                            {lang === 'fr' ? 'Aucune règle ne s’applique.' : 'No rules apply.'}
+                            {lang === 'fr'
+                                ? 'Vous n’avez écrit aucune règle. Seule la protection intégrée s’applique.'
+                                : 'You have written no rules. Only the built-in protection applies.'}
                         </li>
                     ) : effective.rules.map((rule, i) => (
                         <EffectiveRuleRow key={rule.action + (rule.pathScope ?? rule.commandPattern ?? '') + String(i)} lang={lang} rule={rule} />

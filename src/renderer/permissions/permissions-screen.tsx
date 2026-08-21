@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 import { RulesPanel } from './rules-panel.tsx';
+import { BuiltInProtection } from './built-in-protection.tsx';
 import { useProjectRules } from './use-permissions.ts';
 import type { UiLang } from './rule-labels.ts';
 import type { ProjectSummary } from '../../shared/ipc.ts';
@@ -24,7 +25,7 @@ export function PermissionsScreen({ lang, projects, projectId, onSelectProject, 
     onSelectProject: (id: string) => void;
     onNavigate: (view: string) => void;
 }): React.JSX.Element {
-    const { baseline, loaded, error } = useProjectRules(projectId);
+    const { builtIn, baseline, loaded, error } = useProjectRules(projectId);
 
     return (
         <AppShell current="permissions" onNavigate={onNavigate}>
@@ -62,18 +63,21 @@ export function PermissionsScreen({ lang, projects, projectId, onSelectProject, 
                             </p>
                         </div>
                     ) : (
+                      <div className="flex flex-col gap-6">
+                        <BuiltInProtection lang={lang} groups={builtIn} />
                         <RulesPanel
                             lang={lang}
-                            title={lang === 'fr' ? 'Règles de base du projet' : 'Project baseline rules'}
+                            title={lang === 'fr' ? 'Vos règles' : 'Your rules'}
                             hint={lang === 'fr'
-                                ? 'Ces règles s’appliquent à tous les collègues de ce projet. Les exceptions par collègue se règlent sur le collègue.'
-                                : 'These apply to every colleague on this project. Per-colleague exceptions are set on the colleague.'}
+                                ? 'Vos règles pour ce projet, appliquées à tous ses collègues et prioritaires sur la protection intégrée. Les exceptions par collègue se règlent sur le collègue.'
+                                : 'Your rules for this project, applied to every colleague on it and winning over the built-in protection. Per-colleague exceptions are set on the colleague.'}
                             rules={baseline}
                             projectId={projectId}
                             hireId={null}
                             loaded={loaded}
                             error={error}
                         />
+                      </div>
                     )}
                 </div>
             </section>

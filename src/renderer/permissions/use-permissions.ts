@@ -11,10 +11,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
     PermissionRuleView, EffectiveRuleView, PermissionRulesReply, PermissionEffectiveReply,
-    PermissionWriteReply, PermissionActionName, PermissionEffectName
+    PermissionWriteReply, PermissionActionName, PermissionEffectName, ProfileGroupView
 } from '../../shared/ipc.ts';
 
 export interface RulesState {
+    readonly builtIn: readonly ProfileGroupView[];
     readonly baseline: readonly PermissionRuleView[];
     readonly overrides: readonly PermissionRuleView[];
     /** Null before the first read lands, so the screen can tell empty from not-yet-loaded. */
@@ -22,7 +23,7 @@ export interface RulesState {
     readonly error: string | null;
 }
 
-const EMPTY: RulesState = { baseline: [], overrides: [], loaded: false, error: null };
+const EMPTY: RulesState = { builtIn: [], baseline: [], overrides: [], loaded: false, error: null };
 
 /** A project's stored rules, live. */
 export function useProjectRules(projectId: string | null): RulesState & { reload: () => void } {
@@ -33,7 +34,7 @@ export function useProjectRules(projectId: string | null): RulesState & { reload
         void (async () => {
             try {
                 const reply = await window.stafford.permissions.rules(projectId) as PermissionRulesReply;
-                setState({ baseline: reply.baseline, overrides: reply.overrides, loaded: true, error: null });
+                setState({ builtIn: reply.builtIn, baseline: reply.baseline, overrides: reply.overrides, loaded: true, error: null });
             } catch (error) {
                 // Kept visible rather than swallowed. A permission screen that silently shows
                 // nothing reads as "no rules", which is the most dangerous possible lie here.
@@ -51,6 +52,7 @@ export function useProjectRules(projectId: string | null): RulesState & { reload
 }
 
 export interface EffectiveState {
+    readonly builtIn: readonly ProfileGroupView[];
     readonly rules: readonly EffectiveRuleView[];
     readonly loaded: boolean;
     readonly error: string | null;
@@ -58,16 +60,16 @@ export interface EffectiveState {
 
 /** One colleague's resolved policy on a project, live. */
 export function useEffectivePolicy(projectId: string | null, hireId: string | null): EffectiveState {
-    const [state, setState] = useState<EffectiveState>({ rules: [], loaded: false, error: null });
+    const [state, setState] = useState<EffectiveState>({ builtIn: [], rules: [], loaded: false, error: null });
 
     const read = useCallback((): void => {
-        if (!projectId || !hireId) { setState({ rules: [], loaded: true, error: null }); return; }
+        if (!projectId || !hireId) { setState({ builtIn: [], rules: [], loaded: true, error: null }); return; }
         void (async () => {
             try {
                 const reply = await window.stafford.permissions.effective(projectId, hireId) as PermissionEffectiveReply;
-                setState({ rules: reply.rules, loaded: true, error: null });
+                setState({ builtIn: reply.builtIn, rules: reply.rules, loaded: true, error: null });
             } catch (error) {
-                setState({ rules: [], loaded: true, error: describe(error) });
+                setState({ builtIn: [], rules: [], loaded: true, error: describe(error) });
             }
         })();
     }, [projectId, hireId]);

@@ -41,7 +41,7 @@ import { assembleRoster } from './roster/snapshot.ts';
 import { ClaudeRunnerManager } from './agents/runner-manager.ts';
 import { makePermissionGate, type PermissionGate } from './agents/permission-gate.ts';
 import { effectivePolicy, ruleKey, widensProtectedAccess } from '../domain/effective-policy.ts';
-import { defaultBaselineRules, defaultCategoryDefaults } from '../domain/permission-profile.ts';
+import { defaultBaselineRules, defaultProfileGroups, defaultCategoryDefaults } from '../domain/permission-profile.ts';
 import type { PermissionRule, PermissionAction, PermissionEffect } from '../domain/permissions.ts';
 import type { PermissionRuleRecord } from '../domain/models.ts';
 import { ApprovalRegistry } from './agents/approval-registry.ts';
@@ -52,7 +52,7 @@ import { randomUUID } from 'node:crypto';
 import type {
     RosterSnapshot, ActivityRow, SavedCheckpoints,
     PermissionRuleView, PermissionRulesReply, PermissionEffectiveReply, PermissionWriteReply,
-    PermissionAdd, PermissionUpdate
+    PermissionAdd, PermissionUpdate, ProfileGroupView
 } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 
@@ -464,9 +464,41 @@ function ruleToView(r: PermissionRuleRecord): PermissionRuleView {
     };
 }
 
+/**
+ * The generated protection for a project, as summary rows.
+ *
+ * Built here rather than in the renderer because it comes from the same profile the gate
+ * resolves against, and a screen that recomputed it from its own idea of the defaults would
+ * be free to disagree with what is enforced.
+ */
+function builtInGroupsFor(projectId: string): ProfileGroupView[] {
+    const project = repositories?.projects.get(projectId);
+    const repoRoot = project?.repos[0]?.path ?? '';
+    const groups = defaultProfileGroups({
+        repoRoot,
+        writePaths: project?.policy.writePaths ?? null,
+        protectedPaths: protectedConfigPaths()
+    });
+
+    return groups.map((group) => {
+        const effects = new Set(group.rules.map((r) => r.effect));
+        return {
+            id: group.id,
+            covers: group.covers,
+            // Null when a group is not uniform, so a summary never claims one effect for rules
+            // that disagree. Every group is uniform today; this is here so it stays honest if
+            // one stops being.
+            effect: effects.size === 1 ? [...effects][0] as ProfileGroupView['effect'] : null,
+            // Distinct, because each scope appears twice, once for read and once for write.
+            detail: [...new Set(group.rules.map((r) => r.pathScope ?? r.commandPattern ?? ''))].filter(Boolean)
+        };
+    });
+}
+
 function permissionRulesFor(projectId: string): PermissionRulesReply {
     const all = repositories?.permissionRules.forProject(projectId) ?? [];
     return {
+        builtIn: builtInGroupsFor(projectId),
         baseline: all.filter((r) => r.hireId === null).map(ruleToView),
         overrides: all.filter((r) => r.hireId !== null).map(ruleToView)
     };
@@ -483,7 +515,7 @@ function permissionRulesFor(projectId: string): PermissionRulesReply {
  * of this view, and it is exact.
  */
 function effectivePolicyFor(projectId: string, hireId: string): PermissionEffectiveReply {
-    if (!repositories) return { rules: [] };
+    if (!repositories) return { builtIn: [], rules: [] };
     const project = repositories.projects.get(projectId);
     const repoRoot = project?.repos[0]?.path ?? '';
     const stored = repositories.permissionRules.forProject(projectId);
@@ -505,7 +537,14 @@ function effectivePolicyFor(projectId: string, hireId: string): PermissionEffect
         defaults: defaultCategoryDefaults(project?.policy.allowWebFetch ?? false)
     });
 
-    return { rules: rows };
+    // The generated rules move into the grouped summary; what is left is what I actually
+    // wrote, for this project or for this colleague, which is the list worth reading row by
+    // row. A rule I wrote that happens to match a generated one is mine, not generated, and
+    // stays here because effectivePolicy attributes it to me.
+    return {
+        builtIn: builtInGroupsFor(projectId),
+        rules: rows.filter((r) => r.source !== 'default-profile')
+    };
 }
 
 /**

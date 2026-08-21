@@ -51,8 +51,8 @@ function deps(
         channelReply: over.channelReply ?? (() => Promise.resolve()),
         pendingApprovals: () => ({ pending: [] }),
         answerApproval: () => { /* noop */ },
-        permissionRules: over.permissionRules ?? (() => ({ baseline: [], overrides: [] })),
-        effectivePolicy: over.effectivePolicy ?? (() => ({ rules: [] })),
+        permissionRules: over.permissionRules ?? (() => ({ builtIn: [], baseline: [], overrides: [] })),
+        effectivePolicy: over.effectivePolicy ?? (() => ({ builtIn: [], rules: [] })),
         addPermissionRule: over.addPermissionRule ?? (() => ({ ok: true, warning: null })),
         updatePermissionRule: over.updatePermissionRule ?? (() => ({ ok: true, warning: null })),
         removePermissionRule: over.removePermissionRule ?? (() => ({ ok: true, warning: null }))

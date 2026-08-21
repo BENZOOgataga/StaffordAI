@@ -33,6 +33,12 @@ contextBridge.exposeInMainWorld('stafford', {
     // mentioned. Those last two look identical in a naive list and must not here.
     permissions: {
         rules: async () => ({
+            builtIn: [
+            { id: 'project-files', covers: 1, effect: 'allow', detail: ['/proj'] },
+            { id: 'protected-locations', covers: 8, effect: 'deny', detail: ['/Users/benzoo/Library/Application Support/Stafford','/Users/benzoo/.claude','/Users/benzoo/.ssh','/Users/benzoo/.aws','/Users/benzoo/.gnupg','/Users/benzoo/.docker','/Users/benzoo/.kube','/Users/benzoo/.config/gh'] },
+            { id: 'secret-files', covers: 12, effect: 'deny', detail: ['/proj/**/.env','/proj/**/.env.*','/proj/**/*.pem','/proj/**/*.key','/proj/**/id_rsa'] },
+            { id: 'destructive-commands', covers: 6, effect: 'ask', detail: ['git\\s+push .* --force','git\\s+reset .* --hard','rm -rf'] }
+        ],
             baseline: [
                 { id: 'r1', hireId: null, action: 'write', pathScope: '/proj/src', commandPattern: null, effect: 'allow', createdAt: '' },
                 { id: 'r2', hireId: null, action: 'read', pathScope: '/proj/src/secrets', commandPattern: null, effect: 'deny', createdAt: '' },
@@ -44,12 +50,16 @@ contextBridge.exposeInMainWorld('stafford', {
             ]
         }),
         effective: async () => ({
+            builtIn: [
+            { id: 'project-files', covers: 1, effect: 'allow', detail: ['/proj'] },
+            { id: 'protected-locations', covers: 8, effect: 'deny', detail: ['/Users/benzoo/Library/Application Support/Stafford','/Users/benzoo/.claude','/Users/benzoo/.ssh','/Users/benzoo/.aws','/Users/benzoo/.gnupg','/Users/benzoo/.docker','/Users/benzoo/.kube','/Users/benzoo/.config/gh'] },
+            { id: 'secret-files', covers: 12, effect: 'deny', detail: ['/proj/**/.env','/proj/**/.env.*','/proj/**/*.pem','/proj/**/*.key','/proj/**/id_rsa'] },
+            { id: 'destructive-commands', covers: 6, effect: 'ask', detail: ['git\\s+push .* --force','git\\s+reset .* --hard','rm -rf'] }
+        ],
             rules: [
                 { action: 'read', pathScope: '/proj/src/secrets', commandPattern: null, effect: 'deny', source: 'baseline', overridesBaseline: false, replacedEffect: null },
                 { action: 'write', pathScope: '/proj/src', commandPattern: null, effect: 'deny', source: 'override', overridesBaseline: true, replacedEffect: 'allow' },
                 { action: 'write', pathScope: '/proj/docs', commandPattern: null, effect: 'allow', source: 'override', overridesBaseline: false, replacedEffect: null },
-                { action: 'write', pathScope: '/userdata', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
-                { action: 'shell', pathScope: null, commandPattern: 'git\\s+push\\s+--force', effect: 'ask', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
                 { action: 'fetch', pathScope: null, commandPattern: null, effect: 'ask', source: 'baseline', overridesBaseline: false, replacedEffect: null }
             ]
         }),

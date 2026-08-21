@@ -121,6 +121,62 @@ export interface DefaultProfileInputs {
 }
 
 /**
+ * The generated rules, grouped by what they are for.
+ *
+ * Grouping exists because the flat list stopped being readable. The profile generates 47 rules
+ * for a normal project, and every one of them is correct and none of them is interesting on
+ * its own: twelve secret globs times read and write is twenty-four rows that all say the same
+ * thing. Listed as peers of the handful of rules I actually wrote, they buried them.
+ *
+ * So the group is the unit a person reads, and the rules inside it are the detail. It also
+ * gives the screens something honest to show for a project with no stored rules, which
+ * otherwise looked empty while being fully governed.
+ *
+ * `defaultBaselineRules` is the flattening of this, so there is one source and the resolver
+ * cannot drift from what the screen claims.
+ */
+export type ProfileGroupId = 'project-files' | 'protected-locations' | 'secret-files' | 'destructive-commands';
+
+export interface ProfileGroup {
+    readonly id: ProfileGroupId;
+    /** How many distinct things the group covers, which is what a summary row counts. */
+    readonly covers: number;
+    readonly rules: readonly PermissionRule[];
+}
+
+export function defaultProfileGroups(input: DefaultProfileInputs): ProfileGroup[] {
+    const writeScopes = input.writePaths ?? [input.repoRoot];
+
+    const projectFiles: PermissionRule[] = writeScopes.map((scope) => (
+        { action: 'write', pathScope: scope, commandPattern: null, effect: 'allow' }
+    ));
+
+    const protectedLocations: PermissionRule[] = [];
+    for (const protectedPath of input.protectedPaths) {
+        protectedLocations.push({ action: 'read', pathScope: protectedPath, commandPattern: null, effect: 'deny' });
+        protectedLocations.push({ action: 'write', pathScope: protectedPath, commandPattern: null, effect: 'deny' });
+    }
+
+    const secretFiles: PermissionRule[] = [];
+    for (const glob of SECRET_FILE_GLOBS) {
+        const scope = input.repoRoot + '/**/' + glob;
+        secretFiles.push({ action: 'read', pathScope: scope, commandPattern: null, effect: 'deny' });
+        secretFiles.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'deny' });
+    }
+
+    const destructive: PermissionRule[] = DESTRUCTIVE_PATTERNS.map((pattern) => (
+        { action: 'shell', pathScope: null, commandPattern: pattern, effect: 'ask' }
+    ));
+
+    return [
+        { id: 'project-files', covers: writeScopes.length, rules: projectFiles },
+        { id: 'protected-locations', covers: input.protectedPaths.length, rules: protectedLocations },
+        { id: 'secret-files', covers: SECRET_FILE_GLOBS.length, rules: secretFiles },
+        { id: 'destructive-commands', covers: DESTRUCTIVE_PATTERNS.length, rules: destructive }
+    ];
+}
+
+/**
  * The baseline rules for a project with no stored rules, the phase-1 default profile.
  * Write is allowed within its scope and denied outside by the category default. Read and
  * write are denied on the protected paths, which beats the broad read allow because a
@@ -129,31 +185,5 @@ export interface DefaultProfileInputs {
  * all resolve to allow, so normal work is unaffected.
  */
 export function defaultBaselineRules(input: DefaultProfileInputs): PermissionRule[] {
-    const rules: PermissionRule[] = [];
-
-    const writeScopes = input.writePaths ?? [input.repoRoot];
-    for (const scope of writeScopes) {
-        rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'allow' });
-    }
-
-    for (const protectedPath of input.protectedPaths) {
-        rules.push({ action: 'read', pathScope: protectedPath, commandPattern: null, effect: 'deny' });
-        rules.push({ action: 'write', pathScope: protectedPath, commandPattern: null, effect: 'deny' });
-    }
-
-    // Secret-bearing files inside the project. Anchored to the repo rather than left as a bare
-    // pattern, so a rule that says .env means this project's .env and not every .env on the
-    // machine. A glob beats the broad read allow on specificity, and it loses to anything more
-    // specific I write later, so overriding one is a normal edit rather than a fight.
-    for (const glob of SECRET_FILE_GLOBS) {
-        const scope = input.repoRoot + '/**/' + glob;
-        rules.push({ action: 'read', pathScope: scope, commandPattern: null, effect: 'deny' });
-        rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'deny' });
-    }
-
-    for (const pattern of DESTRUCTIVE_PATTERNS) {
-        rules.push({ action: 'shell', pathScope: null, commandPattern: pattern, effect: 'ask' });
-    }
-
-    return rules;
+    return defaultProfileGroups(input).flatMap((group) => [...group.rules]);
 }

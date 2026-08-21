@@ -135,8 +135,8 @@ export function RulesPanel({ lang, title, hint, rules, projectId, hireId, loaded
                 ) : rules.length === 0 ? (
                     <li className="text-muted-foreground px-4 py-6 text-center text-sm">
                         {lang === 'fr'
-                            ? 'Aucune règle ici. Le profil par défaut s’applique.'
-                            : 'No rules here. The default profile applies.'}
+                            ? 'Aucune règle ici. Seule la protection intégrée s’applique.'
+                            : 'None yet. Only the built-in protection applies.'}
                     </li>
                 ) : rules.map((rule) => (
                     <EditableRuleRow

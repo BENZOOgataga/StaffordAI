@@ -350,8 +350,30 @@ export interface PermissionRulesRequest {
     readonly projectId: string;
 }
 
-/** The stored rules for a project, split the way the screens are. */
+/**
+ * One group of the generated protection, as a summary row.
+ *
+ * A count and an effect rather than the rules themselves, because the point of grouping is
+ * that twenty-four secret denies are one idea. `rules` carries the detail for when I expand it.
+ */
+export interface ProfileGroupView {
+    readonly id: 'project-files' | 'protected-locations' | 'secret-files' | 'destructive-commands';
+    /** How many locations, patterns or commands the group covers. */
+    readonly covers: number;
+    /** The single effect the group applies, or null when it is not uniform. */
+    readonly effect: PermissionEffectName | null;
+    /** The scopes or patterns, for the expanded view. Bounded by the profile itself. */
+    readonly detail: readonly string[];
+}
+
+/** The stored rules for a project, split the way the screens are, plus what is always on. */
 export interface PermissionRulesReply {
+    /**
+     * The generated protection that applies whether or not I have written any rules. Sent so a
+     * project with no stored rules shows what governs it instead of an empty list, which read
+     * as broken when it was in fact fully protected.
+     */
+    readonly builtIn: readonly ProfileGroupView[];
     readonly baseline: readonly PermissionRuleView[];
     readonly overrides: readonly PermissionRuleView[];
 }
@@ -374,6 +396,13 @@ export interface EffectiveRuleView {
 }
 
 export interface PermissionEffectiveReply {
+    /** The same grouped protection the project screen shows, so the two agree. */
+    readonly builtIn: readonly ProfileGroupView[];
+    /**
+     * The rules worth reading one by one: what I wrote for the project and what I wrote for
+     * this colleague, with their attribution. The generated rules are in `builtIn` instead, so
+     * my own handful is not buried under forty-seven rows that all say the same thing.
+     */
     readonly rules: readonly EffectiveRuleView[];
 }
 
