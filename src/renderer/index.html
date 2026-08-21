@@ -353,6 +353,8 @@
   #home[hidden] { display: none; }
   #roster-react { flex: 1 1 auto; min-width: 0; height: 100vh; overflow: hidden; }
   #roster-react[hidden] { display: none; }
+  #channel-react { flex: 1 1 auto; min-width: 0; height: 100vh; overflow: hidden; }
+  #channel-react[hidden] { display: none; }
   /* A React island (Home or Roster) hides the vanilla rail and content outright, so
      nothing bleeds through and there is no stacking order to fight. */
   .app.island-active > .rail,
@@ -767,12 +769,10 @@
       <button id="hire-header" class="header-btn" type="button">Hire</button>
     </header>
     <div id="saved-work" class="saved-work" hidden></div>
-    <section id="channel" class="channel" hidden aria-label="Channel timeline">
-      <div id="timeline" class="timeline" aria-live="polite"></div>
-    </section>
   </div>
   <div id="home" class="dashboard-scope" hidden aria-label="Home dashboard"></div>
   <div id="roster-react" class="dashboard-scope" hidden aria-label="Roster"></div>
+  <div id="channel-react" class="dashboard-scope" hidden aria-label="Channel"></div>
 </div>
 
 <section id="project-sheet" class="sheet-backdrop" hidden aria-label="Add a project">
