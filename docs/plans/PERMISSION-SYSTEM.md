@@ -1,6 +1,6 @@
 # Permission system scope
 
-Status: proposed, for my review before any build. This is a plan, not code. Nothing in here changes `can_use_tool` yet.
+Status: phases 1 and 2 are built and shipped on main. Phase 1 (the model, storage, the pure resolver, and allow and deny enforced at `can_use_tool`) and phase 2 (interactive ask: the seam pauses on a pending approval, the approval UI, and shutdown denies) are done. Phase 3, the config UI to edit rules, is next and not yet built. This doc stays the source of truth for the model; the design sections below are kept as written.
 
 ## Why this comes first
 
@@ -123,11 +123,11 @@ When a turn hits an ask, I need to see it and answer it. The shape:
 
 ## Phasing, each phase provable
 
-Phase 1: the model, storage, resolution, and enforcement with allow and deny only, on normal conversation sessions. Build the rule tables, the resolution algorithm as a pure, tested function, and wire `can_use_tool` to consult it. No ask yet; ask rules resolve as deny in phase 1 so nothing hangs. Provable by a real session where a denied action is refused cleanly and an allowed one proceeds, and by unit tests over resolution including the deny-override example.
+Phase 1, DONE and shipped on main: the model, storage, resolution, and enforcement with allow and deny only, on normal conversation sessions. Build the rule tables, the resolution algorithm as a pure, tested function, and wire `can_use_tool` to consult it. No ask yet; ask rules resolve as deny in phase 1 so nothing hangs. Provable by a real session where a denied action is refused cleanly and an allowed one proceeds, and by unit tests over resolution including the deny-override example.
 
-Phase 2: ask and the approval flow. Add the pending-approval path, the seam that waits, and the approval UI. Provable by a real session where an ask pauses the turn, I approve or deny in the UI, and the turn continues or stops accordingly, plus the defined behavior for an unanswered ask.
+Phase 2, DONE and shipped on main: ask and the approval flow. Add the pending-approval path, the seam that waits, and the approval UI. Provable by a real session where an ask pauses the turn, I approve or deny in the UI, and the turn continues or stops accordingly, plus the defined behavior for an unanswered ask.
 
-Phase 3: the configuration UI. Let me edit project baselines and colleague overrides in Stafford, on theme, over IPC. Provable by setting a rule in the UI and seeing it take effect on the next tool call, with the change written to the store and to the audit log.
+Phase 3, NEXT and not yet built: the configuration UI. Let me edit project baselines and colleague overrides in Stafford, on theme, over IPC. Provable by setting a rule in the UI and seeing it take effect on the next tool call, with the change written to the store and to the audit log.
 
 Tasks are a later consumer, not part of this. A task-working colleague simply runs under its resolved policy, and an ask pauses the task for me. I do not design tasks here.
 

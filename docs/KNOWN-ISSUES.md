@@ -2,24 +2,22 @@
 
 Things to be aware of that are not code bugs in Stafford.
 
-## The terminal pane can show your Claude account's org domain
+## A running session can carry your Claude account or environment into a screenshot
 
-Claude Code renders a welcome box at the top of every session, and it includes the
-logged-in account's organization, for example `you@example.com's Organization`. Stafford
-streams the session's own output into the detail view's terminal pane, so whatever Claude
-Code prints there is visible in Stafford.
+The headless migration removed the pty terminal pane, so the Claude Code TUI welcome box, the
+one that printed `you@example.com's Organization`, no longer renders inside Stafford. That
+specific leak is gone. The general caution still holds. The Transcript and Conversation views
+show a colleague's own session content, and a colleague can print an account or path identifier
+into its output, so a screenshot of a live session can still carry something you did not mean to
+publish.
 
-This is Claude Code rendering your account, not anything Stafford stores or sends. The repo
-itself is unaffected: this is a runtime display of the logged-in user's account, not
-committed content, and the repo-level de-attribution done at publication is intact and
-separate from this.
+This is runtime display of the logged-in account and the environment, not anything the repo
+stores or sends. The repo itself is unaffected, and the repo-level de-attribution done at
+publication is intact and separate from this.
 
-Why it matters: a screenshot, screen recording, or demo of a running session can expose the
-org domain in the terminal pane. If you publish one, check the pane first or crop it. This is
-your account leaking into a screenshot, not the repository leaking anything.
-
-Stafford does not, and should not, modify or suppress Claude Code's own terminal output to
-hide this. Cleaning a screenshot is the person's call, not the app's.
+Why it matters: a screenshot, screen recording, or demo of a running session can expose an
+account or a path. If you publish one, check the views first or crop them. This is your account
+or environment leaking into a screenshot, not the repository leaking anything.
 
 The same caution covers the dev environment, not just the Claude account. On a work machine
 the shell prompt and the terminal tab titles can carry an employer identifier (a company name
