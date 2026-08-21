@@ -129,7 +129,7 @@ test('roster:snapshot returns the cards and takes no payload', () => {
     const cards: RosterSnapshot = {
         cards: [{
             id: 'h1', name: 'Marion', role: 'Lead developer', state: 'waiting_for_you',
-            project: 'Stafford', task: null, apprentices: 0, queued: 0, since: null, contextLost: false
+            project: 'Stafford', projectId: 'p1', task: null, apprentices: 0, queued: 0, since: null, contextLost: false
         }]
     };
     const handlers = buildHandlers(deps({ projects: [] }, cards));

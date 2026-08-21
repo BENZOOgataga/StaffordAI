@@ -3,6 +3,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ConversationPanel } from './conversation-panel.tsx';
 import { ActivityPanel } from './activity-panel.tsx';
 import { TranscriptPanel } from './transcript-panel.tsx';
+import { ColleaguePermissionsPanel } from '../permissions/colleague-permissions-panel.tsx';
 import { useDetailData } from './use-detail-data.ts';
 import { buildActivityFeed, buildTranscript } from './feed-model.ts';
 import { tabLabels, DEFAULT_TAB, type TabId } from '../detail-tabs.ts';
@@ -11,7 +12,7 @@ import { CHANNEL_SELF_SENDER, type RosterCard } from '../../shared/ipc.ts';
 
 /**
  * The detail pane, all React now: a header with the colleague's name and role, and the
- * three tabs (Conversation, Activity, Transcript) on the Tabs primitive. It reads one
+ * four tabs (Conversation, Activity, Transcript, Permissions) on the Tabs primitive. It reads one
  * live data source through the hook and shapes each tab with the pure models. It renders
  * as the right island beside the roster; with no colleague selected it shows a real empty
  * state. Selecting a colleague resets to the Conversation tab, as before.
@@ -60,6 +61,7 @@ export function DetailPane({ selected, cards, lang }: {
                                 <TabsTrigger value="conversation">{tabLabels(lang).conversation}</TabsTrigger>
                                 <TabsTrigger value="activity">{tabLabels(lang).activity}</TabsTrigger>
                                 <TabsTrigger value="transcript">{tabLabels(lang).transcript}</TabsTrigger>
+                                <TabsTrigger value="permissions">{tabLabels(lang).permissions}</TabsTrigger>
                             </TabsList>
                         </div>
 
@@ -71,6 +73,12 @@ export function DetailPane({ selected, cards, lang }: {
                         </TabsContent>
                         <TabsContent value="transcript" className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 py-3">
                             <TranscriptPanel items={buildTranscript(convRows, actRows, hireId)} lang={lang} />
+                        </TabsContent>
+                        {/* What this colleague may actually do, and its own exceptions. The
+                            project's baseline rules live on the Permissions screen, since
+                            they belong to the project rather than to one person. */}
+                        <TabsContent value="permissions" className="mt-0 flex min-h-0 flex-1 flex-col">
+                            <ColleaguePermissionsPanel lang={lang} projectId={selected.projectId} hireId={hireId} />
                         </TabsContent>
                     </Tabs>
                 </>

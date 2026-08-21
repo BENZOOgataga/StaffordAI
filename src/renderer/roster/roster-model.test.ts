@@ -5,7 +5,7 @@ import type { RosterCard } from '../../shared/ipc.ts';
 
 function card(id: string, state: string, over: Partial<RosterCard> = {}): RosterCard {
     return {
-        id, name: id, role: 'PM assistant', state, project: 'Stafford', task: null,
+        id, name: id, role: 'PM assistant', state, project: 'Stafford', projectId: null, task: null,
         apprentices: 0, queued: 0, since: null, contextLost: false, ...over
     };
 }

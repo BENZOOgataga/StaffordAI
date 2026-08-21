@@ -366,6 +366,8 @@
   #roster-react[hidden] { display: none; }
   #channel-react { flex: 1 1 auto; min-width: 0; height: 100vh; overflow: hidden; }
   #channel-react[hidden] { display: none; }
+  #permissions-react { flex: 1 1 auto; min-width: 0; height: 100vh; overflow: hidden; }
+  #permissions-react[hidden] { display: none; }
 
   /* The custom title bar on a frameless window. A thin fixed bar at the top; the whole
      bar is an OS drag region (app-drag), the buttons opt out (app-no-drag) so they click.
@@ -378,7 +380,8 @@
   .has-titlebar .app { margin-top: 32px; }
   .has-titlebar #home,
   .has-titlebar #roster-react,
-  .has-titlebar #channel-react { height: calc(100vh - 32px); }
+  .has-titlebar #channel-react,
+  .has-titlebar #permissions-react { height: calc(100vh - 32px); }
   .rail {
     flex: 0 0 clamp(140px, 16%, 200px);
     display: flex;
@@ -780,6 +783,7 @@
   <div id="home" class="dashboard-scope" hidden aria-label="Home dashboard"></div>
   <div id="roster-react" class="dashboard-scope" hidden aria-label="Roster"></div>
   <div id="channel-react" class="dashboard-scope" hidden aria-label="Channel"></div>
+  <div id="permissions-react" class="dashboard-scope" hidden aria-label="Permissions"></div>
 </div>
 
 <section id="project-sheet" class="sheet-backdrop" hidden aria-label="Add a project">

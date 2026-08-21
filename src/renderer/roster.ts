@@ -1,7 +1,8 @@
 /**
  * The renderer bootstrap. It starts the live roster store (which owns the alert rules
  * and the roster:changed subscription for the whole session), wires the view switcher,
- * and mounts the three React islands: the home dashboard, the roster, and the channel
+ * and mounts the four React islands: the home dashboard, the roster, the channel, and the
+ * project permissions
  * timeline. All of the main UI is React in the inset island shell.
  *
  * The only vanilla left is the create-project and hire sheets, modals opened from React.
@@ -34,17 +35,21 @@ function main(): void {
     const homeView = document.getElementById('home') as HTMLElement;
     const rosterView = document.getElementById('roster-react') as HTMLElement;
     const channelView = document.getElementById('channel-react') as HTMLElement;
+    const permissionsView = document.getElementById('permissions-react') as HTMLElement;
     let dashboardMounted = false;
     let rosterMounted = false;
     let channelMounted = false;
+    let permissionsMounted = false;
 
     const showView = (view: string): void => {
         const isHome = view === 'home';
         const isRoster = view === 'roster';
         const isChannel = view === 'channel';
+        const isPermissions = view === 'permissions';
         homeView.hidden = !isHome;
         rosterView.hidden = !isRoster;
         channelView.hidden = !isChannel;
+        permissionsView.hidden = !isPermissions;
 
         if (isHome && !dashboardMounted) {
             dashboardMounted = true;
@@ -74,6 +79,16 @@ function main(): void {
                     channelMounted = false;
                     channelView.textContent = 'The channel could not load.';
                     console.error('[channel] mount failed:', error);
+                });
+        }
+        if (isPermissions && !permissionsMounted) {
+            permissionsMounted = true;
+            import('./permissions/mount.tsx')
+                .then((m) => m.mountPermissions(permissionsView, lang, showView))
+                .catch((error: unknown) => {
+                    permissionsMounted = false;
+                    permissionsView.textContent = 'Permissions could not load.';
+                    console.error('[permissions] mount failed:', error);
                 });
         }
     };

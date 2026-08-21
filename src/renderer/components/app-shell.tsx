@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { LayoutDashboard, Users, MessageSquare } from 'lucide-react';
+import { LayoutDashboard, Users, MessageSquare, ShieldCheck } from 'lucide-react';
 import { Sidebar, SidebarSection, SidebarItem } from '@/components/ui/sidebar';
 
 /**
@@ -13,7 +13,10 @@ import { Sidebar, SidebarSection, SidebarItem } from '@/components/ui/sidebar';
 const NAV: ReadonlyArray<{ view: string; label: string; Icon: React.ComponentType<{ className?: string }> }> = [
     { view: 'home', label: 'Home', Icon: LayoutDashboard },
     { view: 'roster', label: 'Roster', Icon: Users },
-    { view: 'channel', label: 'Channel', Icon: MessageSquare }
+    { view: 'channel', label: 'Channel', Icon: MessageSquare },
+    // Project baselines. A colleague's own exceptions live on that colleague, in its detail
+    // pane, so each rule sits where the thing it governs sits.
+    { view: 'permissions', label: 'Permissions', Icon: ShieldCheck }
 ];
 
 export function AppShell({ current, onNavigate, children }: {

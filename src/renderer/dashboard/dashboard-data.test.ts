@@ -5,7 +5,7 @@ import type { RosterCard } from '../../shared/ipc.ts';
 
 function card(id: string, state: string, project: string | null = 'Stafford'): RosterCard {
     return {
-        id, name: id, role: 'Lead developer', state, project, task: null,
+        id, name: id, role: 'Lead developer', state, project, projectId: null, task: null,
         apprentices: 0, queued: 0, since: null, contextLost: false
     };
 }
