@@ -39,13 +39,21 @@ import { killTree } from './agents/kill-tree.ts';
 import { hireStoreOver, type HireStore } from './storage/hire-store.ts';
 import { assembleRoster } from './roster/snapshot.ts';
 import { ClaudeRunnerManager } from './agents/runner-manager.ts';
-import { makePermissionGate } from './agents/permission-gate.ts';
+import { makePermissionGate, type PermissionGate } from './agents/permission-gate.ts';
+import { effectivePolicy, ruleKey, widensProtectedAccess } from '../domain/effective-policy.ts';
+import { defaultBaselineRules, defaultCategoryDefaults } from '../domain/permission-profile.ts';
+import type { PermissionRule, PermissionAction, PermissionEffect } from '../domain/permissions.ts';
+import type { PermissionRuleRecord } from '../domain/models.ts';
 import { ApprovalRegistry } from './agents/approval-registry.ts';
 import { locateClaude } from './agents/claude-locator.ts';
 import { savedNoticeFor } from './checkpoints/saved-work.ts';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import type { RosterSnapshot, ActivityRow, SavedCheckpoints } from '../shared/ipc.ts';
+import type {
+    RosterSnapshot, ActivityRow, SavedCheckpoints,
+    PermissionRuleView, PermissionRulesReply, PermissionEffectiveReply, PermissionWriteReply,
+    PermissionAdd, PermissionUpdate
+} from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -63,6 +71,9 @@ let approvalRegistry: ApprovalRegistry | null = null;
 // The headless delivery path (the stream-json runner). It is the only path that
 // handles messages now; the old pty/hook/lifecycle stack was removed in phase 4.
 let runnerManager: ClaudeRunnerManager | null = null;
+// The permission gate, held at module scope so a rule edit can drop its cache. It is built in
+// buildDelivery once the store is open.
+let permissionGate: PermissionGate | null = null;
 
 /**
  * Opens the database and brings it to the current schema, before anything a user
@@ -364,6 +375,148 @@ function notifyRosterChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('roster:changed');
 }
 
+/**
+ * Tells any open permission config view that the rules changed, and drops the gate's cache so
+ * the next turn resolves against what was just written rather than what was loaded at session
+ * start. Both halves matter: without the event the screen goes stale, without the invalidate
+ * the enforcement does.
+ */
+function notifyPermissionsChanged(): void {
+    permissionGate?.invalidate();
+    if (window && !window.isDestroyed()) window.webContents.send('permissions:changed');
+}
+
+
+// --- permission configuration (phase 3) ------------------------------------
+//
+// The write path for permission rules. It is reachable only from the renderer over ipcMain,
+// which is Stafford's own window. A colleague has no part of this: it talks stream-json to
+// Claude Code over its own stdin and stdout, it has no preload, no contextBridge and no
+// ipcRenderer, so there is no channel for it to call. The other conceivable route, editing
+// the database file directly with a tool, is denied by the gate because userData is a
+// protected path. So "only I set permissions" is a property of the wiring, not a convention.
+
+/** The paths a colleague must never reach, and the ones an edit gets warned about. */
+function protectedConfigPaths(): string[] {
+    return [app.getPath('userData')];
+}
+
+function ruleToView(r: PermissionRuleRecord): PermissionRuleView {
+    return {
+        id: r.id, hireId: r.hireId, action: r.action, pathScope: r.pathScope,
+        commandPattern: r.commandPattern, effect: r.effect, createdAt: r.createdAt
+    };
+}
+
+function permissionRulesFor(projectId: string): PermissionRulesReply {
+    const all = repositories?.permissionRules.forProject(projectId) ?? [];
+    return {
+        baseline: all.filter((r) => r.hireId === null).map(ruleToView),
+        overrides: all.filter((r) => r.hireId !== null).map(ruleToView)
+    };
+}
+
+/**
+ * A colleague's resolved policy, built from the same pieces the gate uses: the generated
+ * default profile plus the stored baseline, with the colleague's overrides layered on.
+ *
+ * The scopes are shown as stored rather than resolved to real absolute paths. The gate
+ * resolves them against the project root, the filesystem and the platform's case rule at the
+ * moment it decides; reproducing that here would either duplicate the pipeline or show
+ * Benzoo a lowercased, symlink-resolved string he never typed. The attribution is the point
+ * of this view, and it is exact.
+ */
+function effectivePolicyFor(projectId: string, hireId: string): PermissionEffectiveReply {
+    if (!repositories) return { rules: [] };
+    const project = repositories.projects.get(projectId);
+    const repoRoot = project?.repos[0]?.path ?? '';
+    const stored = repositories.permissionRules.forProject(projectId);
+
+    const profile = defaultBaselineRules({
+        repoRoot,
+        writePaths: project?.policy.writePaths ?? null,
+        protectedPaths: protectedConfigPaths()
+    });
+    const profileKeys = new Set(profile.map(ruleKey));
+    const toRule = (r: PermissionRuleRecord): PermissionRule => ({
+        action: r.action, pathScope: r.pathScope, commandPattern: r.commandPattern, effect: r.effect
+    });
+
+    const rows = effectivePolicy({
+        baseline: [...profile, ...stored.filter((r) => r.hireId === null).map(toRule)],
+        overrides: stored.filter((r) => r.hireId === hireId).map(toRule),
+        profileKeys,
+        defaults: defaultCategoryDefaults(project?.policy.allowWebFetch ?? false)
+    });
+
+    return { rules: rows };
+}
+
+/**
+ * The warning shown when an edit weakens protection of the user-only config.
+ *
+ * Advisory on purpose. It is Benzoo's machine and he may insist; what he should not be able
+ * to do is widen access to the permission store, the database or the managed credential by a
+ * careless click. Returning it rather than throwing keeps the decision his.
+ */
+function widenWarning(rule: { action: PermissionAction; pathScope: string | null; effect: PermissionEffect }): string | null {
+    if (!widensProtectedAccess(rule, protectedConfigPaths())) return null;
+    return 'This rule widens access toward Stafford\'s own configuration directory, which holds the ' +
+        'permission rules, the database and the managed credential. A colleague that can read it can ' +
+        'read its own policy; one that can write it can change what it is allowed to do.';
+}
+
+function addPermissionRule(payload: PermissionAdd): PermissionWriteReply {
+    if (!repositories) return { ok: false, warning: null };
+    repositories.permissionRules.insert({
+        id: randomUUID(),
+        projectId: payload.projectId,
+        hireId: payload.hireId,
+        action: payload.action,
+        pathScope: payload.pathScope,
+        // Not authorable in this phase. The destructive shell patterns come from the default
+        // profile and are shown read-only, so a malformed regex cannot be introduced here and
+        // then silently stop matching.
+        commandPattern: null,
+        effect: payload.effect,
+        createdAt: new Date().toISOString(),
+        createdBy: 'owner'
+    });
+    notifyPermissionsChanged();
+    return { ok: true, warning: widenWarning(payload) };
+}
+
+function updatePermissionRule(payload: PermissionUpdate): PermissionWriteReply {
+    if (!repositories) return { ok: false, warning: null };
+    const existing = repositories.permissionRules.get(payload.id);
+    if (!existing) return { ok: false, warning: null };
+    const ok = repositories.permissionRules.update(payload.id, {
+        action: payload.action,
+        pathScope: payload.pathScope,
+        commandPattern: existing.commandPattern,
+        effect: payload.effect
+    });
+    if (ok) notifyPermissionsChanged();
+    return { ok, warning: ok ? widenWarning(payload) : null };
+}
+
+function removePermissionRule(id: string): PermissionWriteReply {
+    if (!repositories) return { ok: false, warning: null };
+    const existing = repositories.permissionRules.get(id);
+    if (!existing) return { ok: false, warning: null };
+    const ok = repositories.permissionRules.deleteById(id);
+    if (ok) notifyPermissionsChanged();
+    // Removing a rule that was DENYING a protected path is the dangerous direction, which is
+    // the mirror of the add case: the warning fires on what the removal leaves behind.
+    const warning = ok && existing.effect === 'deny' && widensProtectedAccess(
+        { action: existing.action, pathScope: existing.pathScope, effect: 'allow' }, protectedConfigPaths()
+    )
+        ? 'That rule was denying access to Stafford\'s own configuration directory. Removing it ' +
+          'leaves the protection to the default profile alone.'
+        : null;
+    return { ok, warning };
+}
+
 /** Tells the channel view a row landed, so it fetches the tail, not the whole timeline. */
 function notifyChannelChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('channel:changed');
@@ -468,7 +621,7 @@ function buildDelivery(store: HireStore): void {
     // phase 1 (an ask resolves as deny for now). The protected path is Stafford's own
     // user-data directory, which holds the permission store, the database, and the managed
     // credential, so a colleague can never read or write its own permission config.
-    const permissionGate = makePermissionGate({
+    permissionGate = makePermissionGate({
         getPolicy: (projectId) => repositories?.projects.get(projectId)?.policy ?? null,
         getStoredRules: (projectId) => repositories?.permissionRules.forProject(projectId) ?? [],
         protectedPaths: [app.getPath('userData')],
@@ -773,6 +926,11 @@ app.whenReady().then(async () => {
             return createHireService(createDeps(repositories), payload);
         },
         rosterSnapshot,
+        permissionRules: (projectId) => permissionRulesFor(projectId),
+        effectivePolicy: (projectId, hireId) => effectivePolicyFor(projectId, hireId),
+        addPermissionRule: (payload) => addPermissionRule(payload),
+        updatePermissionRule: (payload) => updatePermissionRule(payload),
+        removePermissionRule: (id) => removePermissionRule(id),
         // The timeline reads: the newest page, older rows for scroll-back, and the
         // tail after a cursor for the append on channel:changed.
         channelPage: (before, limit) => (repositories

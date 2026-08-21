@@ -335,6 +335,9 @@ export class PermissionRuleRepository {
     readonly #insert: Statement;
     readonly #forProject: Statement;
     readonly #deleteForProject: Statement;
+    readonly #get: Statement;
+    readonly #update: Statement;
+    readonly #deleteById: Statement;
 
     constructor(db: StorageDatabase) {
         this.#insert = db.prepare(
@@ -342,6 +345,14 @@ export class PermissionRuleRepository {
             'VALUES (@id, @project_id, @hire_id, @action, @path_scope, @command_pattern, @effect, @created_at, @created_by)');
         this.#forProject = db.prepare('SELECT * FROM permission_rules WHERE project_id = ? ORDER BY created_at, id');
         this.#deleteForProject = db.prepare('DELETE FROM permission_rules WHERE project_id = ?');
+        this.#get = db.prepare('SELECT * FROM permission_rules WHERE id = ?');
+        // The scope-defining columns only. A rule's project, its colleague and its author are
+        // its identity, so an edit that could move a rule to another project or silently
+        // reassign who wrote it is not an edit, it is a different rule.
+        this.#update = db.prepare(
+            'UPDATE permission_rules SET action = @action, path_scope = @path_scope, ' +
+            'command_pattern = @command_pattern, effect = @effect WHERE id = @id');
+        this.#deleteById = db.prepare('DELETE FROM permission_rules WHERE id = ?');
     }
 
     insert(rule: PermissionRuleRecord): void {
@@ -351,6 +362,33 @@ export class PermissionRuleRepository {
     /** Every rule for a project: the baseline (hire_id null) and all colleague overrides. */
     forProject(projectId: string): PermissionRuleRecord[] {
         return rowsOf(this.#forProject, projectId).map(permissionRuleFromRow);
+    }
+
+    /** One rule by id, or null. Lets a write check what it is about to change. */
+    get(id: string): PermissionRuleRecord | null {
+        const row = this.#get.get(id) as Record<string, unknown> | undefined;
+        return row ? permissionRuleFromRow(row) : null;
+    }
+
+    /**
+     * Edits a rule's action, scope, pattern and effect in place. The project, the colleague
+     * and the author are not editable, so an edit can never move a rule onto another project
+     * or another colleague. Returns false when no such rule exists.
+     */
+    update(id: string, fields: Pick<PermissionRuleRecord, 'action' | 'pathScope' | 'commandPattern' | 'effect'>): boolean {
+        const result = this.#update.run({
+            id,
+            action: fields.action,
+            path_scope: fields.pathScope,
+            command_pattern: fields.commandPattern,
+            effect: fields.effect
+        });
+        return result.changes > 0;
+    }
+
+    /** Removes one rule. Returns false when it was already gone. */
+    deleteById(id: string): boolean {
+        return this.#deleteById.run(id).changes > 0;
     }
 
     /** Removes every rule for a project. Used when replacing a project's rules wholesale. */

@@ -27,7 +27,21 @@ export const INVOKE_CHANNELS = [
     'checkpoints:ack',
     // The pending permission approvals (phase 2 ASK), and the person's answer.
     'approvals:pending',
-    'approval:answer'
+    'approval:answer',
+    // Permission configuration (phase 3). Read the rules for a project, read a colleague's
+    // effective policy with its attribution, and write rules.
+    //
+    // These are renderer-to-main only, like every channel in this list, and that is the whole
+    // security story for the write path. A colleague never reaches them: it speaks
+    // stream-json to Claude Code over its own stdin and stdout, it has no preload, no
+    // contextBridge and no ipcRenderer, and the only other way in would be a tool call
+    // against the database file, which the gate denies because userData is a protected path.
+    // So "only I set permissions" holds by construction rather than by convention.
+    'permissions:rules',
+    'permissions:effective',
+    'permissions:add',
+    'permissions:update',
+    'permissions:remove'
 ] as const;
 
 /** Main pushes to the renderer. One-way, no reply. */
@@ -36,7 +50,9 @@ export const EVENT_CHANNELS = [
     'channel:changed',
     'activity:appended',
     // A pending approval was added or resolved, so the renderer re-reads the list.
-    'approvals:changed'
+    'approvals:changed',
+    // A permission rule was added, edited or removed, so any open config view re-reads.
+    'permissions:changed'
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
@@ -304,3 +320,86 @@ export interface ApprovalAnswer {
     readonly note: string | null;
 }
 
+
+// --- permission configuration (phase 3) ------------------------------------
+
+/** One rule as the config view shows it. The id is what an edit or a removal names. */
+export interface PermissionRuleView {
+    readonly id: string;
+    /** null for a project baseline rule, a hire id for a colleague override. */
+    readonly hireId: string | null;
+    readonly action: PermissionActionName;
+    readonly pathScope: string | null;
+    readonly commandPattern: string | null;
+    readonly effect: PermissionEffectName;
+    readonly createdAt: string;
+}
+
+/** The action categories, as strings, so the renderer needs no domain import. */
+export type PermissionActionName = 'read' | 'write' | 'shell' | 'fetch' | 'delegate' | 'other';
+export type PermissionEffectName = 'allow' | 'deny' | 'ask';
+
+/** Which rules a config view is asking for. */
+export interface PermissionRulesRequest {
+    readonly projectId: string;
+}
+
+/** The stored rules for a project, split the way the screens are. */
+export interface PermissionRulesReply {
+    readonly baseline: readonly PermissionRuleView[];
+    readonly overrides: readonly PermissionRuleView[];
+}
+
+/** A colleague's effective policy on a project. */
+export interface PermissionEffectiveRequest {
+    readonly projectId: string;
+    readonly hireId: string;
+}
+
+/** One row of a colleague's effective policy, with where it came from. */
+export interface EffectiveRuleView {
+    readonly action: PermissionActionName;
+    readonly pathScope: string | null;
+    readonly commandPattern: string | null;
+    readonly effect: PermissionEffectName;
+    readonly source: 'baseline' | 'override' | 'default-profile';
+    readonly overridesBaseline: boolean;
+    readonly replacedEffect: PermissionEffectName | null;
+}
+
+export interface PermissionEffectiveReply {
+    readonly rules: readonly EffectiveRuleView[];
+}
+
+/**
+ * Adding a rule. `hireId` null makes it a project baseline, a hire id makes it that
+ * colleague's override. `commandPattern` is not settable here: the destructive shell patterns
+ * come from the default profile and are shown read-only, so this phase cannot author a regex
+ * that would silently stop matching when malformed.
+ */
+export interface PermissionAdd {
+    readonly projectId: string;
+    readonly hireId: string | null;
+    readonly action: PermissionActionName;
+    readonly pathScope: string | null;
+    readonly effect: PermissionEffectName;
+}
+
+/** Editing a rule in place. Its project and colleague are fixed; only the scope moves. */
+export interface PermissionUpdate {
+    readonly id: string;
+    readonly action: PermissionActionName;
+    readonly pathScope: string | null;
+    readonly effect: PermissionEffectName;
+}
+
+export interface PermissionRemove {
+    readonly id: string;
+}
+
+/** What a write returns: whether it landed, and any warning worth showing after the fact. */
+export interface PermissionWriteReply {
+    readonly ok: boolean;
+    /** Set when the rule weakens protection of the user-only config. Advisory, never a block. */
+    readonly warning: string | null;
+}

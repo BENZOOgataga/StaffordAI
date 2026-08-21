@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { makePermissionGate } from './permission-gate.ts';
 import type { AskRequest, AskOutcome } from './approval-registry.ts';
-import type { ProjectPolicy } from '../../domain/models.ts';
+import type { ProjectPolicy, PermissionRuleRecord } from '../../domain/models.ts';
 import type { PermissionDecision } from './claude-runner.ts';
 
 const CWD = path.resolve('/proj');
@@ -339,4 +339,89 @@ test('symlink, on a real filesystem: a linked project writes its own files and s
     } finally {
         rmSync(base, { recursive: true, force: true });
     }
+});
+
+// --------------------------------------------------------------------------
+// Phase 3: a rule edited in the config UI has to reach the next turn.
+//
+// Rules are cached per project and colleague so resolution never touches the database on the
+// hot path, which phase 1 chose deliberately. That cache is also what would make an edit
+// invisible: without invalidation, changing a rule would do nothing until Stafford restarted,
+// and the screen would look broken while being correct. These pin the round trip the UI
+// depends on.
+// --------------------------------------------------------------------------
+
+test('phase 3: without invalidation the cache would serve stale rules, which is the trap', async () => {
+    let stored: PermissionRuleRecord[] = [];
+    const gate = makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => stored,
+        protectedPaths: [USERDATA],
+        normalisePath: (v: string) => v,
+        realPath: (v: string) => v
+    });
+    const tool = gate({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+
+    assert.equal(await behavior(tool('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'allow');
+
+    // The person adds a deny in the UI. The store now says deny, but nothing has told the gate.
+    stored = [{
+        id: 'r1', projectId: 'proj', hireId: null, action: 'write',
+        pathScope: path.join(CWD, 'src'), commandPattern: null, effect: 'deny',
+        createdAt: 't', createdBy: 'owner'
+    }];
+
+    assert.equal(await behavior(tool('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'allow',
+        'the cache is still serving the old rules, which is exactly why invalidate exists');
+});
+
+test('phase 3: after invalidate, the next turn resolves against the edited rule', async () => {
+    let stored: PermissionRuleRecord[] = [];
+    const gate = makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => stored,
+        protectedPaths: [USERDATA],
+        normalisePath: (v: string) => v,
+        realPath: (v: string) => v
+    });
+
+    const before = gate({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+    assert.equal(await behavior(before('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'allow');
+
+    stored = [{
+        id: 'r1', projectId: 'proj', hireId: null, action: 'write',
+        pathScope: path.join(CWD, 'src'), commandPattern: null, effect: 'deny',
+        createdAt: 't', createdBy: 'owner'
+    }];
+    gate.invalidate();
+
+    // A new turn, which is what the runner builds per message.
+    const next = gate({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+    assert.equal(await behavior(next('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'deny',
+        'this is the round trip the config UI depends on: edit a rule, the next turn enforces it');
+});
+
+test('phase 3: a colleague override added in the UI reaches that colleague and not the others', async () => {
+    let stored: PermissionRuleRecord[] = [];
+    const gate = makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => stored,
+        protectedPaths: [USERDATA],
+        normalisePath: (v: string) => v,
+        realPath: (v: string) => v
+    });
+
+    stored = [{
+        id: 'r1', projectId: 'proj', hireId: 'h1', action: 'write',
+        pathScope: path.join(CWD, 'src'), commandPattern: null, effect: 'deny',
+        createdAt: 't', createdBy: 'owner'
+    }];
+    gate.invalidate();
+
+    const restricted = gate({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+    const other = gate({ hireId: 'h2', cwd: CWD, projectId: 'proj' });
+
+    assert.equal(await behavior(restricted('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'deny');
+    assert.equal(await behavior(other('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'allow',
+        'an override names one colleague, so it must not leak onto another');
 });

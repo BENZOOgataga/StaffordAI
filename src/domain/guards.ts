@@ -13,7 +13,8 @@
 
 import type {
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
-    ProjectCreate, HireCreate, ApprovalAnswer
+    ProjectCreate, HireCreate, ApprovalAnswer,
+    PermissionRulesRequest, PermissionEffectiveRequest, PermissionAdd, PermissionUpdate, PermissionRemove
 } from '../shared/ipc.ts';
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -101,4 +102,60 @@ export function isHireCreate(value: unknown): value is HireCreate {
 
 function isBoundedInt(value: unknown, min: number, max: number): boolean {
     return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
+}
+
+// --- permission configuration (phase 3) ------------------------------------
+//
+// These validate what the config UI sends. The write path is user-only by construction (a
+// colleague has no IPC at all), so these are not the security boundary; they are the same
+// distrust of renderer input every other handler applies, and they keep a malformed edit from
+// reaching the store.
+
+const ACTIONS = ['read', 'write', 'shell', 'fetch', 'delegate', 'other'] as const;
+const EFFECTS = ['allow', 'deny', 'ask'] as const;
+
+function isAction(value: unknown): boolean {
+    return typeof value === 'string' && (ACTIONS as readonly string[]).includes(value);
+}
+
+function isEffect(value: unknown): boolean {
+    return typeof value === 'string' && (EFFECTS as readonly string[]).includes(value);
+}
+
+/**
+ * A path scope: absolute or repo-relative, bounded, or null for a category-wide rule.
+ *
+ * A scope is not a path the renderer gets to act on. It is stored, then resolved against the
+ * project root and the real filesystem by the gate, so nothing here can name a directory to
+ * read or spawn in. A null byte is refused because it truncates a path in a C API.
+ */
+function isPathScope(value: unknown): boolean {
+    if (value === null) return true;
+    return typeof value === 'string' && value.length > 0 && value.length <= 1024 && !value.includes('\0');
+}
+
+export function isPermissionRulesRequest(value: unknown): value is PermissionRulesRequest {
+    return isObject(value) && isBoundedString(value.projectId, 256);
+}
+
+export function isPermissionEffectiveRequest(value: unknown): value is PermissionEffectiveRequest {
+    return isObject(value) && isBoundedString(value.projectId, 256) && isHireId(value.hireId);
+}
+
+export function isPermissionAdd(value: unknown): value is PermissionAdd {
+    if (!isObject(value)) return false;
+    if (!isBoundedString(value.projectId, 256)) return false;
+    // null is a project baseline rule; a string is a colleague override. Nothing else.
+    if (!(value.hireId === null || isHireId(value.hireId))) return false;
+    return isAction(value.action) && isPathScope(value.pathScope) && isEffect(value.effect);
+}
+
+export function isPermissionUpdate(value: unknown): value is PermissionUpdate {
+    if (!isObject(value)) return false;
+    if (!isBoundedString(value.id, 256)) return false;
+    return isAction(value.action) && isPathScope(value.pathScope) && isEffect(value.effect);
+}
+
+export function isPermissionRemove(value: unknown): value is PermissionRemove {
+    return isObject(value) && isBoundedString(value.id, 256);
 }
