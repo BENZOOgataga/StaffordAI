@@ -56,6 +56,41 @@ export const DESTRUCTIVE_PATTERNS: readonly string[] = [
 ];
 
 /**
+ * Filenames inside a project that carry secrets, denied for read and write by default.
+ *
+ * These exist because the read category defaults to allow. That default is right, a colleague
+ * that cannot read the repository cannot work, but it means every file in the project is
+ * readable unless something says otherwise, and a `.env` sitting next to the source is exactly
+ * the file I least want copied into a model's context.
+ *
+ * The list is deliberately short and boring. Every entry is a file whose whole purpose is to
+ * hold a credential, so denying it costs nothing a colleague needed and nobody has to reason
+ * about whether to keep it. Anything arguable was left out: this is the set I expect to still
+ * be there in a year, not a security opinion I would have to defend on every project.
+ *
+ * `.env.*` catches `.env.example` too, which holds no secret. That is the trade I want. Denying
+ * a template is a small annoyance I can override in one click; allowing a real `.env.production`
+ * because the pattern was too clever is not recoverable, since by then it is in a transcript.
+ *
+ * Matched against the resolved absolute path, so `**` spans directories and a secret nested in
+ * a subproject is covered too.
+ */
+export const SECRET_FILE_GLOBS: readonly string[] = [
+    '.env',
+    '.env.*',
+    '*.pem',
+    '*.key',
+    '*.p12',
+    '*.pfx',
+    'id_rsa',
+    'id_ed25519',
+    '.npmrc',
+    '.netrc',
+    'credentials.json',
+    '.credentials.json'
+];
+
+/**
  * The fallback effect per category when no rule matches, in phase 1. read is allowed
  * broadly, write denies outside its allowed scope, shell allows ordinary commands, fetch
  * follows the project's allowWebFetch, delegate allows, and an unrecognized tool asks
@@ -104,6 +139,16 @@ export function defaultBaselineRules(input: DefaultProfileInputs): PermissionRul
     for (const protectedPath of input.protectedPaths) {
         rules.push({ action: 'read', pathScope: protectedPath, commandPattern: null, effect: 'deny' });
         rules.push({ action: 'write', pathScope: protectedPath, commandPattern: null, effect: 'deny' });
+    }
+
+    // Secret-bearing files inside the project. Anchored to the repo rather than left as a bare
+    // pattern, so a rule that says .env means this project's .env and not every .env on the
+    // machine. A glob beats the broad read allow on specificity, and it loses to anything more
+    // specific I write later, so overriding one is a normal edit rather than a fight.
+    for (const glob of SECRET_FILE_GLOBS) {
+        const scope = input.repoRoot + '/**/' + glob;
+        rules.push({ action: 'read', pathScope: scope, commandPattern: null, effect: 'deny' });
+        rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'deny' });
     }
 
     for (const pattern of DESTRUCTIVE_PATTERNS) {

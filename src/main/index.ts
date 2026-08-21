@@ -398,7 +398,29 @@ function notifyPermissionsChanged(): void {
 
 /** The paths a colleague must never reach, and the ones an edit gets warned about. */
 function protectedConfigPaths(): string[] {
-    return [app.getPath('userData')];
+    const home = os.homedir();
+    return [
+        // Stafford's own store: the permission rules, the database, and the managed
+        // credential. This is the invariant that a colleague never reaches its own policy.
+        app.getPath('userData'),
+
+        // My real credential directories, which were not covered and should have been.
+        // Read defaults to allow, so until now a colleague could read the actual Claude
+        // credential at ~/.claude/.credentials.json on Windows and Linux, which is the very
+        // token the managed config goes to such lengths to isolate. Isolating a session
+        // from my config while leaving my config readable was a gap, not a design.
+        //
+        // The rest are here for the same reason rather than out of thoroughness: each is a
+        // directory whose entire contents are credentials, so denying it costs a colleague
+        // nothing it needed for the work.
+        path.join(home, '.claude'),
+        path.join(home, '.ssh'),
+        path.join(home, '.aws'),
+        path.join(home, '.gnupg'),
+        path.join(home, '.docker'),
+        path.join(home, '.kube'),
+        path.join(home, '.config', 'gh')
+    ];
 }
 
 function ruleToView(r: PermissionRuleRecord): PermissionRuleView {
