@@ -63,6 +63,19 @@ export const linux: Platform = {
         return posixKillTreePlan(pid);
     },
 
+    managedChildSpawnOptions(): { readonly detached: boolean } {
+        // Same answer as darwin, and for the same reason rather than by
+        // imitation: this platform shares posixKillTreePlan, so it shares the
+        // requirement that the snapshot root leads its own group.
+        return { detached: true };
+    },
+
+    osCredentialCommand(_account: string): CommandSpec | null {
+        // Null. The credential is a file at ~/.claude/.credentials.json, which the
+        // seed already copies, so there is no store to read.
+        return null;
+    },
+
     processTreeCommand(): CommandSpec {
         return { file: 'ps', args: ['-Ao', 'pid=,ppid=,pgid=,comm='] };
     },

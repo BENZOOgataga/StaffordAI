@@ -238,6 +238,51 @@ export interface Platform {
     killTreePlan(pid: number): KillTreePlan;
 
     /**
+     * Extra spawn options for a child Stafford will later tear down by tree.
+     *
+     * **This exists because the absence of it self-killed the app.** `killTree` on POSIX kills
+     * every process group in its snapshot, which is only safe while the root of that snapshot
+     * leads a group of its own. Nothing enforced that. The runner spawned `claude` with no
+     * `detached`, so the child inherited Stafford's group, the snapshot's only group was
+     * Stafford's, and the first successful turn ran `kill -KILL -<Stafford's pgid>`. Measured on
+     * macOS 2026-08-21: the targeted group held `/bin/zsh`, the Electron process and the child,
+     * so sending one message killed the app, the dev server and the shell together.
+     *
+     * The invariant `killTree` needs is therefore a property of the spawn, and this is where the
+     * spawn learns it. `kill-tree.ts` still refuses to kill Stafford's own group as a second
+     * line, because one missed call site must not be fatal again.
+     *
+     * `detached` is deliberately false on Windows rather than merely unnecessary. `taskkill /T`
+     * walks parent to child and needs no group, and node's `detached` on Windows gives the child
+     * its own console window, so setting it there would trade a fixed POSIX crash for a visible
+     * Windows regression.
+     */
+    managedChildSpawnOptions(): { readonly detached: boolean };
+
+    /**
+     * How to read this platform's OS credential store for the Claude Code credential, or null
+     * where the credential is a file the seed already copies.
+     *
+     * macOS is the only platform that answers. Measured 2026-08-21: with `CLAUDE_CONFIG_DIR`
+     * set, Claude Code does not consult the login Keychain at all. `claude auth status` reports
+     * `loggedIn: true` with no variable set and `loggedIn: false, authMethod: "none"` against
+     * both a fresh directory and Stafford's managed one, so an isolated colleague was never
+     * authenticated on a Mac and every turn came back "Not logged in". `~/.claude/.credentials.json`
+     * does not exist there, so the seed's conditional copy correctly found nothing to copy and
+     * the assumption that Keychain would cover it was simply wrong.
+     *
+     * A `.credentials.json` inside the config directory **is** read, verified with a dummy token,
+     * so seeding one is the fix and this is where the bytes come from.
+     *
+     * Windows and Linux return null: the credential is already a file at `~/.claude/.credentials.json`
+     * and copying it is the whole job.
+     *
+     * The command's output is a live OAuth token. It is written to a 0600 file and never logged,
+     * never returned to the renderer, and never put in an error message.
+     */
+    osCredentialCommand(account: string): CommandSpec | null;
+
+    /**
      * How to list every process with its parent and its process group, or null
      * where the platform has no process-group model to check.
      *

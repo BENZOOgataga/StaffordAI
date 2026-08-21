@@ -10,7 +10,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { killTree, snapshotTree, groupsIn } from './kill-tree.ts';
+import { killTree, snapshotTree, groupsIn, partitionGroups } from './kill-tree.ts';
 import { parseProcessTree } from './process-tree.ts';
 import { darwin, win32 } from '../platform/index.ts';
 import type { CommandSpec } from '../platform/types.ts';
@@ -153,4 +153,60 @@ test('a platform with no process table and no whole-tree command refuses to clai
     const report = await killTree(broken, 1234, { run: () => {}, waitMs: noWait });
     assert.equal(report.ok, false);
     assert.match(report.detail, /cannot be verified/);
+});
+
+/**
+ * The self-group guard.
+ *
+ * killTree kills every process group in its snapshot, which is only safe while the snapshot
+ * root leads a group of its own. Managed children now do, but that has to hold at every
+ * spawn site, and one missed site used to mean a dead app. These cover the line that turns
+ * a missed site into a warning and an unreaped child instead.
+ */
+
+test('a group containing Stafford is refused, and the rest are still killed', () => {
+    const { safe, refused } = partitionGroups([500, 900], 500);
+    assert.deepEqual(refused, [500], 'our own group must never be killed');
+    assert.deepEqual(safe, [900], 'refusing one group must not abandon the others');
+});
+
+test('init and the zero group are refused, since kill(0) means the callers own group', () => {
+    const { safe, refused } = partitionGroups([0, 1, 42], 999);
+    assert.deepEqual(refused, [0, 1]);
+    assert.deepEqual(safe, [42]);
+});
+
+test('an unknown self group refuses nothing, so a guard that cannot tell does not stop the reap', () => {
+    const { safe, refused } = partitionGroups([500, 900], null);
+    assert.deepEqual(refused, []);
+    assert.deepEqual(safe, [500, 900],
+        'refusing on unknown would silently stop reaping every child, which is worse than the risk');
+});
+
+test('killTree refuses the self group end to end, and reaps the child by exact pid instead', async () => {
+    // The defect's exact shape: the child (7) sits in Stafford's group (100), because it was
+    // spawned without its own. Stafford is pid 5.
+    const rows = [
+        { pid: 5, ppid: 1, pgid: 100, command: 'stafford' },
+        { pid: 7, ppid: 5, pgid: 100, command: 'claude' }
+    ];
+    const ran: string[] = [];
+
+    const report = await killTree(
+        darwin, 7,
+        {
+            selfPid: 5,
+            readTree: () => rows.map((r) => `${r.pid} ${r.ppid} ${r.pgid} ${r.command}`).join('\n'),
+            run: (spec) => { ran.push([spec.file, ...spec.args].join(' ')); },
+            waitMs: () => Promise.resolve(),
+            warn: () => { /* quiet */ }
+        }
+    );
+
+    assert.deepEqual(report.refusedGroups, [100]);
+    assert.deepEqual(report.groups, [], 'there was nothing safe to kill by group');
+    assert.ok(!ran.some((c) => c.includes('-100')),
+        'the whole point: no command may target the group Stafford is in. Ran: ' + JSON.stringify(ran));
+    assert.ok(ran.some((c) => c === 'kill -KILL 7'),
+        'the child is still reaped, by exact pid. Ran: ' + JSON.stringify(ran));
 });

@@ -18,9 +18,25 @@
  * The seed keeps three things true:
  *  - Auth survives. The real credential file is copied in if present, so the
  *    isolated session is logged in with no prompt. Claude then refreshes inside the
- *    managed dir on its own. On macOS the credential lives in Keychain (global, not
- *    config-dir-scoped), so there is nothing to copy and the file is simply absent;
- *    the copy is conditional on the file existing.
+ *    managed dir on its own.
+ *
+ *    **macOS needs a second source, and the original assumption here was wrong.** This
+ *    said the credential lived in Keychain "global, not config-dir-scoped", so there was
+ *    nothing to copy and the absent file was fine. Measured 2026-08-21: with
+ *    CLAUDE_CONFIG_DIR set, Claude Code does not consult the login Keychain at all.
+ *    `claude auth status` reports logged in with no variable set, and
+ *    `authMethod: "none"` against both a fresh directory and Stafford's managed one. So
+ *    every colleague turn on a Mac came back "Not logged in", and the conditional copy
+ *    correctly found no file while the session had no credential either way.
+ *
+ *    A `.credentials.json` inside the config dir is read, confirmed with a dummy token,
+ *    so on macOS the seed reads the Keychain item itself and writes that file. The token
+ *    therefore lands on disk at 0600 inside a 0700 directory, which is the same exposure
+ *    Windows and Linux already have and is a deliberate reduction from Keychain
+ *    protection on macOS. It is the price of an isolated session that is also
+ *    authenticated. Claude Code namespaces Keychain items per config dir
+ *    (`Claude Code-credentials-<8 hex>`), so writing that item instead would keep the
+ *    token in Keychain and is the better shape if the derivation is ever documented.
  *  - Pre-trust survives. The project's trust key is written into the managed
  *    `.claude.json`, the same file the isolated session reads, so no trust prompt.
  *  - Plugins do not load. `settings.json` is written minimal, with no plugins, no
@@ -71,12 +87,30 @@ export interface SeedManagedConfigDeps {
      */
     readonly settings?: Record<string, unknown>;
     readonly warn?: (message: string) => void;
+    /**
+     * Reads the OS credential store, for a platform whose credential is not a file. Returns
+     * the credential text, or null when there is nothing there.
+     *
+     * Only macOS supplies one. It is injected rather than called directly so this module
+     * still spawns nothing and stays testable with no Keychain, which is also what keeps a
+     * real token out of every test run.
+     *
+     * The returned string is a live OAuth token. It is written straight to a 0600 file and
+     * is never logged, never included in a thrown error, and never part of `SeedResult`.
+     */
+    readonly readOsCredential?: () => string | null;
 }
 
 /** What the seed did, for a one-line log that never carries the token itself. */
 export interface SeedResult {
     /** True when a real credential file existed and was copied in (POSIX/Windows). */
     readonly credentialCopied: boolean;
+    /**
+     * True when the credential came from the OS store instead of a file, which is the macOS
+     * path. A boolean, like everything else here, so a log line can say what happened without
+     * saying what the credential is.
+     */
+    readonly credentialFromOsStore: boolean;
     /** The mode the credential file was set to, for the log and the test. */
     readonly credentialMode: number;
     /** The mode the managed dir was set to. */
@@ -99,16 +133,38 @@ export function seedManagedConfig(deps: SeedManagedConfigDeps, cwd: string): See
     fs.mkdirp(managedDir, MANAGED_DIR_MODE);
     fs.chmod(managedDir, MANAGED_DIR_MODE);
 
-    // 2. Auth: copy the real credential in if present. Absent on macOS (Keychain),
-    //    where there is nothing to copy and the session authenticates globally.
+    // 2. Auth. Two sources, because the credential is a file on Windows and Linux and lives
+    //    in the Keychain on macOS, and an isolated session reads neither unless it is put
+    //    where CLAUDE_CONFIG_DIR points.
     const realCredential = fs.join(realHome, '.claude', '.credentials.json');
     const managedCredential = fs.join(managedDir, '.credentials.json');
     let credentialCopied = false;
+    let credentialFromOsStore = false;
     if (fs.exists(realCredential)) {
         fs.copyFile(realCredential, managedCredential, MANAGED_FILE_MODE);
         // Belt and braces: force the mode even if copyFile preserved the source's.
         fs.chmod(managedCredential, MANAGED_FILE_MODE);
         credentialCopied = true;
+    } else if (deps.readOsCredential) {
+        // macOS. Nothing here inspects, parses or logs the value; it is read and written.
+        // A failure is deliberately quiet about its cause for the same reason: the message
+        // would be the only place a credential could leak from.
+        let secret: string | null = null;
+        try {
+            secret = deps.readOsCredential();
+        } catch {
+            secret = null;
+        }
+        if (secret !== null && secret.trim() !== '') {
+            fs.writeText(managedCredential, secret, MANAGED_FILE_MODE);
+            fs.chmod(managedCredential, MANAGED_FILE_MODE);
+            credentialFromOsStore = true;
+        } else {
+            deps.warn?.(
+                'no credential found in the OS store, so this colleague session will not be ' +
+                'authenticated and its turns will report "Not logged in"'
+            );
+        }
     }
 
     // 3. The managed `.claude.json`: account identity + onboarding done + project
@@ -141,7 +197,12 @@ export function seedManagedConfig(deps: SeedManagedConfigDeps, cwd: string): See
     //    plugin settings never reach here. Defaults to an empty object.
     fs.writeText(fs.join(managedDir, 'settings.json'), JSON.stringify(deps.settings ?? {}), MANAGED_FILE_MODE);
 
-    return { credentialCopied, credentialMode: MANAGED_FILE_MODE, dirMode: MANAGED_DIR_MODE };
+    return {
+        credentialCopied,
+        credentialFromOsStore,
+        credentialMode: MANAGED_FILE_MODE,
+        dirMode: MANAGED_DIR_MODE
+    };
 }
 
 function readJsonOr(fs: ManagedFs, path: string, fallback: null): Record<string, unknown> | null;

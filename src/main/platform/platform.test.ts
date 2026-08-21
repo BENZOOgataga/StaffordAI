@@ -603,3 +603,47 @@ test('on this machine, a POSIX shell is actually found', async () => {
     assert.equal(existsSync(found as string), true);
     console.log('    real machine: POSIX shell resolved to ' + found);
 });
+
+/**
+ * The spawn options a managed child needs, and the credential source.
+ *
+ * Both members exist because of defects measured on macOS 2026-08-21: a child that inherited
+ * Stafford's process group made killTree kill Stafford, and a config-dir relocation that
+ * Keychain does not follow left every isolated colleague unauthenticated.
+ */
+
+test('POSIX spawns a managed child into its own process group, which killTree depends on', () => {
+    assert.equal(darwin.managedChildSpawnOptions().detached, true);
+    assert.equal(linux.managedChildSpawnOptions().detached, true);
+});
+
+test('Windows does not detach, since taskkill needs no group and detaching adds a console window', () => {
+    assert.equal(win32.managedChildSpawnOptions().detached, false,
+        'this is a decision, not an oversight: detaching on Windows would trade a fixed POSIX ' +
+        'crash for a visible console window on a piped child.');
+});
+
+test('every platform that kills by group also detaches, which is the invariant that pairs them', () => {
+    for (const platform of [darwin, linux, win32]) {
+        const plan = platform.killTreePlan(1234);
+        if (plan.killsEveryGroup) {
+            assert.equal(platform.managedChildSpawnOptions().detached, true,
+                platform.id + ' kills every group in the snapshot, so its children must lead ' +
+                'their own group or the snapshot will contain Stafford.');
+        }
+    }
+});
+
+test('macOS reads the Keychain for the credential, because a relocated config dir does not', () => {
+    const spec = darwin.osCredentialCommand('someuser');
+    assert.ok(spec, 'macOS has no credential file, so without this an isolated session is never logged in');
+    assert.equal(spec.file, 'security');
+    assert.ok(spec.args.includes('-w'),
+        '-w prints the secret alone, so no attribute dump has to be parsed or logged');
+    assert.ok(spec.args.includes('someuser'), 'the account is the caller\'s, never hardcoded');
+});
+
+test('Windows and Linux read no store, because their credential is a file the seed copies', () => {
+    assert.equal(win32.osCredentialCommand('someuser'), null);
+    assert.equal(linux.osCredentialCommand('someuser'), null);
+});

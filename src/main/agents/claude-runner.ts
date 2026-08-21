@@ -114,11 +114,23 @@ export interface RunnerChild {
     kill(signal?: NodeJS.Signals | number): boolean;
 }
 
-/** The spawn seam. Defaults to node's child_process spawn; a test injects its own. */
+/**
+ * The spawn seam. Defaults to node's child_process spawn; a test injects its own.
+ *
+ * `detached` is part of the options rather than an internal detail because it is a safety
+ * property the teardown depends on, and the type is what makes it impossible to pass a spawn
+ * that quietly drops it. Its absence is what let the runner inherit Stafford's process group,
+ * which `killTree` then killed.
+ */
 export type SpawnFn = (
     command: string,
     args: readonly string[],
-    options: { cwd: string; env: NodeJS.ProcessEnv; stdio: readonly ['pipe', 'pipe', 'pipe'] }
+    options: {
+        cwd: string;
+        env: NodeJS.ProcessEnv;
+        stdio: readonly ['pipe', 'pipe', 'pipe'];
+        detached: boolean;
+    }
 ) => RunnerChild;
 
 /** Direction of a raw wire line, for the delivery log. */
@@ -164,6 +176,14 @@ export interface ClaudeRunnerDeps {
     readonly killChild?: (child: RunnerChild) => void;
     /** Escape hatch for extra CLI args (for example a model pin). Rarely needed. */
     readonly extraArgs?: readonly string[];
+    /**
+     * Whether the child is spawned into a process group of its own.
+     *
+     * Comes from `platform.managedChildSpawnOptions()`, true on POSIX and false on Windows.
+     * It defaults to true rather than false on purpose: the dangerous value is the one that
+     * lets a tree kill reach Stafford, so a caller that forgets this gets the safe answer.
+     */
+    readonly detached?: boolean;
 }
 
 /**
@@ -208,7 +228,11 @@ export class ClaudeRunner {
             child = this.#spawn(this.#deps.claudePath, args, {
                 cwd: this.#deps.cwd,
                 env: this.#deps.env,
-                stdio: ['pipe', 'pipe', 'pipe']
+                stdio: ['pipe', 'pipe', 'pipe'],
+                // Its own process group on POSIX, so the tree kill that reaps this turn
+                // reaches this child's subtree and nothing above it. Defaulting to true
+                // keeps the safe value when a caller says nothing.
+                detached: this.#deps.detached ?? true
             });
         } catch (err) {
             return Promise.resolve(this.#errorResult('spawn-error', 'the claude process could not be spawned'));

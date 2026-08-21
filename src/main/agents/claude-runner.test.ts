@@ -28,7 +28,7 @@ interface FakeHandle {
     /** The args the runner spawned with, captured on spawn. */
     args: () => readonly string[];
     /** The options the runner spawned with. */
-    options: () => { cwd: string; env: NodeJS.ProcessEnv; stdio: readonly string[] } | null;
+    options: () => { cwd: string; env: NodeJS.ProcessEnv; stdio: readonly string[]; detached: boolean } | null;
     /** Feed one stdout chunk to the runner (include a trailing newline for a full line). */
     emit: (chunk: string) => void;
     /** Fire the child's exit. */
@@ -49,7 +49,7 @@ function makeFakeSpawn(pid = 4242): FakeHandle {
     const writes: string[] = [];
     let killed = false;
     let capturedArgs: readonly string[] = [];
-    let capturedOptions: { cwd: string; env: NodeJS.ProcessEnv; stdio: readonly string[] } | null = null;
+    let capturedOptions: { cwd: string; env: NodeJS.ProcessEnv; stdio: readonly string[]; detached: boolean } | null = null;
 
     const child: RunnerChild = {
         pid,
@@ -385,6 +385,56 @@ test('#61 isolation: CLAUDE_CONFIG_DIR is passed through to the child, stdio is 
     const options = fake.options();
     assert.equal(options?.env.CLAUDE_CONFIG_DIR, '/managed/xyz');
     assert.deepEqual(options?.stdio, ['pipe', 'pipe', 'pipe'], 'piped stdio, no pty');
+});
+
+/**
+ * The invariant killTree depends on, asserted where it is actually established.
+ *
+ * This is the test that was missing when the self-kill shipped. `kill-tree.real.test.ts`
+ * asserted that killTree reaps a detached grandchild, and passed, because the test spawned
+ * its own root detached. Its comment then claimed the runner did the same. The runner did
+ * not, so the group killTree selected was Stafford's own, and the first successful turn on
+ * macOS ran `kill -KILL -<Stafford's pgid>`, taking the app, the dev server and the shell.
+ *
+ * A test of the guard could not catch that, because the guard was never wrong. Only the
+ * spawn was. So this asserts the spawn.
+ */
+test('the managed child is spawned into its own process group, which killTree depends on', async () => {
+    const fake = makeFakeSpawn();
+    const runner = new ClaudeRunner(baseDeps(fake));
+
+    const turn = runner.runTurn({ text: 'x' });
+    fake.emit('{"type":"result","is_error":false,"session_id":"s"}\n');
+    await turn;
+
+    assert.equal(fake.options()?.detached, true,
+        'the child must lead its own process group. Without it the child inherits Stafford\'s ' +
+        'group, and killTree kills every group in its snapshot, so reaping the turn kills Stafford.');
+});
+
+test('detached defaults to true when the caller says nothing, so the safe value is the default', async () => {
+    const fake = makeFakeSpawn();
+    // No `detached` in the deps at all: the dangerous value must not be reachable by omission.
+    const runner = new ClaudeRunner(baseDeps(fake));
+
+    const turn = runner.runTurn({ text: 'x' });
+    fake.emit('{"type":"result","is_error":false,"session_id":"s"}\n');
+    await turn;
+
+    assert.equal(fake.options()?.detached, true);
+});
+
+test('a platform that asks for a shared group (Windows) is honoured, since taskkill needs no group', async () => {
+    const fake = makeFakeSpawn();
+    const runner = new ClaudeRunner({ ...baseDeps(fake), detached: false });
+
+    const turn = runner.runTurn({ text: 'x' });
+    fake.emit('{"type":"result","is_error":false,"session_id":"s"}\n');
+    await turn;
+
+    assert.equal(fake.options()?.detached, false,
+        'Windows must be able to opt out: taskkill /T walks the tree itself, and detaching there ' +
+        'would give the child its own console window.');
 });
 
 test('the raw wire tap captures both directions verbatim', async () => {

@@ -29,7 +29,13 @@ function runGitReal(platform: Platform, args: readonly string[], options: RunGit
         // what keeps the checkpoint byte-for-byte faithful.
         const child = spawn('git', ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', ...args], {
             cwd: options.cwd,
-            env: { ...process.env, ...(options.env ?? {}) }
+            env: { ...process.env, ...(options.env ?? {}) },
+            // Its own process group on POSIX, for the same reason the runner's child is:
+            // the timeout below reaps through killTree, which kills by group, and a git
+            // child sharing Stafford's group would make that reap kill Stafford. This
+            // path runs during the quit drain, so the failure would have landed exactly
+            // where the work being saved is least recoverable.
+            ...platform.managedChildSpawnOptions()
         });
         let stdout = '';
         let stderr = '';

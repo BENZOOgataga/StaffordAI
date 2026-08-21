@@ -16,7 +16,7 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog, screen } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { currentPlatform } from './platform/index.ts';
 import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './window/security.ts';
@@ -398,6 +398,30 @@ function buildDelivery(store: HireStore): void {
     // user's global plugins and foreign hooks out of a colleague session.
     const managedConfigDir = path.join(app.getPath('userData'), 'claude-config');
 
+    /**
+     * The Claude Code credential out of this platform's OS store, or null where there is no
+     * store to read (Windows and Linux, where it is a file the seed copies instead).
+     *
+     * This is the one place a live token is handled. It goes from the store straight into the
+     * seed, which writes it to a 0600 file. It is never logged, never returned over IPC, and
+     * never attached to an error: the catch below deliberately discards the reason, because a
+     * `security` failure message is exactly the kind of string that ends up in a log with the
+     * secret still in it.
+     */
+    const readOsCredential = (): string | null => {
+        const spec = currentPlatform().osCredentialCommand(os.userInfo().username);
+        if (spec === null) return null;
+        try {
+            const out = execFileSync(spec.file, [...spec.args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+            const trimmed = out.trim();
+            return trimmed === '' ? null : trimmed;
+        } catch {
+            // Not present, locked, or denied. All three mean the same thing here, and the
+            // seed already warns that the session will not be authenticated.
+            return null;
+        }
+    };
+
     // The key Claude matches a cwd to: real case, forward slashes. Shared by the seed
     // so the trust key it writes matches the cwd Claude resolves.
     const resolveTrustKey = (dir: string): string => {
@@ -466,6 +490,10 @@ function buildDelivery(store: HireStore): void {
         parentEnv: process.env,
         // The permission policy, bound per turn to the hire, cwd, and project.
         makeCanUseTool: permissionGate,
+        // Each turn's child gets its own process group on POSIX, so the tree reap below
+        // reaps that child's subtree and not Stafford's. False on Windows, where taskkill /T
+        // needs no group and detaching would give the child a console window.
+        detached: currentPlatform().managedChildSpawnOptions().detached,
         // The same resolution the pty path used: cwd, project, and the resume id.
         resolveTarget: (hireId) => {
             const hire = repositories?.hires.get(hireId);
@@ -485,10 +513,12 @@ function buildDelivery(store: HireStore): void {
             const result = seedManagedConfig(
                 { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
                     settings: {},
+                    readOsCredential: readOsCredential,
                     warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
                 cwd
             );
-            smoke('managed config seeded (runner), credential carried: ' + result.credentialCopied);
+            smoke('managed config seeded (runner), credential carried: ' + result.credentialCopied +
+                ', from OS store: ' + result.credentialFromOsStore);
         },
         // Reap a finished turn's whole process tree from its own child pid down, so a
         // tool grandchild in its own group is not orphaned. killTree walks only that pid;
