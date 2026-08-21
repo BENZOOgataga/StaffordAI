@@ -477,6 +477,11 @@
     border-bottom: 1px solid var(--line);
     overflow-x: auto;
     scrollbar-width: none;
+    /* A fixed-height bar, never shrunk. overflow-x:auto sets this item's automatic
+       minimum height to 0, so the flex column above it would otherwise squeeze the bar
+       below the tab height and clip the labels. flex:none keeps it at its content
+       height. */
+    flex: none;
   }
   .tabbar::-webkit-scrollbar { display: none; }
   .tab { flex: 0 0 auto; }
