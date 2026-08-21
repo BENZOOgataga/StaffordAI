@@ -322,12 +322,14 @@
   /* The React dashboard is a flex child that fills the window when Home is active.
      Rather than overlay the vanilla chrome, the rail and content are hidden outright,
      so nothing can bleed through and there is no stacking order to fight. */
-  #home { flex: 1 1 auto; min-width: 0; overflow: auto; }
+  /* The React islands are pinned to the viewport height, not left to grow with their
+     content. The app shell is min-height:100vh, so a flex child sized only by its
+     content would stretch the shell and let the whole window scroll. Fixing the island
+     to 100vh bounds the height chain, so the inner panes (the roster list, and the
+     detail's conversation and transcript) scroll on their own and the frame stays put. */
+  #home { flex: 1 1 auto; min-width: 0; height: 100vh; overflow: hidden; }
   #home[hidden] { display: none; }
-  /* The roster is a second React island, alongside the home dashboard. It manages its
-     own inner scroll (list pane and detail pane each scroll), so the island itself does
-     not scroll. */
-  #roster-react { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  #roster-react { flex: 1 1 auto; min-width: 0; height: 100vh; overflow: hidden; }
   #roster-react[hidden] { display: none; }
   /* A React island (Home or Roster) hides the vanilla rail and content outright, so
      nothing bleeds through and there is no stacking order to fight. */
