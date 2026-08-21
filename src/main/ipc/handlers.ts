@@ -16,11 +16,14 @@ import {
     INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
     type ProjectCreated, type HireCreated, type ActivityRow, type ActivityByHireReply,
-    type SavedCheckpoints, type PendingApprovals
+    type SavedCheckpoints, type PendingApprovals,
+    type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
+    type PermissionAdd, type PermissionUpdate
 } from '../../shared/ipc.ts';
 import {
     isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
-    isApprovalAnswer
+    isApprovalAnswer,
+    isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 
@@ -55,6 +58,18 @@ export interface HandlerDeps {
      * registry directly.
      */
     readonly rosterSnapshot: () => RosterSnapshot;
+    /** A project's stored rules, split into baseline and colleague overrides. */
+    readonly permissionRules: (projectId: string) => PermissionRulesReply;
+    /** A colleague's resolved policy on a project, each row tagged with where it came from. */
+    readonly effectivePolicy: (projectId: string, hireId: string) => PermissionEffectiveReply;
+    /**
+     * The three writes. They return a reply rather than throwing on a widening edit, because
+     * a warning is advisory: it is Benzoo protecting himself from a careless click, not a
+     * security boundary, and the boundary is the gate.
+     */
+    readonly addPermissionRule: (payload: PermissionAdd) => PermissionWriteReply;
+    readonly updatePermissionRule: (payload: PermissionUpdate) => PermissionWriteReply;
+    readonly removePermissionRule: (id: string) => PermissionWriteReply;
     /** A page of the timeline: the newest when `before` is null, else older rows. */
     readonly channelPage: (before: ChannelCursor | null, limit: number) => readonly ChannelMessageRow[];
     /** Rows newer than a cursor, for the tail append. */
@@ -174,6 +189,31 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'approval:answer': (payload: unknown): void => {
             if (!isApprovalAnswer(payload)) throw new Error('approval:answer requires {id,approve,note}');
             deps.answerApproval(payload.id, payload.approve, payload.note);
+        },
+
+        // Permission configuration (phase 3). Reads are bounded and carry no filesystem path
+        // the renderer did not already store; writes go to the user-data database, which no
+        // colleague can reach: a colleague has no IPC bridge at all, and the gate denies a
+        // tool call against userData.
+        'permissions:rules': (payload: unknown): PermissionRulesReply => {
+            if (!isPermissionRulesRequest(payload)) throw new Error('permissions:rules requires {projectId}');
+            return deps.permissionRules(payload.projectId);
+        },
+        'permissions:effective': (payload: unknown): PermissionEffectiveReply => {
+            if (!isPermissionEffectiveRequest(payload)) throw new Error('permissions:effective requires {projectId,hireId}');
+            return deps.effectivePolicy(payload.projectId, payload.hireId);
+        },
+        'permissions:add': (payload: unknown): PermissionWriteReply => {
+            if (!isPermissionAdd(payload)) throw new Error('permissions:add requires {projectId,hireId,action,pathScope,effect}');
+            return deps.addPermissionRule(payload);
+        },
+        'permissions:update': (payload: unknown): PermissionWriteReply => {
+            if (!isPermissionUpdate(payload)) throw new Error('permissions:update requires {id,action,pathScope,effect}');
+            return deps.updatePermissionRule(payload);
+        },
+        'permissions:remove': (payload: unknown): PermissionWriteReply => {
+            if (!isPermissionRemove(payload)) throw new Error('permissions:remove requires {id}');
+            return deps.removePermissionRule(payload.id);
         }
     };
 }

@@ -4,7 +4,9 @@ import { buildHandlers } from './handlers.ts';
 import {
     INVOKE_CHANNELS, type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
-    type ProjectCreated, type HireCreated, type ActivityRow, type SavedCheckpoints
+    type ProjectCreated, type HireCreated, type ActivityRow, type SavedCheckpoints,
+    type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
+    type PermissionAdd, type PermissionUpdate
 } from '../../shared/ipc.ts';
 
 interface SessionOverrides {
@@ -18,6 +20,11 @@ interface SessionOverrides {
     channelReply?: (hireId: string, text: string) => Promise<void>;
     createProject?: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
     createHire?: (payload: { name: string; type: string; title: string; projectId: string }) => HireCreated;
+    permissionRules?: (projectId: string) => PermissionRulesReply;
+    effectivePolicy?: (projectId: string, hireId: string) => PermissionEffectiveReply;
+    addPermissionRule?: (payload: PermissionAdd) => PermissionWriteReply;
+    updatePermissionRule?: (payload: PermissionUpdate) => PermissionWriteReply;
+    removePermissionRule?: (id: string) => PermissionWriteReply;
 }
 
 function deps(
@@ -43,7 +50,12 @@ function deps(
         ackCheckpoints: over.ackCheckpoints ?? (() => { /* noop */ }),
         channelReply: over.channelReply ?? (() => Promise.resolve()),
         pendingApprovals: () => ({ pending: [] }),
-        answerApproval: () => { /* noop */ }
+        answerApproval: () => { /* noop */ },
+        permissionRules: over.permissionRules ?? (() => ({ baseline: [], overrides: [] })),
+        effectivePolicy: over.effectivePolicy ?? (() => ({ rules: [] })),
+        addPermissionRule: over.addPermissionRule ?? (() => ({ ok: true, warning: null })),
+        updatePermissionRule: over.updatePermissionRule ?? (() => ({ ok: true, warning: null })),
+        removePermissionRule: over.removePermissionRule ?? (() => ({ ok: true, warning: null }))
     };
 }
 
@@ -202,4 +214,84 @@ test('checkpoints:ack is guarded and routes the drain id to ack', () => {
     handlers['checkpoints:ack']({ drainId: 'd1' });
     assert.deepEqual(acked, ['d1']);
     assert.throws(() => handlers['checkpoints:ack']({}), /checkpoints:ack requires/);
+});
+
+// --------------------------------------------------------------------------
+// Phase 3 permission configuration.
+//
+// The security story for the write path is structural, so the tests are structural too:
+// these channels exist only on the renderer-to-main invoke surface, and a colleague session
+// has no part of that surface at all. A colleague speaks stream-json to Claude Code over its
+// own stdin and stdout. It has no preload, no contextBridge, no ipcRenderer, so there is no
+// channel for it to name. Its only other route to the rules is the database file, which the
+// gate denies because userData is a protected path.
+// --------------------------------------------------------------------------
+
+const PERMISSION_CHANNELS = [
+    'permissions:rules', 'permissions:effective',
+    'permissions:add', 'permissions:update', 'permissions:remove'
+] as const;
+
+test('every permission channel is on the renderer-to-main invoke allowlist, and nowhere else', () => {
+    for (const channel of PERMISSION_CHANNELS) {
+        assert.ok((INVOKE_CHANNELS as readonly string[]).includes(channel),
+            channel + ' must be an invoke channel, or the config UI cannot reach it');
+    }
+    // The runner talks to Claude Code over pipes. There is no second transport that could
+    // carry these, and this asserts that rather than trusting it: if a future change adds a
+    // colleague-facing channel list, a permission channel appearing on it fails here.
+    const handlers = buildHandlers(deps());
+    for (const channel of PERMISSION_CHANNELS) {
+        assert.equal(typeof handlers[channel], 'function',
+            channel + ' must be served by main, not by anything a colleague can call');
+    }
+});
+
+test('the permission writes refuse a malformed payload rather than coercing it', () => {
+    const handlers = buildHandlers(deps());
+    assert.throws(() => handlers['permissions:add']({ projectId: 'p' }), /permissions:add requires/);
+    assert.throws(() => handlers['permissions:add']({ projectId: 'p', hireId: null, action: 'nope', pathScope: null, effect: 'allow' }));
+    assert.throws(() => handlers['permissions:add']({ projectId: 'p', hireId: null, action: 'read', pathScope: null, effect: 'maybe' }));
+    assert.throws(() => handlers['permissions:update']({ action: 'read', pathScope: null, effect: 'allow' }), /permissions:update requires/);
+    assert.throws(() => handlers['permissions:remove']({}), /permissions:remove requires/);
+    assert.throws(() => handlers['permissions:rules']({}), /permissions:rules requires/);
+    assert.throws(() => handlers['permissions:effective']({ projectId: 'p' }), /permissions:effective requires/);
+});
+
+test('a valid add reaches the store layer with exactly what the renderer sent', () => {
+    const seen: unknown[] = [];
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
+        addPermissionRule: (payload) => { seen.push(payload); return { ok: true, warning: null }; }
+    }));
+
+    const payload = { projectId: 'p1', hireId: null, action: 'write' as const, pathScope: 'src', effect: 'deny' as const };
+    const reply = handlers['permissions:add'](payload);
+
+    assert.deepEqual(seen, [payload]);
+    assert.deepEqual(reply, { ok: true, warning: null });
+});
+
+test('a widening edit returns a warning rather than throwing, since the decision is the users', () => {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
+        addPermissionRule: () => ({ ok: true, warning: 'this widens access to the config directory' })
+    }));
+    const reply = handlers['permissions:add']({
+        projectId: 'p1', hireId: null, action: 'read', pathScope: '/userdata', effect: 'allow'
+    }) as { ok: boolean; warning: string | null };
+
+    assert.equal(reply.ok, true, 'a warning must not block the write: it is his machine');
+    assert.match(reply.warning ?? '', /widens access/);
+});
+
+test('an override add carries the hire id, and a baseline add carries null', () => {
+    const seen: Array<{ hireId: string | null }> = [];
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
+        addPermissionRule: (p) => { seen.push({ hireId: p.hireId }); return { ok: true, warning: null }; }
+    }));
+
+    handlers['permissions:add']({ projectId: 'p', hireId: null, action: 'read', pathScope: null, effect: 'allow' });
+    handlers['permissions:add']({ projectId: 'p', hireId: 'hire-7', action: 'read', pathScope: null, effect: 'deny' });
+
+    assert.deepEqual(seen, [{ hireId: null }, { hireId: 'hire-7' }],
+        'null is a project baseline and a hire id is that colleague override, and nothing else is accepted');
 });

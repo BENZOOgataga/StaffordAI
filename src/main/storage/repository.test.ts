@@ -308,3 +308,67 @@ test('permission rules round-trip: a baseline and a colleague override read back
         assert.deepEqual(repos.permissionRules.forProject('p2'), [other], 'deleting p1 leaves p2');
     });
 });
+
+// --- phase 3: the edits the config UI performs ------------------------------
+
+const aRule = (over: Record<string, unknown> = {}) => ({
+    id: 'e1', projectId: 'p1', hireId: null, action: 'write' as const,
+    pathScope: '/p1/src', commandPattern: null, effect: 'allow' as const,
+    createdAt: '2026-08-21T00:00:00Z', createdBy: 'owner', ...over
+});
+
+test('a rule reads back by id, so a write can check what it is about to change', () => {
+    withRepos((repos) => {
+        repos.permissionRules.insert(aRule());
+        assert.equal(repos.permissionRules.get('e1')?.pathScope, '/p1/src');
+        assert.equal(repos.permissionRules.get('nope'), null);
+    });
+});
+
+test('update edits the scope-defining fields in place', () => {
+    withRepos((repos) => {
+        repos.permissionRules.insert(aRule());
+        const ok = repos.permissionRules.update('e1', {
+            action: 'read', pathScope: '/p1/docs', commandPattern: null, effect: 'deny'
+        });
+        assert.equal(ok, true);
+
+        const after = repos.permissionRules.get('e1');
+        assert.equal(after?.action, 'read');
+        assert.equal(after?.pathScope, '/p1/docs');
+        assert.equal(after?.effect, 'deny');
+    });
+});
+
+test('update cannot move a rule to another project, colleague, or author', () => {
+    withRepos((repos) => {
+        repos.permissionRules.insert(aRule({ hireId: 'h1' }));
+        repos.permissionRules.update('e1', { action: 'read', pathScope: '/x', commandPattern: null, effect: 'deny' });
+
+        const after = repos.permissionRules.get('e1');
+        assert.equal(after?.projectId, 'p1', 'an edit that could reassign a project is a different rule, not an edit');
+        assert.equal(after?.hireId, 'h1', 'nor may it move an override onto another colleague');
+        assert.equal(after?.createdBy, 'owner', 'nor rewrite who authored it');
+    });
+});
+
+test('update reports false for a rule that is not there, rather than silently doing nothing', () => {
+    withRepos((repos) => {
+        assert.equal(repos.permissionRules.update('ghost', {
+            action: 'read', pathScope: null, commandPattern: null, effect: 'allow'
+        }), false);
+    });
+});
+
+test('deleteById removes exactly one rule and leaves the rest', () => {
+    withRepos((repos) => {
+        repos.permissionRules.insert(aRule({ id: 'e1' }));
+        repos.permissionRules.insert(aRule({ id: 'e2', pathScope: '/p1/docs' }));
+
+        assert.equal(repos.permissionRules.deleteById('e1'), true);
+        assert.equal(repos.permissionRules.deleteById('e1'), false, 'a second removal is not a success');
+
+        const left = repos.permissionRules.forProject('p1');
+        assert.deepEqual(left.map((r) => r.id), ['e2']);
+    });
+});

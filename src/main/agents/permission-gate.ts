@@ -252,7 +252,23 @@ function decisionFor(effect: 'allow' | 'deny' | 'ask', request: PermissionReques
  * stored rules, which do not change mid-session); phase 3 refreshes on a config change.
  * There is no database read on the hot path once a project is loaded.
  */
-export function makePermissionGate(deps: PermissionGateDeps): (ctx: TurnContext) => CanUseTool {
+/**
+ * The gate, plus the one lever the config UI needs.
+ *
+ * `invalidate` exists because the rules are cached per project and colleague for the session,
+ * which phase 1 chose deliberately so resolution never touches the database on the hot path.
+ * That cache is also what would make an edit invisible: without this, changing a rule in the
+ * UI would do nothing until Stafford restarted, and the screen would look broken while being
+ * correct. Calling it drops the cache so the next turn reloads.
+ *
+ * It affects the NEXT turn, not one already running. A turn in flight has already resolved
+ * its rules, and re-resolving mid-turn would mean a colleague's permissions changed between
+ * two tool calls of the same job, which is harder to reason about than waiting for the turn
+ * to end. Turns are short and serial per colleague, so the wait is brief.
+ */
+export type PermissionGate = ((ctx: TurnContext) => CanUseTool) & { invalidate: () => void };
+
+export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
     const cache = new Map<string, Resolved>();
 
     const load = (ctx: TurnContext): Resolved => {
@@ -297,7 +313,7 @@ export function makePermissionGate(deps: PermissionGateDeps): (ctx: TurnContext)
         return resolved;
     };
 
-    return (ctx) => (toolName, input) => {
+    const gate = ((ctx: TurnContext): CanUseTool => (toolName, input) => {
         const { rules, defaults, rawRoot } = load(ctx);
         const request: PermissionRequest = {
             action: toolCategory(toolName),
@@ -323,5 +339,12 @@ export function makePermissionGate(deps: PermissionGateDeps): (ctx: TurnContext)
                     });
         }
         return decisionFor(effect, request, input);
-    };
+    }) as PermissionGate;
+
+    // Drops every project's cached rules. Cheap, and correct even though it is broader than
+    // the edited project: the next turn for any colleague simply reloads, which is the same
+    // work a first turn already does.
+    gate.invalidate = (): void => { cache.clear(); };
+
+    return gate;
 }
