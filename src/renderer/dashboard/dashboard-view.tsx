@@ -62,7 +62,7 @@ export function DashboardView({ overview, current, onNavigate }: {
     onNavigate: (view: string) => void;
 }): React.JSX.Element {
     return (
-        <div className="dashboard-scope flex h-full min-h-0 w-full">
+        <div className="dashboard-scope flex h-full min-h-0 w-full gap-2 p-2">
             <Sidebar>
                 <SidebarSection>Stafford</SidebarSection>
                 <SidebarItem active={current === 'home'} onClick={() => onNavigate('home')}><LayoutDashboard /> Home</SidebarItem>
@@ -70,8 +70,8 @@ export function DashboardView({ overview, current, onNavigate }: {
                 <SidebarItem active={current === 'channel'} onClick={() => onNavigate('channel')}><MessageSquare /> Channel</SidebarItem>
             </Sidebar>
 
-            <main className="flex-1 overflow-auto px-8 py-10 md:px-12">
-                <div className="mx-auto flex max-w-6xl flex-col gap-10">
+            <main data-slot="content-panel" className="bg-card text-card-foreground min-w-0 flex-1 overflow-auto rounded-xl border">
+                <div className="mx-auto flex max-w-6xl flex-col gap-10 px-8 py-10 md:px-12">
                     <header className="flex flex-col gap-1.5">
                         <h1 className="text-3xl font-semibold tracking-tight">Overview</h1>
                         <p className="text-muted-foreground text-base">Your colleagues and projects at a glance.</p>
