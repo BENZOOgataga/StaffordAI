@@ -83,6 +83,20 @@ function main(): void {
     // than waiting for a roster:changed that will not come.
     initCreateForms({ onCreated: () => { rosterStore.reload(); } });
 
+    // The custom title bar, on a frameless window only (Windows and Linux). The frameless
+    // flag comes from the preload, set by main from the launch argument, so it is known
+    // synchronously here. macOS keeps its native frame and mounts nothing.
+    if (window.stafford.win.frameless) {
+        document.documentElement.classList.add('has-titlebar');
+        const bar = document.getElementById('titlebar');
+        if (bar) {
+            bar.hidden = false;
+            import('./title-bar/mount.tsx')
+                .then((m) => m.mountTitleBar(bar))
+                .catch((error: unknown) => { console.error('[titlebar] mount failed:', error); });
+        }
+    }
+
     // The roster is the default view: mount and show it now.
     showView('roster');
 }

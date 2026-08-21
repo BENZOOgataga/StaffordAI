@@ -12,7 +12,8 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import {
-    isInvokeChannel, isEventChannel, type InvokeChannel, type EventChannel,
+    isInvokeChannel, isEventChannel, isWindowInvokeChannel, isWindowEventChannel,
+    type InvokeChannel, type EventChannel, type WindowInvokeChannel, type WindowEventChannel,
     type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
     type ActivityByHireReply, type ActivityRow, type SavedCheckpoints
@@ -36,6 +37,28 @@ function on(channel: EventChannel, listener: (payload: unknown) => void): () => 
     ipcRenderer.on(channel, wrapped);
     return () => { ipcRenderer.removeListener(channel, wrapped); };
 }
+
+/** The window-control channels have their own allowlist, checked the same way. */
+function winInvoke(channel: WindowInvokeChannel): Promise<unknown> {
+    if (!isWindowInvokeChannel(channel)) {
+        return Promise.reject(new Error('refused: ' + String(channel) + ' is not an allowed window channel'));
+    }
+    return ipcRenderer.invoke(channel);
+}
+
+function winOn(channel: WindowEventChannel, listener: (payload: unknown) => void): () => void {
+    if (!isWindowEventChannel(channel)) {
+        throw new Error('refused: ' + String(channel) + ' is not an allowed window event channel');
+    }
+    const wrapped = (_event: unknown, payload: unknown): void => listener(payload);
+    ipcRenderer.on(channel, wrapped);
+    return () => { ipcRenderer.removeListener(channel, wrapped); };
+}
+
+// The main process passes --stafford-frameless as a launch argument for a frameless
+// window, so the renderer knows synchronously at load whether to draw the custom title
+// bar, without an extra IPC round-trip.
+const FRAMELESS = process.argv.includes('--stafford-frameless');
 
 /**
  * The one object the renderer sees. Frozen, so the renderer cannot rewrite a
@@ -101,6 +124,20 @@ const api = Object.freeze({
             invoke('checkpoints:saved') as Promise<SavedCheckpoints | null>,
         ack: (drainId: string): Promise<void> =>
             invoke('checkpoints:ack', { drainId }) as Promise<void>
+    }),
+
+    // The custom frameless title bar's window controls. frameless says whether this
+    // window has no OS frame, so the renderer draws the bar. close routes through the
+    // window's close, which the app hides to the tray, so it never quits or skips the
+    // drain. onMaximizeChange lets the maximize/restore button track the real state.
+    win: Object.freeze({
+        frameless: FRAMELESS,
+        minimize: (): Promise<void> => winInvoke('window:minimize') as Promise<void>,
+        toggleMaximize: (): Promise<boolean> => winInvoke('window:toggle-maximize') as Promise<boolean>,
+        close: (): Promise<void> => winInvoke('window:close') as Promise<void>,
+        isMaximized: (): Promise<boolean> => winInvoke('window:is-maximized') as Promise<boolean>,
+        onMaximizeChange: (listener: (maximized: boolean) => void): (() => void) =>
+            winOn('window:maximized-changed', (payload) => listener(Boolean(payload)))
     })
 });
 

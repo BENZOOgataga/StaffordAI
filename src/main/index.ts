@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { currentPlatform } from './platform/index.ts';
 import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './window/security.ts';
 import { applyAppMenu, hideMenuBar } from './window/app-menu.ts';
+import { registerWindowControls, wireMaximizeEvents } from './window/window-controls.ts';
 import { resolveWindowBounds, readWindowState, saveWindowState, WINDOW_DEFAULTS, type Rect } from './window/window-state.ts';
 import { installTray } from './tray.ts';
 import { configureLoginItem } from './login-item.ts';
@@ -255,6 +256,11 @@ function openWindow(): void {
     }
 
     const { bounds, min } = resolveOpenBounds();
+    // Frameless on Windows and Linux, where the custom title bar draws its own controls;
+    // native frame on macOS, where the traffic lights and system bar are the convention.
+    // Keyed on the app.dock capability (macOS-only), not a platform name, so the
+    // platform-leak guard stays satisfied.
+    const isMac = Boolean(app.dock);
     const win = new BrowserWindow({
         x: bounds.x,
         y: bounds.y,
@@ -264,13 +270,18 @@ function openWindow(): void {
         minHeight: min.height,
         show: false,
         title: 'Stafford',
+        frame: isMac,
         // No visible menu bar on Windows and Linux; the application menu is still set so
         // its accelerators stay live. hideMenuBar reinforces this after the window exists.
         autoHideMenuBar: true,
         webPreferences: {
             ...WEB_PREFERENCES,
             // .cjs: a sandboxed preload is CommonJS. See electron.vite.config.ts.
-            preload: path.join(dir, '../preload/index.cjs')
+            preload: path.join(dir, '../preload/index.cjs'),
+            // Tell the sandboxed preload whether this window is frameless, so the renderer
+            // mounts the custom title bar only where the OS frame was removed. Passed as a
+            // launch argument rather than over IPC so it is available synchronously at load.
+            additionalArguments: isMac ? [] : ['--stafford-frameless']
         }
     });
 
@@ -278,7 +289,10 @@ function openWindow(): void {
     applyWindowSecurity(win, entry);
     // Hide the menu bar on Windows and Linux (macOS keeps its system bar). The menu is
     // set once at startup, so the clipboard, quit, and close accelerators still work.
-    hideMenuBar(win, Boolean(app.dock));
+    hideMenuBar(win, isMac);
+    // Reflect the maximized state to the custom title bar so its maximize/restore button
+    // tracks the real window, including a change from an OS gesture.
+    wireMaximizeEvents(win);
     win.once('ready-to-show', () => win.show());
 
     // Remember the user's size and position after they adjust it. Debounced, and
@@ -630,6 +644,11 @@ app.whenReady().then(async () => {
     // there is a Dock, which is macOS, so this needs no platform branch and the
     // platform-leak guard stays satisfied, the same way app.dock.hide is keyed below.
     applyAppMenu(Boolean(app.dock), !app.isPackaged);
+
+    // The custom title bar's window controls (minimize, maximize/restore, close). Close
+    // routes through the window's own close(), which the close handler below hides to the
+    // tray, so the frameless title bar keeps the tray-resident behaviour and the drain.
+    registerWindowControls(ipcMain, () => window);
 
     // The store first, before the tray or any handler. If it cannot open, the
     // app has already quit inside openStore and there is nothing more to do.
