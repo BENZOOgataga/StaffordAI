@@ -277,3 +277,34 @@ test('drain reports persist reason and latestCommittedDrain returns the newest c
         assert.equal(repos.drainReports.byDrain('d2').find((r) => r.agentId === 'theo')?.reason, 'clean');
     });
 });
+
+test('permission rules round-trip: a baseline and a colleague override read back per project', () => {
+    withRepos((repos) => {
+        const baseline = {
+            id: 'r1', projectId: 'p1', hireId: null, action: 'write' as const,
+            pathScope: '/p1/src', commandPattern: null, effect: 'allow' as const,
+            createdAt: '2026-08-21T00:00:00Z', createdBy: 'owner'
+        };
+        const override = {
+            id: 'r2', projectId: 'p1', hireId: 'h1', action: 'read' as const,
+            pathScope: '/p1/src/secrets', commandPattern: null, effect: 'deny' as const,
+            createdAt: '2026-08-21T00:00:01Z', createdBy: 'owner'
+        };
+        const other = {
+            id: 'r3', projectId: 'p2', hireId: null, action: 'shell' as const,
+            pathScope: null, commandPattern: 'rm\s+-rf', effect: 'deny' as const,
+            createdAt: '2026-08-21T00:00:02Z', createdBy: 'owner'
+        };
+        repos.permissionRules.insert(baseline);
+        repos.permissionRules.insert(override);
+        repos.permissionRules.insert(other);
+
+        const forP1 = repos.permissionRules.forProject('p1');
+        assert.deepEqual(forP1, [baseline, override], 'p1 has its baseline and its override, not p2');
+        assert.deepEqual(repos.permissionRules.forProject('p2'), [other]);
+
+        repos.permissionRules.deleteForProject('p1');
+        assert.deepEqual(repos.permissionRules.forProject('p1'), []);
+        assert.deepEqual(repos.permissionRules.forProject('p2'), [other], 'deleting p1 leaves p2');
+    });
+});

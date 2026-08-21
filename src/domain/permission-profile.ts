@@ -1,0 +1,114 @@
+/**
+ * The action-category mapping and the default permission profile, pure and tested
+ * (docs/plans/PERMISSION-SYSTEM.md, phase 1). This grounds the policy in the real Claude
+ * Code tool names and produces the baseline rules a project starts with before any are
+ * stored. No Electron, no filesystem: the caller passes already-resolved absolute paths.
+ */
+
+import type { PermissionRule, PermissionAction, CategoryDefaults } from './permissions.ts';
+
+/**
+ * Maps a real Claude Code tool name to a category. The path-bearing tools are read and
+ * write; Bash and the shell are shell; the network tools are fetch; Task is delegate; and
+ * everything else, including TodoWrite and the mcp__ tools, is other, which defaults
+ * conservatively so a new capability surfaces rather than passing silently.
+ */
+export function toolCategory(toolName: string): PermissionAction {
+    switch (toolName) {
+        case 'Read':
+        case 'LS':
+        case 'Glob':
+        case 'Grep':
+        case 'NotebookRead':
+            return 'read';
+        case 'Write':
+        case 'Edit':
+        case 'MultiEdit':
+        case 'NotebookEdit':
+            return 'write';
+        case 'Bash':
+        case 'PowerShell':
+            return 'shell';
+        case 'WebFetch':
+        case 'WebSearch':
+            return 'fetch';
+        case 'Task':
+            return 'delegate';
+        default:
+            return 'other';
+    }
+}
+
+/**
+ * Regular-expression sources, matched case-insensitively, for the genuinely destructive
+ * shell commands the default profile pauses on: a force push, a branch deletion, a hard
+ * reset, a history rewrite, and a recursive force delete. This is best-effort by design;
+ * the command string is not a clean path, so this catches the common shapes and the strong
+ * path guarantees live in the read and write categories, not here.
+ */
+export const DESTRUCTIVE_PATTERNS: readonly string[] = [
+    'git\\s+push\\b[^\\n]*\\s(--force\\b|--force-with-lease\\b|-f\\b)',
+    'git\\s+branch\\b[^\\n]*\\s(-D\\b|--delete\\b)',
+    'git\\s+reset\\b[^\\n]*--hard\\b',
+    'git\\s+(rebase|filter-branch|filter-repo)\\b',
+    '\\brm\\b[^\\n]*\\s-[a-zA-Z]*r[a-zA-Z]*f\\b',
+    '\\brm\\b[^\\n]*\\s-[a-zA-Z]*f[a-zA-Z]*r\\b'
+];
+
+/**
+ * The fallback effect per category when no rule matches, in phase 1. read is allowed
+ * broadly, write denies outside its allowed scope, shell allows ordinary commands, fetch
+ * follows the project's allowWebFetch, delegate allows, and an unrecognized tool asks
+ * (which resolves as deny in phase 1). Never a silent allow.
+ */
+export function defaultCategoryDefaults(allowWebFetch: boolean): CategoryDefaults {
+    return {
+        read: 'allow',
+        write: 'deny',
+        shell: 'allow',
+        fetch: allowWebFetch ? 'allow' : 'ask',
+        delegate: 'allow',
+        other: 'ask'
+    };
+}
+
+export interface DefaultProfileInputs {
+    /** The project repo root, absolute and normalized, the write scope when writePaths is null. */
+    readonly repoRoot: string;
+    /** The allowed write scopes, absolute and normalized, or null for the whole repo. */
+    readonly writePaths: readonly string[] | null;
+    /**
+     * The paths a colleague must never read or write: Stafford's own user-data directory,
+     * which holds the permission store, the database, and the managed credential. Denying
+     * these is how the security invariant is enforced, not merely documented.
+     */
+    readonly protectedPaths: readonly string[];
+}
+
+/**
+ * The baseline rules for a project with no stored rules, the phase-1 default profile.
+ * Write is allowed within its scope and denied outside by the category default. Read and
+ * write are denied on the protected paths, which beats the broad read allow because a
+ * protected path is a more specific match. Destructive shell commands ask, which is deny
+ * in phase 1. Ordinary read, in-scope write, ordinary shell, allowed fetch, and delegate
+ * all resolve to allow, so normal work is unaffected.
+ */
+export function defaultBaselineRules(input: DefaultProfileInputs): PermissionRule[] {
+    const rules: PermissionRule[] = [];
+
+    const writeScopes = input.writePaths ?? [input.repoRoot];
+    for (const scope of writeScopes) {
+        rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'allow' });
+    }
+
+    for (const protectedPath of input.protectedPaths) {
+        rules.push({ action: 'read', pathScope: protectedPath, commandPattern: null, effect: 'deny' });
+        rules.push({ action: 'write', pathScope: protectedPath, commandPattern: null, effect: 'deny' });
+    }
+
+    for (const pattern of DESTRUCTIVE_PATTERNS) {
+        rules.push({ action: 'shell', pathScope: null, commandPattern: pattern, effect: 'ask' });
+    }
+
+    return rules;
+}

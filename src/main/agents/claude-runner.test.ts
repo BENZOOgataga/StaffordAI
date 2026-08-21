@@ -12,10 +12,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import {
     ClaudeRunner, autoApproveTool, HEADLESS_ARGS,
     type RunnerChild, type SpawnFn, type WireDirection
 } from './claude-runner.ts';
+import { makePermissionGate } from './permission-gate.ts';
+import type { ProjectPolicy } from '../../domain/models.ts';
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -212,6 +215,38 @@ test('can_use_tool is answered allow through the named seam, called with tool na
 
     fake.emit('{"type":"result","is_error":false,"session_id":"s"}\n');
     await turn;
+});
+
+test('the permission gate wired at can_use_tool allows in scope and denies out of scope, the config, and destructive shell', async () => {
+    const CWD = path.resolve('/proj');
+    const USERDATA = path.resolve('/userdata');
+    const policy: ProjectPolicy = {
+        push: 'none', allowedRoles: [], toolCeiling: null, writePaths: null,
+        requirePipeline: false, allowWebFetch: true, permissionMode: 'default', maxConcurrentAgents: 1
+    };
+    const gate = makePermissionGate({
+        getPolicy: () => policy, getStoredRules: () => [], protectedPaths: [USERDATA]
+    })({ hireId: 'h1', cwd: CWD, projectId: 'p' });
+
+    // Drive one control request through the real runner and read the decision it writes back.
+    const decisionFor = async (toolName: string, input: unknown): Promise<Record<string, unknown>> => {
+        const fake = makeFakeSpawn();
+        const runner = new ClaudeRunner(baseDeps(fake, { canUseTool: gate }));
+        const turn = runner.runTurn({ text: 'x' });
+        fake.emit('{"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":' +
+            JSON.stringify(toolName) + ',"input":' + JSON.stringify(input) + '}}\n');
+        await tick();
+        const response = fake.writes().map((w) => JSON.parse(w.trim()) as Record<string, unknown>)
+            .find((o) => o.type === 'control_response');
+        fake.emit('{"type":"result","is_error":false,"session_id":"s"}\n');
+        await turn;
+        return ((response as Record<string, unknown>).response as Record<string, unknown>).response as Record<string, unknown>;
+    };
+
+    assert.equal((await decisionFor('Write', { file_path: 'src/main.ts' })).behavior, 'allow');
+    assert.equal((await decisionFor('Write', { file_path: path.resolve('/userdata/Stafford/stafford.db') })).behavior, 'deny');
+    assert.equal((await decisionFor('Bash', { command: 'git push --force origin main' })).behavior, 'deny');
+    assert.equal((await decisionFor('Bash', { command: 'npm test' })).behavior, 'allow');
 });
 
 test('autoApproveTool is a named function that allows and echoes the input', () => {
