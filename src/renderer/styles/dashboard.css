@@ -141,17 +141,14 @@
 }
 
 /*
- * Token-name guard for the reparented vanilla detail. The detail pane, still vanilla
- * this phase, is reparented into the React roster and so lives inside .dashboard-scope.
- * It colors its text with the vanilla token names (var(--text), var(--muted)). The scope
- * redefines --muted as a dark surface color for the shadcn primitives, so the pane's
- * muted text (the role, the inactive tabs, hints, placeholders) went near-black. Restore
- * the vanilla text tokens on the detail host so the pane reads as it did outside the
- * scope. This whole graft goes away when the detail is migrated to React.
+ * The hidden attribute means hidden. Tailwind's preflight normally sets [hidden] to
+ * display:none, but the scope skips preflight so it cannot touch the vanilla shell, so
+ * the attribute would be inert here. Radix hides an inactive tab panel with hidden, and
+ * those panels carry flex-1; without this they stay laid out and steal the active
+ * panel's space. Unlayered so it outranks a display utility like flex on the same node.
  */
-.dashboard-scope [data-slot="content-panel"][aria-label="Colleague detail"] {
-    color: var(--text);
-    --muted: #8F8F8F;
+.dashboard-scope [hidden] {
+    display: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

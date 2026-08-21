@@ -767,39 +767,6 @@
       <button id="hire-header" class="header-btn" type="button">Hire</button>
     </header>
     <div id="saved-work" class="saved-work" hidden></div>
-    <div id="workspace" class="workspace">
-      <section id="detail-pane" class="detail-pane" aria-label="Colleague detail">
-        <div id="detail-empty" class="detail-empty">
-          <strong id="detail-empty-lead">Select a colleague</strong>
-          <p id="detail-empty-body">Pick a card to see their conversation, activity, and terminal.</p>
-        </div>
-        <div id="detail" class="detail" hidden>
-          <div class="detail-head">
-            <span id="detail-name" class="detail-name"></span>
-            <span id="detail-role" class="detail-role"></span>
-          </div>
-          <div class="tabbar" role="tablist" aria-label="Colleague detail tabs">
-            <button class="tab active" type="button" role="tab" data-tab="conversation" id="tab-conversation" aria-selected="true">Conversation</button>
-            <button class="tab" type="button" role="tab" data-tab="activity" id="tab-activity" aria-selected="false">Activity</button>
-            <button class="tab" type="button" role="tab" data-tab="transcript" id="tab-transcript" aria-selected="false">Transcript</button>
-          </div>
-          <div class="panels">
-            <div id="panel-conversation" class="panel" role="tabpanel" aria-labelledby="tab-conversation">
-              <div id="conversation" class="conversation" aria-live="polite"></div>
-              <div class="composer">
-                <textarea id="reply" class="reply" rows="2"
-                  placeholder="Type a message. Enter sends, Shift-Enter adds a line."></textarea>
-                <p id="reply-hint" class="reply-hint">Enter sends. Shift-Enter adds a line.</p>
-              </div>
-            </div>
-            <div id="panel-activity" class="panel panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden></div>
-            <div id="panel-transcript" class="panel panel-transcript" role="tabpanel" aria-labelledby="tab-transcript" hidden>
-              <div id="transcript" class="transcript" aria-live="polite"></div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
     <section id="channel" class="channel" hidden aria-label="Channel timeline">
       <div id="timeline" class="timeline" aria-live="polite"></div>
     </section>

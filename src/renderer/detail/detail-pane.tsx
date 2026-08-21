@@ -1,0 +1,80 @@
+import * as React from 'react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ConversationPanel } from './conversation-panel.tsx';
+import { ActivityPanel } from './activity-panel.tsx';
+import { TranscriptPanel } from './transcript-panel.tsx';
+import { useDetailData } from './use-detail-data.ts';
+import { buildActivityFeed, buildTranscript } from './feed-model.ts';
+import { tabLabels, DEFAULT_TAB, type TabId } from '../detail-tabs.ts';
+import type { Lang } from '../channel-view.ts';
+import { CHANNEL_SELF_SENDER, type RosterCard } from '../../shared/ipc.ts';
+
+/**
+ * The detail pane, all React now: a header with the colleague's name and role, and the
+ * three tabs (Conversation, Activity, Transcript) on the Tabs primitive. It reads one
+ * live data source through the hook and shapes each tab with the pure models. It renders
+ * as the right island beside the roster; with no colleague selected it shows a real empty
+ * state. Selecting a colleague resets to the Conversation tab, as before.
+ */
+export function DetailPane({ selected, cards, lang }: {
+    selected: RosterCard | null;
+    cards: readonly RosterCard[];
+    lang: Lang;
+}): React.JSX.Element {
+    const hireId = selected?.id ?? null;
+    const { convRows, actRows } = useDetailData(hireId);
+    const [tab, setTab] = React.useState<TabId>(DEFAULT_TAB);
+
+    // A fresh colleague opens on the front tab, the conversation.
+    React.useEffect(() => { setTab(DEFAULT_TAB); }, [hireId]);
+
+    const nameOf = React.useCallback((senderId: string): string => {
+        if (senderId === CHANNEL_SELF_SENDER) return 'You';
+        const card = cards.find((c) => c.id === senderId);
+        if (card) return card.name;
+        if (selected && selected.id === senderId) return selected.name;
+        return senderId;
+    }, [cards, selected]);
+
+    return (
+        <section
+            data-slot="content-panel"
+            aria-label="Colleague detail"
+            className="bg-card text-card-foreground flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border"
+        >
+            {!selected || !hireId ? (
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-10 text-center">
+                    <p className="text-lg font-medium">Select a colleague</p>
+                    <p className="text-muted-foreground text-sm">Pick a card to see their conversation, activity, and transcript.</p>
+                </div>
+            ) : (
+                <>
+                    <div className="border-border flex items-baseline gap-2 border-b px-5 py-3">
+                        <span className="font-medium">{selected.name}</span>
+                        <span className="text-muted-foreground text-sm">{selected.role}</span>
+                    </div>
+
+                    <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)} className="flex min-h-0 flex-1 flex-col gap-0">
+                        <div className="px-4 pt-3 pb-1">
+                            <TabsList className="w-full">
+                                <TabsTrigger value="conversation">{tabLabels(lang).conversation}</TabsTrigger>
+                                <TabsTrigger value="activity">{tabLabels(lang).activity}</TabsTrigger>
+                                <TabsTrigger value="transcript">{tabLabels(lang).transcript}</TabsTrigger>
+                            </TabsList>
+                        </div>
+
+                        <TabsContent value="conversation" className="mt-0 flex min-h-0 flex-1 flex-col">
+                            <ConversationPanel hireId={hireId} rows={convRows} nameOf={nameOf} self={CHANNEL_SELF_SENDER} lang={lang} />
+                        </TabsContent>
+                        <TabsContent value="activity" className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                            <ActivityPanel feed={buildActivityFeed(convRows, actRows, hireId)} nameOf={nameOf} lang={lang} />
+                        </TabsContent>
+                        <TabsContent value="transcript" className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                            <TranscriptPanel items={buildTranscript(convRows, actRows, hireId)} lang={lang} />
+                        </TabsContent>
+                    </Tabs>
+                </>
+            )}
+        </section>
+    );
+}
