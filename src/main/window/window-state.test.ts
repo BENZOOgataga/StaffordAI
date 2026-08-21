@@ -14,11 +14,11 @@ const OPTS = WINDOW_DEFAULTS;
 
 test('first launch fills the fraction of the work area, capped, and centred', () => {
     const b = resolveWindowBounds(WORK_2K, null, OPTS);
-    // 75% of 2560 is 1920, over the 1600 cap, so it caps. 75% of 1400 is 1050.
+    // 75% of 2560 is 1920, over the 1600 cap, so it caps. 63% of 1400 is 882.
     assert.equal(b.width, 1600, 'width caps at the max, not the full 75%');
-    assert.equal(b.height, 1050, 'height is 75% of the work area, under the cap');
+    assert.equal(b.height, 882, 'height is 63% of the work area, under the cap');
     assert.equal(b.x, Math.round((2560 - 1600) / 2), 'centred horizontally');
-    assert.equal(b.y, Math.round((1400 - 1050) / 2), 'centred vertically');
+    assert.equal(b.y, Math.round((1400 - 882) / 2), 'centred vertically');
 });
 
 test('first launch on a small display floors to the minimum, still centred', () => {

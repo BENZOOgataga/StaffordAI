@@ -30,17 +30,25 @@ export interface Size {
 }
 
 export interface BoundsOptions {
-    /** Fraction of the work area to fill on first launch. */
-    readonly fraction: number;
+    /** Fraction of the work area's width to fill on first launch. */
+    readonly widthFraction: number;
+    /** Fraction of the work area's height to fill on first launch, shorter than the width. */
+    readonly heightFraction: number;
     /** The floor, so the window is never unusably small. */
     readonly min: Size;
     /** The cap, so it never becomes enormous on a very large or ultrawide display. */
     readonly max: Size;
 }
 
-/** First launch fills 75% of the work area, floored at 720x520, capped at 1600x1100. */
+/**
+ * First launch fills 75% of the work area's width but only 63% of its height, so the
+ * window opens proportioned to the roster content rather than tall with empty space at
+ * the bottom. Floored at 720x520, capped at 1600x1100. This is the first-launch default
+ * only; a returning user's saved size is respected unchanged.
+ */
 export const WINDOW_DEFAULTS: BoundsOptions = {
-    fraction: 0.75,
+    widthFraction: 0.75,
+    heightFraction: 0.63,
     min: { width: 720, height: 520 },
     max: { width: 1600, height: 1100 }
 };
@@ -77,8 +85,8 @@ export function resolveWindowBounds(workArea: Rect, saved: Rect | null, opts: Bo
     const maxHeight = Math.min(opts.max.height, workArea.height);
 
     if (!saved) {
-        const width = clampSize(Math.round(workArea.width * opts.fraction), opts.min.width, maxWidth);
-        const height = clampSize(Math.round(workArea.height * opts.fraction), opts.min.height, maxHeight);
+        const width = clampSize(Math.round(workArea.width * opts.widthFraction), opts.min.width, maxWidth);
+        const height = clampSize(Math.round(workArea.height * opts.heightFraction), opts.min.height, maxHeight);
         return centered(workArea, width, height);
     }
 
