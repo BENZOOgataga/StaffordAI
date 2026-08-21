@@ -140,6 +140,20 @@
     z-index: auto;
 }
 
+/*
+ * Token-name guard for the reparented vanilla detail. The detail pane, still vanilla
+ * this phase, is reparented into the React roster and so lives inside .dashboard-scope.
+ * It colors its text with the vanilla token names (var(--text), var(--muted)). The scope
+ * redefines --muted as a dark surface color for the shadcn primitives, so the pane's
+ * muted text (the role, the inactive tabs, hints, placeholders) went near-black. Restore
+ * the vanilla text tokens on the detail host so the pane reads as it did outside the
+ * scope. This whole graft goes away when the detail is migrated to React.
+ */
+.dashboard-scope [data-slot="content-panel"][aria-label="Colleague detail"] {
+    color: var(--text);
+    --muted: #8F8F8F;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .dashboard-scope *,
     .dashboard-scope ::before,
