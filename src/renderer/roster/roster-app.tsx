@@ -10,10 +10,9 @@ import { formCopy, type Lang } from '../create-forms-view.ts';
  * state plus the actions. onNavigate is the seam back to the shell, so a Sidebar click
  * switches the view; detailNode is the still-vanilla detail pane the screen reparents.
  */
-export function RosterApp({ lang, onNavigate, detailNode }: {
+export function RosterApp({ lang, onNavigate }: {
     lang: Lang;
     onNavigate: (view: string) => void;
-    detailNode: HTMLElement | null;
 }): React.JSX.Element {
     const state = useRoster();
     const copy = formCopy(lang);
@@ -28,7 +27,6 @@ export function RosterApp({ lang, onNavigate, detailNode }: {
             onToggleMute={() => rosterStore.toggleMute()}
             onHire={() => { void openHireForm(); }}
             onAddProject={() => openProjectForm()}
-            detailNode={detailNode}
         />
     );
 }

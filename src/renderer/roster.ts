@@ -30,7 +30,6 @@ function main(): void {
     // screen, so a chime and a badge still fire when the person is on another view.
     rosterStore.start();
 
-    const workspace = document.getElementById('workspace') as HTMLElement;
     const channelView = document.getElementById('channel') as HTMLElement;
     // The two React islands. Each is a flex child that fills the window when active; the
     // vanilla rail and content are hidden outright then, so nothing bleeds through and
@@ -38,7 +37,6 @@ function main(): void {
     // its view opens, so the vanilla bundle never carries it.
     const homeView = document.getElementById('home') as HTMLElement;
     const rosterView = document.getElementById('roster-react') as HTMLElement;
-    const detailNode = document.getElementById('detail-pane');
     const appEl = document.querySelector('.app') as HTMLElement;
     let dashboardMounted = false;
     let rosterMounted = false;
@@ -51,9 +49,8 @@ function main(): void {
         appEl.classList.toggle('island-active', isHome || isRoster);
         homeView.hidden = !isHome;
         rosterView.hidden = !isRoster;
-        // The vanilla roster list is gone, so the workspace never shows now; only the
-        // channel still uses the vanilla content region.
-        workspace.hidden = true;
+        // The roster and its detail are React now; only the channel still uses the
+        // vanilla content region.
         channelView.hidden = !isChannel;
         for (const item of document.querySelectorAll('.rail-item')) {
             item.classList.toggle('active', item.getAttribute('data-view') === view);
@@ -74,7 +71,7 @@ function main(): void {
         if (isRoster && !rosterMounted) {
             rosterMounted = true;
             import('./roster/mount.tsx')
-                .then((m) => m.mountRoster(rosterView, lang, showView, detailNode))
+                .then((m) => m.mountRoster(rosterView, lang, showView))
                 .catch((error: unknown) => {
                     rosterMounted = false;
                     rosterView.textContent = 'The roster could not load.';

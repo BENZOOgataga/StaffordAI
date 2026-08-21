@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { buildRosterGroups, type RosterRow } from './roster-model.ts';
+import { DetailPane } from '../detail/detail-pane.tsx';
 import type { RosterState } from './roster-store.ts';
 import type { RosterCard } from '../../shared/ipc.ts';
 import type { Lang } from '../create-forms-view.ts';
@@ -74,7 +75,7 @@ function ColleagueRow({ row, onSelect }: { row: RosterRow; onSelect: (card: Rost
  * callbacks hand a selection or an action back to the shell.
  */
 export function RosterScreen({
-    state, lang, copy, current, onNavigate, onSelect, onToggleMute, onHire, onAddProject, detailNode
+    state, lang, copy, current, onNavigate, onSelect, onToggleMute, onHire, onAddProject
 }: {
     state: RosterState;
     lang: Lang;
@@ -85,18 +86,7 @@ export function RosterScreen({
     onToggleMute: () => void;
     onHire: () => void;
     onAddProject: () => void;
-    detailNode: HTMLElement | null;
 }): React.JSX.Element {
-    const hostRef = React.useRef<HTMLElement | null>(null);
-
-    // Move the still-vanilla detail pane into the React host once. React renders no
-    // children into this element, so it never reconciles the foreign node away, and
-    // the detail module's cached element refs stay valid after the move.
-    React.useEffect(() => {
-        const host = hostRef.current;
-        if (host && detailNode && detailNode.parentElement !== host) host.appendChild(detailNode);
-    }, [detailNode]);
-
     const groups = buildRosterGroups(state.cards, lang, state.now, state.badged, state.selectedId);
     const empty = state.cards.length === 0;
 
@@ -166,12 +156,7 @@ export function RosterScreen({
                     </div>
                 </section>
 
-                <section
-                    ref={hostRef as React.RefObject<HTMLElement>}
-                    data-slot="content-panel"
-                    aria-label="Colleague detail"
-                    className="bg-card text-card-foreground flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border"
-                />
+                <DetailPane selected={state.selectedCard} cards={state.cards} lang={lang} />
             </div>
         </div>
     );

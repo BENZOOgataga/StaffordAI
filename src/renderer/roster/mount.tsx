@@ -8,11 +8,11 @@ let root: Root | null = null;
 /**
  * Mounts the React roster into the host the vanilla shell hands over, keeping the root
  * so a second call re-renders rather than remounting. onNavigate is the shell's view
- * switcher; detailNode is the still-vanilla detail pane, which the screen reparents so
- * clicking a colleague opens it in place. This shares the dashboard's scoped styles, so
- * the roster reads in the same island register as the home dashboard.
+ * switcher. The roster and its detail pane are both React now, rendered side by side.
+ * This shares the dashboard's scoped styles, so the roster reads in the same island
+ * register as the home dashboard.
  */
-export function mountRoster(host: HTMLElement, lang: Lang, onNavigate: (view: string) => void, detailNode: HTMLElement | null): void {
+export function mountRoster(host: HTMLElement, lang: Lang, onNavigate: (view: string) => void): void {
     if (!root) root = createRoot(host);
-    root.render(<RosterApp lang={lang} onNavigate={onNavigate} detailNode={detailNode} />);
+    root.render(<RosterApp lang={lang} onNavigate={onNavigate} />);
 }

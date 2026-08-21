@@ -11,7 +11,6 @@
 
 import type { RosterCard } from '../../shared/ipc.ts';
 import { RosterAlerts } from '../roster-alerts.ts';
-import { openDetail } from '../detail.ts';
 import { playChime } from './roster-chime.ts';
 
 export interface RosterState {
@@ -21,6 +20,8 @@ export interface RosterState {
     readonly unseenCount: number;
     /** The colleague whose detail fills the pane, or null. */
     readonly selectedId: string | null;
+    /** The selected colleague's card, kept fresh from the snapshot, for the detail header. */
+    readonly selectedCard: RosterCard | null;
     readonly muted: boolean;
     /** A clock for the elapsed labels, bumped on a slow timer. */
     readonly now: number;
@@ -31,6 +32,7 @@ const listeners = new Set<() => void>();
 
 let cards: readonly RosterCard[] = [];
 let selectedId: string | null = null;
+let selectedCard: RosterCard | null = null;
 let muted = false;
 let started = false;
 
@@ -39,14 +41,14 @@ let started = false;
  * stable reference between changes, so the object is rebuilt only in emit(), never per
  * call, and returned as-is otherwise.
  */
-let snapshot: RosterState = { cards: [], badged: new Set(), unseenCount: 0, selectedId: null, muted: false, now: Date.now() };
+let snapshot: RosterState = { cards: [], badged: new Set(), unseenCount: 0, selectedId: null, selectedCard: null, muted: false, now: Date.now() };
 
 function rebuild(): void {
     const badged = new Set<string>();
     for (const card of cards) {
         if (alerts.isBadged(card.id)) badged.add(card.id);
     }
-    snapshot = { cards, badged, unseenCount: alerts.unseenCount, selectedId, muted, now: Date.now() };
+    snapshot = { cards, badged, unseenCount: alerts.unseenCount, selectedId, selectedCard, muted, now: Date.now() };
 }
 
 function emit(): void {
@@ -57,6 +59,8 @@ function emit(): void {
 async function refresh(): Promise<void> {
     const next = await window.stafford.roster.snapshot();
     cards = next.cards;
+    // Keep the selected card fresh so the detail header follows a state change.
+    if (selectedId) selectedCard = cards.find((c) => c.id === selectedId) ?? selectedCard;
     const { sound } = alerts.update(cards);
     if (sound && !muted) playChime();
     emit();
@@ -72,11 +76,11 @@ export const rosterStore = {
         return snapshot;
     },
 
-    /** Opens a colleague's detail and marks its row selected. */
+    /** Selects a colleague, so the React detail pane shows it and its row reads selected. */
     select(card: RosterCard): void {
         selectedId = card.id;
+        selectedCard = card;
         emit();
-        void openDetail(card.id, card.name, card.role);
     },
 
     toggleMute(): void {
