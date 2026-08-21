@@ -2,19 +2,17 @@
  * The renderer bootstrap. It starts the live roster store (which owns the alert rules
  * and the roster:changed subscription for the whole session), wires the view switcher,
  * and mounts the three React islands: the home dashboard, the roster, and the channel
- * timeline. All of the main UI is React in the inset island shell now.
+ * timeline. All of the main UI is React in the inset island shell.
  *
- * The vanilla shell that remains (the rail, the header, the saved-work host) is the
- * launch container; the create-project and hire sheets are still vanilla modals, opened
- * from React. Each island is code-split, loaded the first time its view opens, so the
- * base bundle never carries React.
+ * The only vanilla left is the create-project and hire sheets, modals opened from React.
+ * Each island is code-split, loaded the first time its view opens, so the base bundle
+ * never carries React.
  */
 
 import type { StaffordApi } from '../preload/index.ts';
 import { rosterStore } from './roster/roster-store.ts';
-import { initCreateForms, openProjectForm, openHireForm } from './create-forms.ts';
+import { initCreateForms } from './create-forms.ts';
 import type { Lang } from './create-forms-view.ts';
-import { renderSavedWork } from './checkpoints.ts';
 
 const lang: Lang = typeof navigator !== 'undefined' && navigator.language.startsWith('fr') ? 'fr' : 'en';
 
@@ -25,17 +23,17 @@ declare global {
 }
 
 function main(): void {
-    // The alert rules run for the whole session, not only while the roster is on
-    // screen, so a chime and a badge still fire when the person is on another view.
+    // The alert rules run for the whole session, not only while the roster is on screen,
+    // so a chime and a badge still fire when the person is on another view. The saved-work
+    // notice is React now (the roster island), so it is no longer surfaced from here.
     rosterStore.start();
 
-    // The three React islands. Each is a flex child that fills the window when active;
-    // the vanilla rail and content are hidden outright then, so nothing bleeds through
-    // and there is no stacking order to fight.
+    // The three React islands. Each fills the window when its view is active and is hidden
+    // otherwise; only one is ever shown. Each island renders the shared AppShell, so the
+    // rail lives in one component.
     const homeView = document.getElementById('home') as HTMLElement;
     const rosterView = document.getElementById('roster-react') as HTMLElement;
     const channelView = document.getElementById('channel-react') as HTMLElement;
-    const appEl = document.querySelector('.app') as HTMLElement;
     let dashboardMounted = false;
     let rosterMounted = false;
     let channelMounted = false;
@@ -44,14 +42,9 @@ function main(): void {
         const isHome = view === 'home';
         const isRoster = view === 'roster';
         const isChannel = view === 'channel';
-        // Every main view is a React island now, so the vanilla chrome is always hidden.
-        appEl.classList.toggle('island-active', isHome || isRoster || isChannel);
         homeView.hidden = !isHome;
         rosterView.hidden = !isRoster;
         channelView.hidden = !isChannel;
-        for (const item of document.querySelectorAll('.rail-item')) {
-            item.classList.toggle('active', item.getAttribute('data-view') === view);
-        }
 
         if (isHome && !dashboardMounted) {
             dashboardMounted = true;
@@ -85,27 +78,10 @@ function main(): void {
         }
     };
 
-    for (const item of document.querySelectorAll('.rail-item')) {
-        item.addEventListener('click', () => showView(item.getAttribute('data-view') ?? 'roster'));
-    }
-
-    // On launch, quietly surface any work a drain saved, so a save nobody could find
-    // becomes findable. Read-only, off the drain report; dismissing marks it seen.
-    const savedHost = document.getElementById('saved-work') as HTMLElement;
-    void window.stafford.checkpoints.saved().then((data) => {
-        if (data && data.saves.length > 0) {
-            renderSavedWork(savedHost, data, lang, () => { void window.stafford.checkpoints.ack(data.drainId); });
-        }
-    });
-
-    // The create forms. A successful create does not emit a state transition, so the
-    // store is reloaded directly rather than waiting for a roster:changed that will not
-    // come. The sheets stay vanilla, opened from either the React roster or the header.
+    // The create forms stay vanilla sheets, opened from the React roster. A successful
+    // create does not emit a state transition, so the store is reloaded directly rather
+    // than waiting for a roster:changed that will not come.
     initCreateForms({ onCreated: () => { rosterStore.reload(); } });
-    (document.getElementById('add-project-header') as HTMLButtonElement)
-        .addEventListener('click', () => openProjectForm());
-    (document.getElementById('hire-header') as HTMLButtonElement)
-        .addEventListener('click', () => { void openHireForm(); });
 
     // The roster is the default view: mount and show it now.
     showView('roster');

@@ -58,10 +58,12 @@ async function main() {
     await win.loadURL('http://127.0.0.1:' + port + '/' + PAGE);
     await new Promise((r) => setTimeout(r, 1200));
     if (VIEW) {
+        // The nav lives in the shared React AppShell now; its sidebar items carry the
+        // data-view the old vanilla rail did, so the harness drives navigation the same way.
         await win.webContents.executeJavaScript(
-            "document.querySelector('.rail-item[data-view=\"" + VIEW + "\"]').click()"
+            "document.querySelector('[data-view=\"" + VIEW + "\"]').click()"
         );
-        // The dashboard is dynamically imported and React mounts, so give it longer.
+        // The island is dynamically imported and React mounts, so give it longer.
         await new Promise((r) => setTimeout(r, 2500));
     }
     const image = await win.webContents.capturePage();

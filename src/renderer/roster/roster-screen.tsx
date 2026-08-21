@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { LayoutDashboard, Users, MessageSquare, BellOff, Bell, Plus, UserPlus } from 'lucide-react';
-import { Sidebar, SidebarSection, SidebarItem } from '@/components/ui/sidebar';
+import { BellOff, Bell, Plus, UserPlus } from 'lucide-react';
+import { AppShell } from '@/components/app-shell';
 import { List, ListRow } from '@/components/ui/list';
 import { StatusDot } from '@/components/ui/status-dot';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { buildRosterGroups, type RosterRow } from './roster-model.ts';
+import { SavedWorkBanner } from './saved-work-banner.tsx';
 import { DetailPane } from '../detail/detail-pane.tsx';
 import type { RosterState } from './roster-store.ts';
 import type { RosterCard } from '../../shared/ipc.ts';
@@ -91,15 +92,10 @@ export function RosterScreen({
     const empty = state.cards.length === 0;
 
     return (
-        <div className="dashboard-scope flex h-full min-h-0 w-full gap-2 p-2">
-            <Sidebar>
-                <SidebarSection>Stafford</SidebarSection>
-                <SidebarItem active={current === 'home'} onClick={() => onNavigate('home')}><LayoutDashboard /> Home</SidebarItem>
-                <SidebarItem active={current === 'roster'} onClick={() => onNavigate('roster')}><Users /> Roster</SidebarItem>
-                <SidebarItem active={current === 'channel'} onClick={() => onNavigate('channel')}><MessageSquare /> Channel</SidebarItem>
-            </Sidebar>
-
-            <div className="flex min-w-0 flex-1 gap-2">
+        <AppShell current={current} onNavigate={onNavigate}>
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+                <SavedWorkBanner lang={lang} />
+                <div className="flex min-h-0 flex-1 gap-2">
                 <section
                     data-slot="content-panel"
                     className="bg-card text-card-foreground flex w-full shrink-0 basis-[clamp(320px,36%,460px)] flex-col overflow-hidden rounded-xl border"
@@ -157,7 +153,8 @@ export function RosterScreen({
                 </section>
 
                 <DetailPane selected={state.selectedCard} cards={state.cards} lang={lang} />
+                </div>
             </div>
-        </div>
+        </AppShell>
     );
 }

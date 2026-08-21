@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { Users, CircleDot, CircleCheck, FolderGit2, LayoutDashboard, MessageSquare } from 'lucide-react';
+import { Users, CircleDot, CircleCheck, FolderGit2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { StatusDot } from '@/components/ui/status-dot';
 import { List, ListRow } from '@/components/ui/list';
-import { Sidebar, SidebarSection, SidebarItem } from '@/components/ui/sidebar';
+import { AppShell } from '@/components/app-shell';
 import { statusForState, type Overview } from './dashboard-data.ts';
 import type { RosterCard } from '../../shared/ipc.ts';
 
@@ -62,14 +62,7 @@ export function DashboardView({ overview, current, onNavigate }: {
     onNavigate: (view: string) => void;
 }): React.JSX.Element {
     return (
-        <div className="dashboard-scope flex h-full min-h-0 w-full gap-2 p-2">
-            <Sidebar>
-                <SidebarSection>Stafford</SidebarSection>
-                <SidebarItem active={current === 'home'} onClick={() => onNavigate('home')}><LayoutDashboard /> Home</SidebarItem>
-                <SidebarItem active={current === 'roster'} onClick={() => onNavigate('roster')}><Users /> Roster</SidebarItem>
-                <SidebarItem active={current === 'channel'} onClick={() => onNavigate('channel')}><MessageSquare /> Channel</SidebarItem>
-            </Sidebar>
-
+        <AppShell current={current} onNavigate={onNavigate}>
             <main data-slot="content-panel" className="bg-card text-card-foreground min-w-0 flex-1 overflow-auto rounded-xl border">
                 <div className="mx-auto flex max-w-6xl flex-col gap-10 px-8 py-10 md:px-12">
                     <header className="flex flex-col gap-1.5">
@@ -107,6 +100,6 @@ export function DashboardView({ overview, current, onNavigate }: {
                     )}
                 </div>
             </main>
-        </div>
+        </AppShell>
     );
 }

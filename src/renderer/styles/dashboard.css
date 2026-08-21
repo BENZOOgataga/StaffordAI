@@ -151,6 +151,25 @@
     display: none !important;
 }
 
+/*
+ * De-webify, scoped chrome. Selecting the rail labels, buttons, and quiet tags means
+ * nothing, and a stray text selection over them reads as a web page, so the chrome is
+ * not selectable. Message text, list rows, and the saved-work branch stay selectable so
+ * content still copies. Focus is an on-theme ring in the scope's ring token, replacing
+ * the browser's default outline, and stays visible on every focusable element (the ring
+ * token, not the default blue). The primitives that also draw their own ring keep it.
+ */
+.dashboard-scope [data-slot="sidebar"],
+.dashboard-scope [data-slot="button"],
+.dashboard-scope [data-slot="sidebar-item"],
+.dashboard-scope [data-slot="badge"] {
+    user-select: none;
+}
+.dashboard-scope :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .dashboard-scope *,
     .dashboard-scope ::before,
