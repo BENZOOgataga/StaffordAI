@@ -118,9 +118,26 @@
  */
 .dashboard-scope [data-slot="card"],
 .dashboard-scope [data-slot="list"],
+.dashboard-scope [data-slot="sidebar"],
+.dashboard-scope [data-slot="content-panel"],
 .dashboard-scope [data-slot="input"],
 .dashboard-scope [data-slot="textarea"] {
     border-color: var(--border);
+}
+
+/*
+ * Vanilla-shell bleed guard. index.html styles a bare `header` (its sticky app top bar:
+ * dark fill, a bottom border, padding, z-index) with an unlayered tag rule, so it leaks
+ * into the dashboard's own <header>, which lives inside the same vanilla document. This
+ * scoped selector outranks the tag rule and returns the header to a plain block, so it
+ * sits flat on the content panel like the rest of the dashboard.
+ */
+.dashboard-scope header {
+    position: static;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    z-index: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

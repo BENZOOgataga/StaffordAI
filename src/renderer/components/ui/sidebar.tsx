@@ -12,7 +12,7 @@ function Sidebar({ className, ...props }: React.ComponentProps<'nav'>): React.JS
     return (
         <nav
             data-slot="sidebar"
-            className={cn('bg-card text-card-foreground flex h-full w-56 flex-col gap-1 border-r p-3', className)}
+            className={cn('bg-card text-card-foreground flex h-full w-56 flex-col gap-1 rounded-xl border p-3', className)}
             {...props}
         />
     );
