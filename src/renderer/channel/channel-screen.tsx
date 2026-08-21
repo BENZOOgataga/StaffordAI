@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { LayoutDashboard, Users, MessageSquare } from 'lucide-react';
-import { Sidebar, SidebarSection, SidebarItem } from '@/components/ui/sidebar';
+import { AppShell } from '@/components/app-shell';
 import { ConversationThread } from '../detail/conversation-thread.tsx';
 import { buildThread } from '../detail/conversation-model.ts';
 import { type Lang } from '../channel-view.ts';
@@ -65,14 +64,7 @@ export function ChannelScreen({ rows, cards, lang, current, onNavigate, onLoadOl
     }, [rows]);
 
     return (
-        <div className="dashboard-scope flex h-full min-h-0 w-full gap-2 p-2">
-            <Sidebar>
-                <SidebarSection>Stafford</SidebarSection>
-                <SidebarItem active={current === 'home'} onClick={() => onNavigate('home')}><LayoutDashboard /> Home</SidebarItem>
-                <SidebarItem active={current === 'roster'} onClick={() => onNavigate('roster')}><Users /> Roster</SidebarItem>
-                <SidebarItem active={current === 'channel'} onClick={() => onNavigate('channel')}><MessageSquare /> Channel</SidebarItem>
-            </Sidebar>
-
+        <AppShell current={current} onNavigate={onNavigate}>
             <section
                 data-slot="content-panel"
                 aria-label="Channel timeline"
@@ -95,6 +87,6 @@ export function ChannelScreen({ rows, cards, lang, current, onNavigate, onLoadOl
                     )}
                 </div>
             </section>
-        </div>
+        </AppShell>
     );
 }
