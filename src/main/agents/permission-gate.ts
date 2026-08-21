@@ -12,6 +12,7 @@
  */
 
 import path from 'node:path';
+import { realpathSync } from 'node:fs';
 import {
     resolvePermission, effectiveRules,
     type PermissionRule, type PermissionRequest, type CategoryDefaults
@@ -49,6 +50,16 @@ export interface PermissionGateDeps {
      */
     readonly normalisePath: (value: string) => string;
     /**
+     * Resolves a path's symlinks, i.e. `fs.realpathSync`. Injected so the gate is testable
+     * with a constructed filesystem, and defaulted because unlike the case rule there is one
+     * right answer here: resolve them.
+     *
+     * It exists because Claude Code reports a file's real path while Stafford held the path
+     * the person configured. On macOS `/tmp` and `/var` are symlinks into `/private`, so a
+     * project reached through one was refused its own files once the gate started deciding.
+     */
+    readonly realPath?: (value: string) => string;
+    /**
      * Handles an ask by pausing the turn on a pending approval until the person answers
      * (phase 2). When absent, an ask resolves as deny (the phase-1 behaviour), so the gate
      * degrades safely.
@@ -59,7 +70,19 @@ export interface PermissionGateDeps {
 interface Resolved {
     readonly rules: readonly PermissionRule[];
     readonly defaults: CategoryDefaults;
+    /**
+     * The repo root, symlink resolved but not case folded. Cached because every request path
+     * must be resolved against exactly the base the rule scopes were, and because resolving
+     * it per tool call would hit the filesystem on the hot path.
+     */
+    readonly rawRoot: string;
 }
+
+/**
+ * The real `realpath`. Native, so the answer matches what the operating system tells Claude
+ * Code, which is the whole point of comparing against it.
+ */
+const defaultRealPath = (value: string): string => realpathSync.native(value);
 
 /** Forward slashes, no trailing slash, so path comparison is stable across platforms. */
 function norm(p: string): string {
@@ -93,25 +116,90 @@ function fold(normalise: (value: string) => string, p: string): string {
     return normalise(norm(p));
 }
 
-/** Resolves a rule's stored scope to an absolute normalized path, against the repo root. */
-function resolveScope(normalise: (value: string) => string, repoRoot: string, scope: string): string {
-    return fold(normalise, path.isAbsolute(scope) ? scope : path.resolve(repoRoot, scope));
+/**
+ * The real path of `absolute`, resolving symlinks, for a path whose leaf may not exist yet.
+ *
+ * **A Write creates a file, so the thing being checked usually is not there.** `realpath`
+ * fails on a missing leaf, and treating that failure as "leave the path alone" is what made
+ * the symlink defect survive: the answer would be right for an existing file and wrong for a
+ * new one, which is the case a Write always takes.
+ *
+ * So this walks up to the deepest ancestor that does exist, resolves that, and re-appends the
+ * segments it peeled off. Creating `note.txt` in a symlinked project resolves the project
+ * directory and keeps the leaf, with no requirement that the file exist.
+ *
+ * Bounded, because a filesystem that answers strangely must not spin. If nothing at all
+ * resolves, the original path is returned and comparison falls back to the textual answer,
+ * which is the behaviour before this function existed.
+ */
+export function realPathWithMissingLeaf(
+    realpath: (value: string) => string, absolute: string
+): string {
+    let current = absolute;
+    const peeled: string[] = [];
+    for (let hops = 0; hops < 256; hops += 1) {
+        try {
+            const resolved = realpath(current);
+            if (peeled.length === 0) return resolved;
+            return path.join(resolved, ...peeled.reverse());
+        } catch {
+            const parent = path.dirname(current);
+            // At the root nothing above exists either, so there is nothing left to try.
+            if (parent === current) return absolute;
+            peeled.push(path.basename(current));
+            current = parent;
+        }
+    }
+    return absolute;
+}
+
+/**
+ * The one pipeline every path goes through before the resolver compares it: make it absolute,
+ * resolve symlinks, then apply the platform's case rule.
+ *
+ * **The order is load bearing and both steps are.** `path.resolve` first, so a traversal like
+ * `src/../outside` collapses to its true target before anything else looks at it. Then the
+ * symlink resolution, because Claude Code reports the real path of a file while Stafford held
+ * the path the person configured, and on macOS `/tmp` and `/var` are symlinks into `/private`,
+ * so a project reached through one was refused its own files. Then the case fold last, since
+ * folding before resolving would hand a lowercased path to a case-sensitive filesystem.
+ *
+ * Both the rule scopes and the request path go through this same function. Two paths compared
+ * after different pipelines is the defect this whole file keeps re-learning.
+ */
+function resolveForCompare(
+    normalise: (value: string) => string,
+    realpath: (value: string) => string,
+    base: string,
+    value: string
+): string {
+    const absolute = path.isAbsolute(value) ? path.resolve(value) : path.resolve(base, value);
+    return fold(normalise, realPathWithMissingLeaf(realpath, absolute));
 }
 
 function recordToRule(
-    record: PermissionRuleRecord, repoRoot: string, normalise: (value: string) => string
+    record: PermissionRuleRecord,
+    rawRoot: string,
+    normalise: (value: string) => string,
+    realpath: (value: string) => string
 ): PermissionRule {
     return {
         action: record.action,
-        pathScope: record.pathScope === null ? null : resolveScope(normalise, repoRoot, record.pathScope),
+        pathScope: record.pathScope === null
+            ? null
+            : resolveForCompare(normalise, realpath, rawRoot, record.pathScope),
         commandPattern: record.commandPattern,
         effect: record.effect
     };
 }
 
-/** Pulls the file path a path-bearing tool names, resolved absolute against the cwd. */
+/** Pulls the file path a path-bearing tool names, through the same pipeline the scopes took. */
 function requestPath(
-    toolName: string, input: unknown, cwd: string, normalise: (value: string) => string
+    toolName: string,
+    input: unknown,
+    rawRoot: string,
+    normalise: (value: string) => string,
+    realpath: (value: string) => string
 ): string | null {
     if (typeof input !== 'object' || input === null) return null;
     const i = input as Record<string, unknown>;
@@ -119,10 +207,7 @@ function requestPath(
     for (const key of keys) {
         const value = i[key];
         if (typeof value === 'string' && value.length > 0) {
-            // path.resolve first, so `src/../outside` becomes its true absolute path before
-            // anything compares it, then the platform fold. Order matters: folding a
-            // traversal would not collapse it.
-            return fold(normalise, path.resolve(cwd, value));
+            return resolveForCompare(normalise, realpath, rawRoot, value);
         }
     }
     return null;
@@ -176,36 +261,49 @@ export function makePermissionGate(deps: PermissionGateDeps): (ctx: TurnContext)
         if (cached) return cached;
 
         const normalise = deps.normalisePath;
-        const repoRoot = fold(normalise, ctx.cwd);
+        const realpath = deps.realPath ?? defaultRealPath;
+
+        // Two forms of the repo root, and the difference matters. `rawRoot` is symlink
+        // resolved but NOT case folded, because it is the base every relative path is
+        // resolved against and because it is handed back to realpath: feeding a lowercased
+        // path to a case-sensitive filesystem would simply fail to resolve. `repoRoot` is
+        // the folded form, which is what the rules compare against.
+        const rawRoot = realPathWithMissingLeaf(realpath, path.resolve(ctx.cwd));
+        const repoRoot = fold(normalise, rawRoot);
+
         const policy = deps.getPolicy(ctx.projectId);
         const writePaths = policy?.writePaths
-            ? policy.writePaths.map((p) => resolveScope(normalise, repoRoot, p))
+            ? policy.writePaths.map((p) => resolveForCompare(normalise, realpath, rawRoot, p))
             : null;
         const profile = defaultBaselineRules({
             repoRoot,
             writePaths,
-            // Folded like every other scope. These are the paths a colleague must never
-            // reach, so a fold applied everywhere except here would leave the one bypass
-            // that matters.
-            protectedPaths: deps.protectedPaths.map((p) => fold(normalise, p))
+            // Through the same pipeline as everything else. These are the paths a colleague
+            // must never reach, so resolving them differently is the one place a mismatch
+            // becomes a bypass rather than a false deny. A protected directory reached via a
+            // symlink still resolves to the real one and still protects it.
+            protectedPaths: deps.protectedPaths.map((p) => resolveForCompare(normalise, realpath, rawRoot, p))
         });
         const stored = deps.getStoredRules(ctx.projectId);
-        const storedBaseline = stored.filter((r) => r.hireId === null).map((r) => recordToRule(r, repoRoot, normalise));
-        const overrides = stored.filter((r) => r.hireId === ctx.hireId).map((r) => recordToRule(r, repoRoot, normalise));
+        const storedBaseline = stored.filter((r) => r.hireId === null)
+            .map((r) => recordToRule(r, rawRoot, normalise, realpath));
+        const overrides = stored.filter((r) => r.hireId === ctx.hireId)
+            .map((r) => recordToRule(r, rawRoot, normalise, realpath));
 
         const rules = effectiveRules([...profile, ...storedBaseline], overrides);
         const defaults = defaultCategoryDefaults(policy?.allowWebFetch ?? false);
-        const resolved: Resolved = { rules, defaults };
+        const resolved: Resolved = { rules, defaults, rawRoot };
         cache.set(key, resolved);
         return resolved;
     };
 
     return (ctx) => (toolName, input) => {
-        const { rules, defaults } = load(ctx);
+        const { rules, defaults, rawRoot } = load(ctx);
         const request: PermissionRequest = {
             action: toolCategory(toolName),
-            // Folded the same way the rule scopes were. Both sides or neither.
-            path: requestPath(toolName, input, fold(deps.normalisePath, ctx.cwd), deps.normalisePath),
+            // The same pipeline the scopes took, against the same resolved root. Both sides
+            // or neither, which is the rule this file exists to keep.
+            path: requestPath(toolName, input, rawRoot, deps.normalisePath, deps.realPath ?? defaultRealPath),
             command: requestCommand(input)
         };
         const effect = resolvePermission(rules, request, defaults);
