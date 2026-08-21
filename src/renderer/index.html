@@ -366,6 +366,19 @@
   #roster-react[hidden] { display: none; }
   #channel-react { flex: 1 1 auto; min-width: 0; height: 100vh; overflow: hidden; }
   #channel-react[hidden] { display: none; }
+
+  /* The custom title bar on a frameless window. A thin fixed bar at the top; the whole
+     bar is an OS drag region (app-drag), the buttons opt out (app-no-drag) so they click.
+     The renderer adds .has-titlebar only when the window is frameless, so a native-framed
+     window (macOS) keeps the full height and shows no bar. */
+  .app-drag { -webkit-app-region: drag; }
+  .app-no-drag { -webkit-app-region: no-drag; }
+  #titlebar { position: fixed; top: 0; left: 0; right: 0; height: 32px; z-index: 20; }
+  #titlebar[hidden] { display: none; }
+  .has-titlebar .app { margin-top: 32px; }
+  .has-titlebar #home,
+  .has-titlebar #roster-react,
+  .has-titlebar #channel-react { height: calc(100vh - 32px); }
   .rail {
     flex: 0 0 clamp(140px, 16%, 200px);
     display: flex;
@@ -762,6 +775,7 @@
   :focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
 </style>
 
+<div id="titlebar" class="dashboard-scope" hidden aria-label="Title bar"></div>
 <div class="app">
   <div id="home" class="dashboard-scope" hidden aria-label="Home dashboard"></div>
   <div id="roster-react" class="dashboard-scope" hidden aria-label="Roster"></div>

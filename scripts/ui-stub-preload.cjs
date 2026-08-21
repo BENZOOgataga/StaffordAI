@@ -25,5 +25,15 @@ contextBridge.exposeInMainWorld('stafford', {
         conversation: async () => ({ rows: [] }), reply: async () => {}, onChanged: unsub
     },
     activity: { byHire: async () => ({ rows: [] }), onAppended: unsub },
-    checkpoints: { saved: async () => null, ack: async () => {} }
+    checkpoints: { saved: async () => null, ack: async () => {} },
+    // Frameless like the real Windows app, so the harness renders the custom title bar.
+    // The control methods are no-ops here; the real controls are proven in a real window.
+    win: {
+        frameless: true,
+        minimize: async () => {},
+        toggleMaximize: async () => false,
+        close: async () => {},
+        isMaximized: async () => false,
+        onMaximizeChange: unsub
+    }
 });

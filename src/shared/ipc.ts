@@ -45,6 +45,34 @@ export function isEventChannel(name: unknown): name is EventChannel {
     return typeof name === 'string' && (EVENT_CHANNELS as readonly string[]).includes(name);
 }
 
+/**
+ * The window-control channels, a separate allowlist from the data IPC above. These act on
+ * the BrowserWindow chrome (minimize, maximize/restore, close, and the maximized-state
+ * query and change signal) for the custom frameless title bar, not on the store, so they
+ * are kept out of the data handler map and its coverage. close routes through the window's
+ * existing close handler, which hides to the tray rather than quitting, so the frameless
+ * title bar preserves the tray-resident behaviour.
+ */
+export const WINDOW_INVOKE_CHANNELS = [
+    'window:minimize',
+    'window:toggle-maximize',
+    'window:close',
+    'window:is-maximized'
+] as const;
+
+export const WINDOW_EVENT_CHANNELS = ['window:maximized-changed'] as const;
+
+export type WindowInvokeChannel = (typeof WINDOW_INVOKE_CHANNELS)[number];
+export type WindowEventChannel = (typeof WINDOW_EVENT_CHANNELS)[number];
+
+export function isWindowInvokeChannel(name: unknown): name is WindowInvokeChannel {
+    return typeof name === 'string' && (WINDOW_INVOKE_CHANNELS as readonly string[]).includes(name);
+}
+
+export function isWindowEventChannel(name: unknown): name is WindowEventChannel {
+    return typeof name === 'string' && (WINDOW_EVENT_CHANNELS as readonly string[]).includes(name);
+}
+
 export interface HealthReport {
     readonly ok: boolean;
     readonly platform: string;
