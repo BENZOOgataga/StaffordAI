@@ -102,7 +102,14 @@ export function RosterScreen({
                     data-slot="content-panel"
                     className="bg-card text-card-foreground flex w-full shrink-0 basis-[clamp(320px,36%,460px)] flex-col overflow-hidden rounded-xl border"
                 >
-                    <div className="border-border flex items-center gap-2 border-b px-4 py-3">
+                    {/* Wraps, because this row does not fit. The panel is clamped to at most
+                        460px and as little as 320px, and the title plus both buttons plus the
+                        bell overflow that on a narrow window, where the panel's overflow-hidden
+                        clips them against its own border. Wrapping rather than shrinking is the
+                        right answer here because the labels are translated: the French ones are
+                        longer than the English, so any layout that only just fits in English is
+                        already broken in French. */}
+                    <div className="border-border flex flex-wrap items-center gap-2 border-b px-4 py-3">
                         {state.unseenCount > 0 ? (
                             <span className="text-status-waiting text-sm font-medium">
                                 {state.unseenCount === 1 ? '1 waiting for you' : state.unseenCount + ' waiting for you'}
@@ -110,19 +117,23 @@ export function RosterScreen({
                         ) : (
                             <h1 className="text-sm font-semibold tracking-tight">Roster</h1>
                         )}
-                        <span className="flex-1" />
-                        <Button variant="secondary" size="sm" onClick={onAddProject}><Plus /> {copy.addProject}</Button>
-                        <Button size="sm" onClick={onHire}><UserPlus /> {copy.hire}</Button>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-pressed={state.muted}
-                            aria-label={state.muted ? 'Unmute' : 'Mute'}
-                            onClick={onToggleMute}
-                            className="size-8"
-                        >
-                            {state.muted ? <BellOff /> : <Bell />}
-                        </Button>
+                        {/* ml-auto keeps the controls right-aligned whether they sit beside the
+                            title or wrap onto their own line, which a flex-1 spacer could not do
+                            once wrapping is allowed. */}
+                        <div className="ml-auto flex items-center gap-2">
+                            <Button variant="secondary" size="sm" onClick={onAddProject}><Plus /> {copy.addProject}</Button>
+                            <Button size="sm" onClick={onHire}><UserPlus /> {copy.hire}</Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-pressed={state.muted}
+                                aria-label={state.muted ? 'Unmute' : 'Mute'}
+                                onClick={onToggleMute}
+                                className="size-8"
+                            >
+                                {state.muted ? <BellOff /> : <Bell />}
+                            </Button>
+                        </div>
                     </div>
 
                     <div className="min-h-0 flex-1 overflow-y-auto p-3">
