@@ -170,3 +170,95 @@ test('condition 2: the managed dir is outside every project repo, so it cannot e
         }
     }
 });
+
+/**
+ * The macOS credential path.
+ *
+ * The seed used to assume a Mac needed nothing: the credential lived in Keychain, Keychain
+ * was global, so an absent file was fine. Measured 2026-08-21 and the assumption was wrong.
+ * With CLAUDE_CONFIG_DIR set, Claude Code does not consult Keychain at all, so an isolated
+ * colleague was never authenticated and every turn answered "Not logged in". These cover the
+ * second source that fixes it, and the conditions that keep the token from leaking.
+ */
+
+const MANAGED_CRED = MANAGED + '/.credentials.json';
+
+test('macOS: with no credential file, the OS store is read and seeded into the managed dir', () => {
+    const fs = fakeFs();
+    const result = seedManagedConfig(
+        { ...deps(fs), readOsCredential: () => 'KEYCHAIN-TOKEN-BYTES' }, CWD
+    );
+
+    assert.equal(result.credentialFromOsStore, true);
+    assert.equal(result.credentialCopied, false, 'no file existed, so nothing was copied');
+    assert.equal(fs.readText(MANAGED_CRED), 'KEYCHAIN-TOKEN-BYTES');
+});
+
+test('macOS: the seeded credential is owner-only (0600), same condition as a copied one', () => {
+    const fs = fakeFs();
+    seedManagedConfig({ ...deps(fs), readOsCredential: () => 'KEYCHAIN-TOKEN-BYTES' }, CWD);
+    assert.equal(fs.modeOf(MANAGED_CRED), MANAGED_FILE_MODE);
+});
+
+test('a real credential file wins, so Windows and Linux never touch the OS store', () => {
+    const fs = fakeFs({ [REAL_CRED]: 'FILE-TOKEN-BYTES' });
+    let storeRead = false;
+    const result = seedManagedConfig(
+        { ...deps(fs), readOsCredential: () => { storeRead = true; return 'KEYCHAIN-TOKEN-BYTES'; } }, CWD
+    );
+
+    assert.equal(storeRead, false, 'the file is authoritative; the store must not even be consulted');
+    assert.equal(result.credentialCopied, true);
+    assert.equal(result.credentialFromOsStore, false);
+    assert.equal(fs.readText(MANAGED_CRED), 'FILE-TOKEN-BYTES');
+});
+
+test('an empty or missing OS credential warns and writes nothing, rather than seeding a blank', () => {
+    const fs = fakeFs();
+    const warnings: string[] = [];
+    const result = seedManagedConfig(
+        { ...deps(fs), readOsCredential: () => null, warn: (m) => warnings.push(m) }, CWD
+    );
+
+    assert.equal(result.credentialFromOsStore, false);
+    assert.equal(fs.files.has(MANAGED_CRED), false, 'a blank credential file would look like auth and is worse than none');
+    assert.equal(warnings.length, 1, 'the person has to be told why the colleague will not answer');
+});
+
+test('a throwing OS store is treated as absent, so a locked Keychain cannot break the seed', () => {
+    const fs = fakeFs();
+    const result = seedManagedConfig(
+        { ...deps(fs), readOsCredential: () => { throw new Error('User canceled the operation'); },
+            warn: () => { /* expected */ } }, CWD
+    );
+
+    assert.equal(result.credentialFromOsStore, false);
+    assert.equal(fs.files.has(MANAGED_CRED), false);
+});
+
+test('the seed result carries booleans only, so no log line can ever carry the token', () => {
+    const fs = fakeFs();
+    const result = seedManagedConfig(
+        { ...deps(fs), readOsCredential: () => 'KEYCHAIN-TOKEN-BYTES' }, CWD
+    );
+
+    const serialised = JSON.stringify(result);
+    assert.ok(!serialised.includes('KEYCHAIN-TOKEN-BYTES'),
+        'SeedResult is what gets logged, so it must never contain the credential');
+    assert.deepEqual(Object.keys(result).sort(),
+        ['credentialCopied', 'credentialFromOsStore', 'credentialMode', 'dirMode']);
+});
+
+test('a failed OS read never puts the underlying reason in the warning', () => {
+    const fs = fakeFs();
+    const warnings: string[] = [];
+    seedManagedConfig(
+        { ...deps(fs), readOsCredential: () => { throw new Error('secret-bearing failure detail'); },
+            warn: (m) => warnings.push(m) }, CWD
+    );
+
+    for (const w of warnings) {
+        assert.ok(!w.includes('secret-bearing failure detail'),
+            'an error from a credential read is the most likely place for a token to leak into a log');
+    }
+});

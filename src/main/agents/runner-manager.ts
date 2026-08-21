@@ -81,6 +81,12 @@ export interface RunnerManagerDeps {
     readonly reapChild?: (pid: number) => void;
     /** The spawn seam, passed to each ClaudeRunner. Defaults to node's spawn. */
     readonly spawn?: SpawnFn;
+    /**
+     * Whether each turn's child is spawned into its own process group. Comes from
+     * `platform.managedChildSpawnOptions()`. Omitted means true, the safe value, since the
+     * tree reap below kills by group and a shared group would include Stafford.
+     */
+    readonly detached?: boolean;
     /** The permission seam. Defaults to auto-approve. */
     readonly canUseTool?: CanUseTool;
     /**
@@ -209,6 +215,7 @@ export class ClaudeRunnerManager {
                 ? this.#deps.makeCanUseTool({ hireId, cwd: target.cwd, projectId: target.projectId })
                 : (this.#deps.canUseTool ?? autoApproveTool),
             ...(this.#deps.spawn ? { spawn: this.#deps.spawn } : {}),
+            ...(this.#deps.detached !== undefined ? { detached: this.#deps.detached } : {}),
             ...(this.#deps.timeoutMs !== undefined ? { timeoutMs: this.#deps.timeoutMs } : {}),
             // Reap the whole tree when a turn's child is disposed, so no tool grandchild
             // is orphaned. Falls back to the runner's single-pid kill if no reaper is set.

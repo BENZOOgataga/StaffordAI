@@ -94,6 +94,33 @@ export const darwin: Platform = {
         return posixKillTreePlan(pid);
     },
 
+    managedChildSpawnOptions(): { readonly detached: boolean } {
+        // True, and the reason is the bug this shipped with. Without it the child
+        // inherits Stafford's process group, so the group kill above targets
+        // Stafford. Measured 2026-08-21: the group killTree selected contained
+        // /bin/zsh, the Electron process and the child, and one message killed
+        // all three.
+        return { detached: true };
+    },
+
+    osCredentialCommand(account: string): CommandSpec | null {
+        // The login Keychain, which is where Claude Code keeps the credential on a
+        // Mac. `-w` prints only the secret, so nothing else has to be parsed out of
+        // the output and no attribute dump goes anywhere near a log.
+        //
+        // The service name is the unsuffixed one on purpose. Claude Code also
+        // creates per-config-dir items named `Claude Code-credentials-<8 hex>`, and
+        // two exist on the reference Mac, but the suffix is undocumented and did
+        // not match a sha256, sha1 or md5 prefix of any candidate path. Writing the
+        // namespaced item would keep the token in Keychain and is the better shape,
+        // so it is worth revisiting if the derivation is ever published. It is not
+        // worth guessing: a wrong guess fails silently as "not logged in".
+        return {
+            file: 'security',
+            args: ['find-generic-password', '-w', '-s', 'Claude Code-credentials', '-a', account]
+        };
+    },
+
     processTreeCommand(): CommandSpec {
         // Trailing `=` on each column suppresses the header, so the output is
         // data with no line to skip.

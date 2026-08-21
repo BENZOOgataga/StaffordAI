@@ -116,6 +116,22 @@ export const win32: Platform = {
         };
     },
 
+    managedChildSpawnOptions(): { readonly detached: boolean } {
+        // False, and this is a decision rather than an omission. taskkill /T walks
+        // parent to child, so Windows never reads a process group and gains
+        // nothing from detaching. It would lose something: node's `detached` on
+        // Windows gives the child its own console window, which for a piped child
+        // spawned by a tray app is a visible regression. So the POSIX fix stops at
+        // the POSIX border instead of being applied everywhere for symmetry.
+        return { detached: false };
+    },
+
+    osCredentialCommand(_account: string): CommandSpec | null {
+        // Null. The credential is a file under the user profile that the seed
+        // already copies, and there is no store to read.
+        return null;
+    },
+
     processTreeCommand(): CommandSpec | null {
         // Null rather than a PowerShell equivalent, because there is nothing
         // here for the answer to check. Windows kills a tree with taskkill /T,

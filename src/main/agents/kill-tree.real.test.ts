@@ -24,6 +24,20 @@
  * PtySession.kill goes straight to node-pty. So this establishes that the
  * mechanism reaps grandchildren, and wiring it into teardown is the fix for the
  * runtime orphan, not a change to node-pty.
+ *
+ * **This file once carried a false claim, and the claim cost a shipped self-kill.**
+ * It used to say the root was spawned detached because "the runner spawns real agents
+ * into their own group for exactly this reason". The runner did no such thing: it
+ * spawned `claude` with no `detached`, so the child sat in Stafford's process group,
+ * and killTree, which kills every group in its snapshot, killed Stafford. Measured on
+ * macOS 2026-08-21: the targeted group held /bin/zsh, the Electron process and the
+ * child, so sending one message killed all three.
+ *
+ * The test passed throughout, because detaching its own root is what made the
+ * mechanism look correct. A test that arranges the precondition it is meant to be
+ * checking cannot fail. The invariant is now asserted where it is established, on the
+ * runner's own spawn options, in `claude-runner.test.ts`. What is left here is the
+ * mechanism, plus the guard below that holds when a spawn site is missed.
  */
 
 import test from 'node:test';
@@ -63,12 +77,11 @@ setInterval(() => {}, 1e9);
 
 // @real-machine
 test('killTree reaps a detached grandchild, not just the root', async () => {
-    // The root is spawned detached so it leads its own process group. This is
-    // not a detail: killTree kills every group in the tree, so a root sharing
-    // the test runner's group would take the runner down with it. The runner
-    // spawns real agents into their own group for exactly this reason, and the
-    // test has to match that or it kills itself, which it did once before this
-    // line was added.
+    // The root is spawned detached so it leads its own process group, which is
+    // the shape a managed child now really has (asserted on the runner's own
+    // spawn options in claude-runner.test.ts, not assumed here). A root sharing
+    // this process's group would be refused by the self-group guard rather than
+    // killing the test runner, which the next test covers directly.
     const parent = spawn(process.execPath, ['-e', PARENT_SCRIPT], {
         stdio: ['ignore', 'pipe', 'ignore'], detached: true
     });
@@ -101,4 +114,46 @@ test('killTree reaps a detached grandchild, not just the root', async () => {
     assert.equal(isAlive(grandPid), false,
         'the grandchild survived killTree, so a session teardown wired through it would orphan it');
     assert.equal(isAlive(parentPid), false, 'the root survived killTree');
+});
+
+/**
+ * The self-kill, reproduced on a real machine, and refused.
+ *
+ * This is the bug as it actually happened: a managed child spawned WITHOUT detached, so it
+ * inherits this process's group. Before the guard, killTree would collect that group from
+ * the snapshot and run `kill -KILL -<our own pgid>`, killing the test runner, and on the Mac
+ * it killed Electron, the dev server and the shell.
+ *
+ * The assertion that matters is the boring one at the end: this process is still alive. A
+ * test that fails by dying is not much of a test, so the refusal is checked directly too.
+ *
+ * Windows takes the wholeTree path and never reads a group, so there is nothing to refuse
+ * and the test asserts the shape it does take instead.
+ */
+// @real-machine
+test('killTree refuses to kill a group containing Stafford, rather than killing itself', async () => {
+    // Deliberately NOT detached. This is the defect's exact shape.
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)'], { stdio: 'ignore' });
+    const childPid = child.pid ?? 0;
+    assert.ok(childPid > 0, 'the child must be real');
+
+    const report = await killTree(PLATFORM, childPid, { warn: () => { /* quiet in tests */ } });
+
+    if (PLATFORM.killTreePlan(childPid).wholeTree) {
+        // Windows: taskkill /T resolves the tree itself, so no group is ever collected.
+        assert.deepEqual(report.refusedGroups, [], 'the group path does not run on this platform');
+    } else {
+        assert.ok(report.refusedGroups.length > 0,
+            'the child shares this process group, so killTree must refuse to kill that group');
+        assert.ok(!report.groups.includes(report.refusedGroups[0] as number),
+            'a refused group must never also appear in the killed set');
+    }
+
+    // The point of the whole guard.
+    assert.equal(isAlive(process.pid), true, 'killTree killed the process that called it');
+
+    // The child is still reaped, by exact pid through the survivor sweep, never by group.
+    for (let i = 0; i < 20 && isAlive(childPid); i += 1) await sleep(100);
+    assert.equal(isAlive(childPid), false,
+        'refusing the group must not mean abandoning the child: it is swept by exact pid');
 });
