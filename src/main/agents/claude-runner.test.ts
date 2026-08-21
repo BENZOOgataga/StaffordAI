@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
-    ClaudeRunner, autoApproveTool, HEADLESS_ARGS,
+    ClaudeRunner, autoApproveTool, HEADLESS_ARGS, PERMISSION_PROMPT_TOOL,
     type RunnerChild, type SpawnFn, type WireDirection
 } from './claude-runner.ts';
 import { makePermissionGate } from './permission-gate.ts';
@@ -468,4 +468,79 @@ test('dispose is idempotent and kills only the owned child', async () => {
     assert.equal(fake.killed(), true);
     assert.doesNotThrow(() => runner.dispose(), 'a second dispose is a no-op');
     assert.equal(runner.pid, null, 'no pid is owned after teardown');
+});
+
+/**
+ * The permission system is actually reached at runtime.
+ *
+ * These exist because everything below them passed while the gate was dormant. The
+ * resolver, the rules, allow/deny/ask and the approval flow were all built, unit tested
+ * and never once consulted, because a headless `-p` session decides tool permissions by
+ * itself unless it is told to ask its host. The visible symptom was a colleague that could
+ * not write a file; the real one was a permission system that governed nothing.
+ *
+ * This is the same shape as the kill-tree false negative: a mechanism that works, tested
+ * in isolation, wired to nothing. So these assert the wiring at the spawn, where it lives.
+ */
+
+test('the spawn asks Stafford for tool permission, which is what makes the gate reachable', () => {
+    const i = HEADLESS_ARGS.indexOf('--permission-prompt-tool');
+    assert.ok(i >= 0,
+        'without --permission-prompt-tool the CLI decides permissions itself and can_use_tool is ' +
+        'never sent, which silently disables the entire permission system.');
+    assert.equal(HEADLESS_ARGS[i + 1], PERMISSION_PROMPT_TOOL);
+    assert.equal(PERMISSION_PROMPT_TOOL, 'stdio',
+        'stdio is the sentinel that routes the decision over the control protocol. An ordinary ' +
+        'name is rejected as "must be an MCP tool".');
+});
+
+test('no --permission-mode is passed, because a mode defeats the prompt tool', () => {
+    assert.equal((HEADLESS_ARGS as readonly string[]).includes('--permission-mode'), false,
+        'measured: with --permission-mode auto set alongside the prompt tool, can_use_tool was ' +
+        'never sent, because auto approves before anything is asked. bypassPermissions is worse. ' +
+        'The default mode is the one that asks, so no mode is the correct answer.');
+});
+
+test('the real spawn carries the permission flag, not just the constant', async () => {
+    const fake = makeFakeSpawn();
+    const runner = new ClaudeRunner(baseDeps(fake));
+    const turn = runner.runTurn({ text: 'x' });
+    fake.emit('{"type":"result","is_error":false,"session_id":"s"}\n');
+    await turn;
+
+    const args = fake.args();
+    const i = args.indexOf('--permission-prompt-tool');
+    assert.ok(i >= 0, 'the flag must reach the actual child, not only the constant');
+    assert.equal(args[i + 1], 'stdio');
+});
+
+test('a can_use_tool request reaches the injected policy and its decision is written back', async () => {
+    const fake = makeFakeSpawn();
+    const asked: Array<{ tool: string; input: unknown }> = [];
+    const runner = new ClaudeRunner(baseDeps(fake, {
+        canUseTool: (tool: string, input: unknown) => {
+            asked.push({ tool, input });
+            return { behavior: 'deny', message: 'policy says no' };
+        }
+    }));
+
+    const turn = runner.runTurn({ text: 'x' });
+    fake.emit(JSON.stringify({
+        type: 'control_request', request_id: 'req-1',
+        request: { subtype: 'can_use_tool', tool_name: 'Write', input: { file_path: '/p/x.ts' } }
+    }) + '\n');
+    await tick(); await tick();
+    fake.emit('{"type":"result","is_error":false,"session_id":"s"}\n');
+    await turn;
+
+    assert.deepEqual(asked, [{ tool: 'Write', input: { file_path: '/p/x.ts' } }],
+        'the policy must see the real tool name and input, which is the vocabulary the rules use');
+
+    const response = fake.writes()
+        .map((w) => JSON.parse(w.trim()) as Record<string, unknown>)
+        .find((m) => m.type === 'control_response');
+    assert.ok(response, 'a decision must be written back, or the CLI waits forever');
+    const payload = (response.response as Record<string, unknown>).response as Record<string, unknown>;
+    assert.equal(payload.behavior, 'deny');
+    assert.equal(payload.message, 'policy says no');
 });

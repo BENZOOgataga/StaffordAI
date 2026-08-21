@@ -35,14 +35,52 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
-/** The fixed headless invocation, minus the binary and any per-turn resume. */
+/**
+ * The value of `--permission-prompt-tool` that routes a tool decision to us.
+ *
+ * `stdio` is not an MCP tool name, it is the sentinel that tells Claude Code to ask its host
+ * over the control protocol instead of deciding by itself. Passing an ordinary name fails with
+ * "must be an MCP tool"; passing this makes the CLI emit a `can_use_tool` control request that
+ * `#answerControlRequest` answers.
+ */
+export const PERMISSION_PROMPT_TOOL = 'stdio';
+
+/**
+ * The fixed headless invocation, minus the binary and any per-turn resume.
+ *
+ * **`--permission-prompt-tool` is load bearing and its absence made the whole permission
+ * system dormant.** Without it, a headless `-p` session decides tool permissions on its own
+ * and never asks. The observable symptom was a colleague that could not write a file
+ * ("The write was denied, permission to create note.txt wasn't granted"), and the invisible
+ * one was worse: the gate, the resolver, the allow/deny/ask rules and the approval UI were
+ * all built, tested and never once consulted. Measured 2026-08-21 in a packaged run.
+ *
+ * Measured across every mode, because the fix looked like a `--permission-mode` and is not:
+ *
+ * ```
+ * (no flags)                        can_use_tool=false  write refused by Claude Code
+ * --permission-mode auto            can_use_tool=false  write allowed by Claude Code
+ * --permission-mode acceptEdits     can_use_tool=false  write allowed by Claude Code
+ * --permission-mode bypassPermissions can_use_tool=false write allowed, gate irrelevant
+ * --permission-prompt-tool stdio    can_use_tool=TRUE   Stafford decides, write allowed
+ * ```
+ *
+ * So no permission mode routes the decision to us. Every one of them either refuses or
+ * approves without asking, which is the same defect wearing a different answer.
+ *
+ * **There is deliberately no `--permission-mode` here.** The default is the mode that asks,
+ * and `auto` actively defeats this flag: measured with both set, `can_use_tool` was never
+ * sent because auto approves before anything is asked. Adding a mode later, for any reason,
+ * silently disables the gate again.
+ */
 export const HEADLESS_ARGS = [
     '-p',
     '--output-format', 'stream-json',
     '--input-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--replay-user-messages'
+    '--replay-user-messages',
+    '--permission-prompt-tool', PERMISSION_PROMPT_TOOL
 ] as const;
 
 /** Overall per-turn cap. No turn waits longer than this for its `result`. */
