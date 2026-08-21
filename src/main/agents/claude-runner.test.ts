@@ -226,7 +226,8 @@ test('the permission gate wired at can_use_tool allows in scope and denies out o
         requirePipeline: false, allowWebFetch: true, permissionMode: 'default', maxConcurrentAgents: 1
     };
     const gate = makePermissionGate({
-        getPolicy: () => policy, getStoredRules: () => [], protectedPaths: [USERDATA]
+        getPolicy: () => policy, getStoredRules: () => [], protectedPaths: [USERDATA],
+        normalisePath: (v: string) => v
     })({ hireId: 'h1', cwd: CWD, projectId: 'p' });
 
     // Drive one control request through the real runner and read the decision it writes back.
@@ -259,6 +260,7 @@ test('an ask pauses the runner until answered: the decision is written only afte
     const registry = new ApprovalRegistry({ now: () => 't', uuid: () => 'aid', onChange: () => {}, onPending: () => {} });
     const gate = makePermissionGate({
         getPolicy: () => policy, getStoredRules: () => [], protectedPaths: [path.resolve('/userdata')],
+        normalisePath: (v: string) => v,
         onAsk: (r) => registry.ask(r)
     })({ hireId: 'h1', cwd: CWD, projectId: 'p' });
 

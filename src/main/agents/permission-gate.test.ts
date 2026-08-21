@@ -16,11 +16,17 @@ function policy(over: Partial<ProjectPolicy> = {}): ProjectPolicy {
     };
 }
 
+/**
+ * The phase-1 and phase-2 tests run with an identity fold, so they keep asserting exactly
+ * what they always asserted: the resolver's own behaviour, unchanged by the case fix. The
+ * platform-specific folding is covered separately at the bottom of this file.
+ */
 function gateFor(p: ProjectPolicy, onAsk?: (r: AskRequest) => Promise<AskOutcome>) {
     const g = makePermissionGate({
         getPolicy: () => p,
         getStoredRules: () => [],
         protectedPaths: [USERDATA],
+        normalisePath: (v: string) => v,
         ...(onAsk ? { onAsk } : {})
     });
     return g({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
@@ -82,4 +88,104 @@ test('with an ask handler, an approved ask allows and a denied ask denies with t
 test('fetch follows allowWebFetch: allowed when set, denied (ask fallback) when not', async () => {
     assert.equal(await behavior(gateFor(policy({ allowWebFetch: true }))('WebFetch', { url: 'https://example.com' })), 'allow');
     assert.equal(await behavior(gateFor(policy({ allowWebFetch: false }))('WebFetch', { url: 'https://example.com' })), 'deny');
+});
+
+// --------------------------------------------------------------------------
+// M1: the protected-path case bypass, and the platform rule that closes it.
+//
+// The gate compared paths case sensitively while macOS on APFS and Windows on NTFS are
+// case insensitive, so a case-varied spelling of a protected path named the same file and
+// missed the deny rule. Measured 2026-08-21 against the real gate: exact case denied,
+// lowercased allowed, case varied allowed, all three the same file. That directory holds
+// the permission store, the database and the managed credential.
+//
+// The fix folds both sides through platform.normalisePath. It is deliberately not a
+// toLowerCase: linux and a case-sensitive APFS volume have genuinely distinct files at
+// paths differing only in case, and folding there would make a write land somewhere else.
+// --------------------------------------------------------------------------
+
+/** The real folds, copied from the platform layer so this file needs no Electron. */
+const FOLD_CASE_INSENSITIVE = (v: string): string => v.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+const FOLD_CASE_SENSITIVE = (v: string): string => v.replace(/\/+$/, '');
+
+const MIXED_USERDATA = path.resolve('/UserData');
+
+function gateWithFold(normalisePath: (v: string) => string, protectedPath: string) {
+    return makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => [],
+        protectedPaths: [protectedPath],
+        normalisePath
+    })({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+}
+
+test('M1: on a case-insensitive filesystem, every spelling of a protected path is denied', async () => {
+    const gate = gateWithFold(FOLD_CASE_INSENSITIVE, MIXED_USERDATA);
+    const spellings = [
+        MIXED_USERDATA,
+        MIXED_USERDATA.toLowerCase(),
+        MIXED_USERDATA.toUpperCase(),
+        path.resolve('/uSeRdAtA')
+    ];
+
+    for (const dir of spellings) {
+        const target = path.join(dir, 'stafford.db');
+        assert.equal(await behavior(gate('Read', { file_path: target })), 'deny',
+            'every spelling names the same real file, so every spelling must deny: ' + target);
+        assert.equal(await behavior(gate('Write', { file_path: target })), 'deny',
+            'a write bypass is worse than a read bypass: ' + target);
+    }
+});
+
+test('M1: the exact bypass from the findings report is closed', async () => {
+    // Before the fix this returned deny, allow, allow. All three name one file.
+    const gate = gateWithFold(FOLD_CASE_INSENSITIVE, MIXED_USERDATA);
+    const results = await Promise.all([
+        behavior(gate('Read', { file_path: path.join(MIXED_USERDATA, 'permissions.json') })),
+        behavior(gate('Read', { file_path: path.join(MIXED_USERDATA.toLowerCase(), 'permissions.json') })),
+        behavior(gate('Read', { file_path: path.join(path.resolve('/USERdata'), 'permissions.json') }))
+    ]);
+    assert.deepEqual(results, ['deny', 'deny', 'deny']);
+});
+
+test('M1: on linux the fold is NOT applied, since differently-cased paths are different files', async () => {
+    const gate = gateWithFold(FOLD_CASE_SENSITIVE, path.resolve('/UserData'));
+
+    // The protected path itself still denies.
+    assert.equal(await behavior(gate('Read', { file_path: path.resolve('/UserData') + '/stafford.db' })), 'deny');
+
+    // A differently-cased path is a genuinely different directory here, so it must NOT be
+    // swept into the protected scope. Folding it would deny access to an unrelated file,
+    // and the same error in the other direction is what makes a write land on the wrong path.
+    assert.equal(await behavior(gate('Read', { file_path: path.resolve('/userdata') + '/notes.txt' })), 'allow',
+        'a blanket lowercase would wrongly treat /userdata as the protected /UserData');
+});
+
+test('M1: the case fold does not defeat traversal resolution, which still happens first', async () => {
+    const gate = gateWithFold(FOLD_CASE_INSENSITIVE, MIXED_USERDATA);
+    // Resolves into the protected dir by traversal AND varies the case on the way.
+    const sneaky = path.join(CWD, 'src', '..', '..', 'UsErDaTa', 'stafford.db');
+    assert.equal(await behavior(gate('Read', { file_path: sneaky })), 'deny',
+        'path.resolve must collapse the traversal before the fold, or a traversal plus a case ' +
+        'variation would slip through both checks');
+});
+
+test('M1: folding both sides does not break an ordinary in-scope write', async () => {
+    // The failure mode of folding one side only: nothing matches and everything falls to
+    // the category default. This proves the normal path still resolves.
+    const gate = gateWithFold(FOLD_CASE_INSENSITIVE, MIXED_USERDATA);
+    assert.equal(await behavior(gate('Write', { file_path: path.join(CWD, 'src', 'index.ts') })), 'allow');
+    assert.equal(await behavior(gate('Read', { file_path: path.join(CWD, 'README.md') })), 'allow');
+});
+
+test('M1: a case-varied repo root still resolves its own write scope, on a folding platform', async () => {
+    const gate = makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => [],
+        protectedPaths: [MIXED_USERDATA],
+        normalisePath: FOLD_CASE_INSENSITIVE
+    })({ hireId: 'h1', cwd: path.resolve('/PROJ'), projectId: 'proj' });
+
+    assert.equal(await behavior(gate('Write', { file_path: path.resolve('/proj') + '/src/a.ts' })), 'allow',
+        'the cwd and the request differ only in case, so on macOS and Windows they are one repo');
 });

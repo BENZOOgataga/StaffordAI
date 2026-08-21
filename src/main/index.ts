@@ -472,6 +472,10 @@ function buildDelivery(store: HireStore): void {
         getPolicy: (projectId) => repositories?.projects.get(projectId)?.policy ?? null,
         getStoredRules: (projectId) => repositories?.permissionRules.forProject(projectId) ?? [],
         protectedPaths: [app.getPath('userData')],
+        // This platform's case rule for path comparison. Without it the deny rules above
+        // are case sensitive while macOS and Windows filesystems are not, so a colleague
+        // reaches the protected directory by varying the case of its path.
+        normalisePath: (value) => currentPlatform().normalisePath(value),
         // An ask pauses the turn on a pending approval until the person answers; without a
         // registry (should not happen once the store is open) it falls back to deny.
         onAsk: (request) => approvalRegistry
