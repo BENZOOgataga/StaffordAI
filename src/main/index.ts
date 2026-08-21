@@ -264,7 +264,36 @@ function resolveOpenBounds(): { bounds: Rect; min: { width: number; height: numb
     return { bounds, min: WINDOW_DEFAULTS.min };
 }
 
+/**
+ * Whether this process presents as an ordinary application right now.
+ *
+ * **On macOS this is what decides z-order, and getting it wrong is why the window sat on top
+ * of everything.** `app.dock.hide()` puts the process into the accessory activation policy,
+ * which is correct for a tray app with no window: no Dock tile, no application switcher
+ * entry. It is wrong the moment a real window is on screen, because an accessory process
+ * never becomes the active application, so it never properly resigns when I click another
+ * app, and its window keeps painting over whatever I just focused.
+ *
+ * There is no always-on-top flag anywhere in this file. The pin was a side effect of the
+ * activation policy, which is also why the application menu never installed on macOS: one
+ * call, two symptoms.
+ *
+ * So the policy follows the window rather than the process. Ordinary while a window is up,
+ * accessory again once the last one is gone, which keeps the tray-resident shape intact.
+ * `app.dock` exists only where there is a Dock, so this stays a capability check rather than
+ * a platform name and the platform-leak guard is satisfied.
+ */
+function presentAsOrdinaryApp(ordinary: boolean): void {
+    if (!app.dock) return;
+    if (ordinary) void app.dock.show();
+    else app.dock.hide();
+}
+
 function openWindow(): void {
+    // Ordinary first, then show. Raising a window while the process is still an accessory is
+    // what produced a window that came forward and then refused to go behind anything.
+    presentAsOrdinaryApp(true);
+
     if (window && !window.isDestroyed()) {
         window.show();
         window.focus();
@@ -330,13 +359,18 @@ function openWindow(): void {
     win.on('resize', rememberBounds);
     win.on('move', rememberBounds);
 
-    // Closing returns to the tray rather than quitting.
+    // Closing returns to the tray rather than quitting. Back to accessory as it goes, so a
+    // Stafford with no window is a tray icon and nothing else, which is the whole shape.
     win.on('close', (event) => {
         if (quitting) return;
         event.preventDefault();
         win.hide();
+        presentAsOrdinaryApp(false);
     });
-    win.on('closed', () => { if (window === win) window = null; });
+    win.on('closed', () => {
+        if (window === win) window = null;
+        presentAsOrdinaryApp(false);
+    });
 
     void win.loadURL(entry);
     window = win;
@@ -398,7 +432,29 @@ function notifyPermissionsChanged(): void {
 
 /** The paths a colleague must never reach, and the ones an edit gets warned about. */
 function protectedConfigPaths(): string[] {
-    return [app.getPath('userData')];
+    const home = os.homedir();
+    return [
+        // Stafford's own store: the permission rules, the database, and the managed
+        // credential. This is the invariant that a colleague never reaches its own policy.
+        app.getPath('userData'),
+
+        // My real credential directories, which were not covered and should have been.
+        // Read defaults to allow, so until now a colleague could read the actual Claude
+        // credential at ~/.claude/.credentials.json on Windows and Linux, which is the very
+        // token the managed config goes to such lengths to isolate. Isolating a session
+        // from my config while leaving my config readable was a gap, not a design.
+        //
+        // The rest are here for the same reason rather than out of thoroughness: each is a
+        // directory whose entire contents are credentials, so denying it costs a colleague
+        // nothing it needed for the work.
+        path.join(home, '.claude'),
+        path.join(home, '.ssh'),
+        path.join(home, '.aws'),
+        path.join(home, '.gnupg'),
+        path.join(home, '.docker'),
+        path.join(home, '.kube'),
+        path.join(home, '.config', 'gh')
+    ];
 }
 
 function ruleToView(r: PermissionRuleRecord): PermissionRuleView {
@@ -1029,11 +1085,10 @@ app.whenReady().then(async () => {
         }, 6000);
     }
 
-    // Out of the Dock, tray only. Keyed on the capability rather than the
-    // platform name: app.dock exists only where there is a Dock, which is
-    // macOS, so this needs no platform branch and the platform-leak guard stays
-    // satisfied.
-    if (app.dock) app.dock.hide();
+    // Out of the Dock at boot, because there is no window yet: Stafford starts as a tray
+    // icon. openWindow flips this back to an ordinary app while a window is up, so the
+    // window takes part in normal activation and yields z-order when I click another app.
+    presentAsOrdinaryApp(false);
 
     tray = installTray({
         createTray: () => new Tray(nativeImage.createEmpty()),

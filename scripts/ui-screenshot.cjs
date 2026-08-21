@@ -60,7 +60,7 @@ async function main() {
     const web = VIEW
         ? { offscreen: true, contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'ui-stub-preload.cjs') }
         : { offscreen: true };
-    const win = new BrowserWindow({ width: 1280, height: 900, show: false, webPreferences: web });
+    const win = new BrowserWindow({ width: Number(process.env.SHOT_W||1280), height: Number(process.env.SHOT_H||900), show: false, webPreferences: web });
     await win.loadURL('http://127.0.0.1:' + port + '/' + PAGE);
     await new Promise((r) => setTimeout(r, 1200));
     if (VIEW) {
