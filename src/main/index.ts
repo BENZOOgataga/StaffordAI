@@ -39,6 +39,7 @@ import { killTree } from './agents/kill-tree.ts';
 import { hireStoreOver, type HireStore } from './storage/hire-store.ts';
 import { assembleRoster } from './roster/snapshot.ts';
 import { ClaudeRunnerManager } from './agents/runner-manager.ts';
+import { makePermissionGate } from './agents/permission-gate.ts';
 import { locateClaude } from './agents/claude-locator.ts';
 import { savedNoticeFor } from './checkpoints/saved-work.ts';
 import fs from 'node:fs';
@@ -434,6 +435,17 @@ function buildDelivery(store: HireStore): void {
         join: (...parts) => path.join(...parts)
     };
 
+    // The permission gate: every tool call a colleague makes is resolved against the
+    // project's rules and the colleague's overrides at can_use_tool, allow or deny in
+    // phase 1 (an ask resolves as deny for now). The protected path is Stafford's own
+    // user-data directory, which holds the permission store, the database, and the managed
+    // credential, so a colleague can never read or write its own permission config.
+    const permissionGate = makePermissionGate({
+        getPolicy: (projectId) => repositories?.projects.get(projectId)?.policy ?? null,
+        getStoredRules: (projectId) => repositories?.permissionRules.forProject(projectId) ?? [],
+        protectedPaths: [app.getPath('userData')]
+    });
+
     // The headless delivery path. It routes a colleague's messages through the
     // stream-json ClaudeRunner: no pty, no typing, no readiness wait, no retry. It
     // seeds the managed config and passes CLAUDE_CONFIG_DIR for #61 isolation, resolves
@@ -443,6 +455,8 @@ function buildDelivery(store: HireStore): void {
         claudePath,
         claudeConfigDir: managedConfigDir,
         parentEnv: process.env,
+        // The permission policy, bound per turn to the hire, cwd, and project.
+        makeCanUseTool: permissionGate,
         // The same resolution the pty path used: cwd, project, and the resume id.
         resolveTarget: (hireId) => {
             const hire = repositories?.hires.get(hireId);

@@ -27,14 +27,16 @@
  */
 
 import type {
-    HiredAgent, Project, Task, PolicyLogEntry, DrainReportEntry, ChannelMessage, ActivityRecord
+    HiredAgent, Project, Task, PolicyLogEntry, DrainReportEntry, ChannelMessage, ActivityRecord,
+    PermissionRuleRecord
 } from '../../domain/models.ts';
 import type { ChannelCursor } from '../../shared/ipc.ts';
 import type { StorageDatabase, Statement } from './database.ts';
 import {
     hireToRow, hireFromRow, projectToRow, projectFromRow, taskToRow, taskFromRow,
     policyLogToRow, policyLogFromRow, drainReportToRow, drainReportFromRow,
-    channelMessageToRow, channelMessageFromRow, activityRecordToRow, activityRecordFromRow, type Row
+    channelMessageToRow, channelMessageFromRow, activityRecordToRow, activityRecordFromRow,
+    permissionRuleToRow, permissionRuleFromRow, type Row
 } from './mapping.ts';
 
 /** A page of a growing table. Both are required: there is no read-everything. */
@@ -323,6 +325,40 @@ export class ActivityRepository {
     }
 }
 
+/**
+ * Permission rules. Bounded by how many the user writes by hand per project, so a full
+ * read per project is offered. forProject returns the baseline (hire_id null) and every
+ * colleague override in one read, so a session loads a project's rules once and the pure
+ * resolver splits them. Only the user writes this table, through Stafford's own IPC.
+ */
+export class PermissionRuleRepository {
+    readonly #insert: Statement;
+    readonly #forProject: Statement;
+    readonly #deleteForProject: Statement;
+
+    constructor(db: StorageDatabase) {
+        this.#insert = db.prepare(
+            'INSERT INTO permission_rules (id, project_id, hire_id, action, path_scope, command_pattern, effect, created_at, created_by) ' +
+            'VALUES (@id, @project_id, @hire_id, @action, @path_scope, @command_pattern, @effect, @created_at, @created_by)');
+        this.#forProject = db.prepare('SELECT * FROM permission_rules WHERE project_id = ? ORDER BY created_at, id');
+        this.#deleteForProject = db.prepare('DELETE FROM permission_rules WHERE project_id = ?');
+    }
+
+    insert(rule: PermissionRuleRecord): void {
+        this.#insert.run(permissionRuleToRow(rule));
+    }
+
+    /** Every rule for a project: the baseline (hire_id null) and all colleague overrides. */
+    forProject(projectId: string): PermissionRuleRecord[] {
+        return rowsOf(this.#forProject, projectId).map(permissionRuleFromRow);
+    }
+
+    /** Removes every rule for a project. Used when replacing a project's rules wholesale. */
+    deleteForProject(projectId: string): void {
+        this.#deleteForProject.run(projectId);
+    }
+}
+
 /** Every repository, built once over one open database. */
 export interface Repositories {
     readonly hires: HireRepository;
@@ -332,6 +368,7 @@ export interface Repositories {
     readonly drainReports: DrainReportRepository;
     readonly channel: ChannelRepository;
     readonly activity: ActivityRepository;
+    readonly permissionRules: PermissionRuleRepository;
 }
 
 export function createRepositories(db: StorageDatabase): Repositories {
@@ -342,6 +379,7 @@ export function createRepositories(db: StorageDatabase): Repositories {
         policyLog: new PolicyLogRepository(db),
         drainReports: new DrainReportRepository(db),
         channel: new ChannelRepository(db),
-        activity: new ActivityRepository(db)
+        activity: new ActivityRepository(db),
+        permissionRules: new PermissionRuleRepository(db)
     };
 }

@@ -83,6 +83,12 @@ export interface RunnerManagerDeps {
     readonly spawn?: SpawnFn;
     /** The permission seam. Defaults to auto-approve. */
     readonly canUseTool?: CanUseTool;
+    /**
+     * Builds a per-turn permission seam bound to the hire, cwd, and project, so the policy
+     * can resolve the right project's rules and the colleague's overrides and resolve tool
+     * paths against the turn's cwd. Takes precedence over `canUseTool` when set.
+     */
+    readonly makeCanUseTool?: (ctx: { hireId: string; cwd: string; projectId: string }) => CanUseTool;
     /** Per-turn timeout, passed to each ClaudeRunner. */
     readonly timeoutMs?: number;
 }
@@ -196,7 +202,12 @@ export class ClaudeRunnerManager {
             claudePath: this.#deps.claudePath,
             cwd: target.cwd,
             env,
-            canUseTool: this.#deps.canUseTool ?? autoApproveTool,
+            // A per-turn policy seam bound to this hire and project when one is provided,
+            // else the manager-level seam, else auto-approve. This is where a tool call is
+            // governed by the permission policy for this colleague on this project.
+            canUseTool: this.#deps.makeCanUseTool
+                ? this.#deps.makeCanUseTool({ hireId, cwd: target.cwd, projectId: target.projectId })
+                : (this.#deps.canUseTool ?? autoApproveTool),
             ...(this.#deps.spawn ? { spawn: this.#deps.spawn } : {}),
             ...(this.#deps.timeoutMs !== undefined ? { timeoutMs: this.#deps.timeoutMs } : {}),
             // Reap the whole tree when a turn's child is disposed, so no tool grandchild

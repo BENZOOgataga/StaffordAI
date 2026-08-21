@@ -16,6 +16,7 @@
  */
 
 import type { AgentState } from './agent-state.ts';
+import type { PermissionAction, PermissionEffect } from './permissions.ts';
 
 /** How far an agent in a project is allowed to push. */
 export const PUSH_POLICIES = {
@@ -135,6 +136,25 @@ export interface PolicyLogEntry {
     projectId: string;
     before: Partial<ProjectPolicy>;
     after: Partial<ProjectPolicy>;
+}
+
+/**
+ * One stored permission rule (docs/plans/PERMISSION-SYSTEM.md). A null hireId is a project
+ * baseline rule; a set hireId is a colleague override on that project. The action, scope,
+ * pattern, and effect are the resolution shape from ./permissions.ts. Only the user writes
+ * these, through Stafford's own UI; a colleague session has no path to this table.
+ */
+export interface PermissionRuleRecord {
+    id: string;
+    projectId: string;
+    /** null means a project baseline rule; a value means a colleague override. */
+    hireId: string | null;
+    action: PermissionAction;
+    pathScope: string | null;
+    commandPattern: string | null;
+    effect: PermissionEffect;
+    createdAt: string;
+    createdBy: string;
 }
 
 /**

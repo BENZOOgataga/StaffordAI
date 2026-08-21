@@ -20,12 +20,14 @@
 
 import type {
     HiredAgent, Project, ProjectPolicy, ProjectRepo, Task, TaskOrigin, Approval, PolicyLogEntry,
-    DrainReportEntry, DrainOutcome, ChannelMessage, ChannelKind, ChannelRefKind, ActivityRecord, ActivityStatus
+    DrainReportEntry, DrainOutcome, ChannelMessage, ChannelKind, ChannelRefKind, ActivityRecord, ActivityStatus,
+    PermissionRuleRecord
 } from '../../domain/models.ts';
 import {
     PUSH_POLICIES, TASK_KINDS, APPROVAL_VERDICTS, DRAIN_OUTCOMES, CHANNEL_KINDS, CHANNEL_REF_KINDS, ACTIVITY_STATUSES
 } from '../../domain/models.ts';
 import { isAgentState } from '../../domain/agent-state.ts';
+import { PERMISSION_ACTIONS, PERMISSION_EFFECTS, type PermissionAction, type PermissionEffect } from '../../domain/permissions.ts';
 
 export type Row = Record<string, unknown>;
 
@@ -240,5 +242,29 @@ export function channelMessageFromRow(row: Row): ChannelMessage {
             ? null
             : { kind: oneOf<ChannelRefKind>(row, 'ref_kind', Object.values(CHANNEL_REF_KINDS)), value: str(row, 'ref_value') },
         at: str(row, 'at')
+    };
+}
+
+// --- permission rules ------------------------------------------------------
+
+export function permissionRuleToRow(r: PermissionRuleRecord): Row {
+    return {
+        id: r.id, project_id: r.projectId, hire_id: r.hireId,
+        action: r.action, path_scope: r.pathScope, command_pattern: r.commandPattern,
+        effect: r.effect, created_at: r.createdAt, created_by: r.createdBy
+    };
+}
+
+export function permissionRuleFromRow(row: Row): PermissionRuleRecord {
+    return {
+        id: str(row, 'id'),
+        projectId: str(row, 'project_id'),
+        hireId: nstr(row, 'hire_id'),
+        action: oneOf<PermissionAction>(row, 'action', PERMISSION_ACTIONS),
+        pathScope: nstr(row, 'path_scope'),
+        commandPattern: nstr(row, 'command_pattern'),
+        effect: oneOf<PermissionEffect>(row, 'effect', PERMISSION_EFFECTS),
+        createdAt: str(row, 'created_at'),
+        createdBy: str(row, 'created_by')
     };
 }
