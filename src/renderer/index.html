@@ -324,8 +324,15 @@
      so nothing can bleed through and there is no stacking order to fight. */
   #home { flex: 1 1 auto; min-width: 0; overflow: auto; }
   #home[hidden] { display: none; }
-  .app.home-active > .rail,
-  .app.home-active > .content { display: none !important; }
+  /* The roster is a second React island, alongside the home dashboard. It manages its
+     own inner scroll (list pane and detail pane each scroll), so the island itself does
+     not scroll. */
+  #roster-react { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  #roster-react[hidden] { display: none; }
+  /* A React island (Home or Roster) hides the vanilla rail and content outright, so
+     nothing bleeds through and there is no stacking order to fight. */
+  .app.island-active > .rail,
+  .app.island-active > .content { display: none !important; }
   .rail {
     flex: 0 0 clamp(140px, 16%, 200px);
     display: flex;
@@ -726,15 +733,12 @@
   </nav>
   <div class="content">
     <header>
-      <span id="waiting-count" class="waiting-count"></span>
       <span class="spacer"></span>
       <button id="add-project-header" class="header-btn" type="button">Add project</button>
       <button id="hire-header" class="header-btn" type="button">Hire</button>
-      <button id="mute" class="mute" type="button" aria-pressed="false">Mute</button>
     </header>
     <div id="saved-work" class="saved-work" hidden></div>
     <div id="workspace" class="workspace">
-      <main id="roster" class="roster" aria-live="polite"></main>
       <section id="detail-pane" class="detail-pane" aria-label="Colleague detail">
         <div id="detail-empty" class="detail-empty">
           <strong id="detail-empty-lead">Select a colleague</strong>
@@ -772,6 +776,7 @@
     </section>
   </div>
   <div id="home" class="dashboard-scope" hidden aria-label="Home dashboard"></div>
+  <div id="roster-react" class="dashboard-scope" hidden aria-label="Roster"></div>
 </div>
 
 <section id="project-sheet" class="sheet-backdrop" hidden aria-label="Add a project">
