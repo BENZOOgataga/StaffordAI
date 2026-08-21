@@ -13,7 +13,7 @@
 
 import type {
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
-    ProjectCreate, HireCreate
+    ProjectCreate, HireCreate, ApprovalAnswer
 } from '../shared/ipc.ts';
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -32,6 +32,14 @@ function isBoundedString(value: unknown, max: number): boolean {
 /** A timeline cursor: a bounded timestamp and id, never a path. */
 function isChannelCursor(value: unknown): value is ChannelCursor {
     return isObject(value) && isBoundedString(value.at, 64) && isBoundedString(value.id, 256);
+}
+
+/** The person's answer to a pending approval: a bounded id, a boolean, and an optional note. */
+export function isApprovalAnswer(value: unknown): value is ApprovalAnswer {
+    if (!isObject(value)) return false;
+    if (!isHireId(value.id)) return false;
+    if (typeof value.approve !== 'boolean') return false;
+    return value.note === null || (typeof value.note === 'string' && value.note.length <= 4096);
 }
 
 /** A page read. `before` is null for the newest page, or a cursor for scroll-back. */

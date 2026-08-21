@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { buildRosterGroups, type RosterRow } from './roster-model.ts';
 import { SavedWorkBanner } from './saved-work-banner.tsx';
+import { ApprovalsBanner } from '../approvals/approvals-banner.tsx';
 import { DetailPane } from '../detail/detail-pane.tsx';
 import type { RosterState } from './roster-store.ts';
 import type { RosterCard } from '../../shared/ipc.ts';
@@ -94,6 +95,7 @@ export function RosterScreen({
     return (
         <AppShell current={current} onNavigate={onNavigate}>
             <div className="flex min-w-0 flex-1 flex-col gap-2">
+                <ApprovalsBanner cards={state.cards} />
                 <SavedWorkBanner lang={lang} />
                 <div className="flex min-h-0 flex-1 gap-2">
                 <section
