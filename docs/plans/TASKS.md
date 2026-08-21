@@ -59,8 +59,14 @@ and records the reply into the conversation. A task instruction is a submit.
 
 The checkpoint executor already commits a colleague's tracked work to
 `stafford/checkpoint/<hire>/<timestamp>` through git plumbing over a temporary index, leaving the working tree,
-the real index, HEAD and the current branch untouched. A task's result can point at a branch of exactly this
-shape, so I do not need a new git mechanism to show what a colleague did.
+the real index, HEAD and the current branch untouched. A task's result reuses that mechanism, so I do not need
+a new git one to show what a colleague did.
+
+It does not reuse the name. Task results land on `stafford/task/<hire>/<task id>`, decided rather than left
+open, because a colleague that both works tasks and gets drained would otherwise accumulate branches under one
+prefix with nothing saying which is the result I am meant to review. The task id in the name also means a
+branch points back at its task without a lookup. This is a small change to `checkpointBranchName`, and it
+belongs in phase 1 rather than being discovered in phase 4.
 
 ## The task object
 
@@ -285,13 +291,6 @@ behaves consistently across a restart.
 Whether needs-you should be one badge or two. I have designed it as one state with two presentations. It might
 turn out that a task paused mid-work and a task awaiting review feel different enough to want separate signals
 on the roster. Cheap to split later, since it is a presentation change over one state.
-
-The relationship between a task's result branch and the drain's checkpoint branches. Both are
-`stafford/checkpoint/<hire>/<timestamp>` today. If a task checkpoints on completion and a drain also
-checkpoints, a colleague accumulates branches with no indication of which one is the task result I am supposed
-to review. I lean toward a distinct prefix for task results, something like `stafford/task/<hire>/<task id>`,
-so the branch name says what it is. That is a small change to `checkpointBranchName` and it should be decided
-in phase 1 rather than discovered in phase 4.
 
 How many turns the cap should be, and whether it is per project. Starting low is right, since the failure mode
 of too low is a review I did not need, and of too high is a colleague grinding unattended.
