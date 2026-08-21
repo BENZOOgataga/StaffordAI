@@ -189,3 +189,154 @@ test('M1: a case-varied repo root still resolves its own write scope, on a foldi
     assert.equal(await behavior(gate('Write', { file_path: path.resolve('/proj') + '/src/a.ts' })), 'allow',
         'the cwd and the request differ only in case, so on macOS and Windows they are one repo');
 });
+
+// --------------------------------------------------------------------------
+// The symlink false-deny. A project reached through a symlink was refused its own files,
+// because Claude Code reports a file's real path while the gate held the configured one.
+// It was pre-existing and invisible until PR 112 made the gate actually decide. macOS puts
+// /tmp and /var behind symlinks into /private, so it bit on the first real proof run.
+// --------------------------------------------------------------------------
+
+/** A constructed filesystem: `/link` is a symlink to `/real`. No disk involved. */
+const LINK_ROOT = path.resolve('/link');
+const REAL_ROOT = path.resolve('/real');
+const fakeRealpath = (v: string): string => {
+    const n = v.replace(/\\/g, '/');
+    const link = LINK_ROOT.replace(/\\/g, '/');
+    const real = REAL_ROOT.replace(/\\/g, '/');
+    if (n === link) return REAL_ROOT;
+    if (n.startsWith(link + '/')) return path.resolve(real + n.slice(link.length));
+    // Anything not under the link resolves to itself, like a path with no symlinks in it.
+    return v;
+};
+
+function gateAt(cwd: string, opts: { protectedPaths?: string[]; realPath?: (v: string) => string } = {}) {
+    return makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => [],
+        protectedPaths: opts.protectedPaths ?? [USERDATA],
+        normalisePath: (v: string) => v,
+        realPath: opts.realPath ?? fakeRealpath
+    })({ hireId: 'h1', cwd, projectId: 'proj' });
+}
+
+test('symlink: a project under a symlinked path can write its own files', async () => {
+    // The failing case. cwd is the symlink, Claude Code reports the real path.
+    const gate = gateAt(LINK_ROOT);
+    assert.equal(await behavior(gate('Write', { file_path: path.join(REAL_ROOT, 'note.txt') })), 'allow',
+        'the project was refused its own file because the two paths name one directory through ' +
+        'a symlink and were compared as text');
+});
+
+test('symlink: the missing leaf is handled, so creating a NEW file resolves', async () => {
+    // realpath throws on a path that does not exist, and a Write is always that case.
+    const gate = gateAt(LINK_ROOT, { realPath: (v) => {
+        if (/(note|fresh)\.txt$/.test(v)) throw new Error('ENOENT');
+        return fakeRealpath(v);
+    } });
+    assert.equal(await behavior(gate('Write', { file_path: path.join(REAL_ROOT, 'fresh.txt') })), 'allow',
+        'a file that does not exist yet must still resolve through its parent directory');
+});
+
+test('symlink: a deep new path under fresh directories still resolves to the project', async () => {
+    const gate = gateAt(LINK_ROOT, { realPath: (v) => {
+        if (v.replace(/\\/g, '/').includes('/newdir')) throw new Error('ENOENT');
+        return fakeRealpath(v);
+    } });
+    assert.equal(await behavior(gate('Write', { file_path: path.join(REAL_ROOT, 'newdir', 'deep', 'x.ts') })), 'allow');
+});
+
+test('symlink: resolution does NOT weaken protection, a protected path via a symlink still denies', async () => {
+    // The protected directory is configured through the symlink; the request arrives as the
+    // real path. Both must land on the same place or userData stops being protected.
+    const gate = gateAt(REAL_ROOT, { protectedPaths: [path.join(LINK_ROOT, 'userdata')] });
+    assert.equal(await behavior(gate('Read', { file_path: path.join(REAL_ROOT, 'userdata', 'stafford.db') })), 'deny',
+        'a protected path reached by its real name must still deny when it was configured by its link name');
+    assert.equal(await behavior(gate('Write', { file_path: path.join(REAL_ROOT, 'userdata', 'x') })), 'deny');
+});
+
+test('symlink: traversal protection still holds after resolution', async () => {
+    const gate = gateAt(LINK_ROOT);
+    assert.equal(await behavior(gate('Write', { file_path: path.join(LINK_ROOT, 'src', '..', '..', 'outside.txt') })), 'deny',
+        'path.resolve must still collapse the traversal before realpath, or resolution becomes an escape');
+});
+
+test('symlink: the case fold still applies on a folding platform, after resolution', async () => {
+    const gate = makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => [],
+        protectedPaths: [MIXED_USERDATA],
+        normalisePath: FOLD_CASE_INSENSITIVE,
+        realPath: (v) => v
+    })({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+
+    assert.equal(await behavior(gate('Read', { file_path: path.join(MIXED_USERDATA.toLowerCase(), 'db') })), 'deny',
+        'adding realpath must not undo the M1 case fold');
+});
+
+test('symlink: linux stays case sensitive after resolution', async () => {
+    const gate = makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => [],
+        protectedPaths: [path.resolve('/UserData')],
+        normalisePath: FOLD_CASE_SENSITIVE,
+        realPath: (v) => v
+    })({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+
+    assert.equal(await behavior(gate('Read', { file_path: path.resolve('/userdata') + '/notes.txt' })), 'allow',
+        'realpath must not smuggle in a case fold where paths of differing case are different files');
+});
+
+test('symlink: a filesystem that cannot resolve at all falls back to the textual path', async () => {
+    const gate = gateAt(CWD, { realPath: () => { throw new Error('EACCES'); } });
+    assert.equal(await behavior(gate('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'allow',
+        'an unresolvable filesystem must degrade to the previous behaviour, not deny everything');
+});
+
+/**
+ * The same thing against a real symlink on a real filesystem, because the tests above use a
+ * constructed one and a constructed filesystem agrees with whatever I assumed about the real
+ * one. This is the shape that actually failed: a project directory reached through a link.
+ *
+ * Runs in the OS temp directory, never in the repository, per the probe rule in CONVENTIONS.
+ */
+// @real-machine
+test('symlink, on a real filesystem: a linked project writes its own files and still protects userData', async () => {
+    const { mkdtempSync, symlinkSync, mkdirSync, rmSync, realpathSync } = await import('node:fs');
+    const os = await import('node:os');
+
+    const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'gate-symlink-')));
+    const realProject = path.join(base, 'real-project');
+    const linkedProject = path.join(base, 'linked-project');
+    const protectedDir = path.join(realProject, 'userdata');
+    mkdirSync(realProject);
+    mkdirSync(protectedDir);
+    symlinkSync(realProject, linkedProject, 'dir');
+
+    try {
+        const gate = makePermissionGate({
+            getPolicy: () => policy(),
+            getStoredRules: () => [],
+            // Configured through the link, exactly as a person would paste it.
+            protectedPaths: [path.join(linkedProject, 'userdata')],
+            normalisePath: (v: string) => v
+            // No realPath injected: this uses the real fs.realpathSync.native.
+        })({ hireId: 'h1', cwd: linkedProject, projectId: 'proj' });
+
+        // Claude Code reports the resolved real path. This is the write that was refused.
+        assert.equal(await behavior(gate('Write', { file_path: path.join(realProject, 'note.txt') })), 'allow',
+            'a project reached through a symlink must be able to write its own files');
+
+        // And the leaf does not exist yet, which is what a Write always means.
+        assert.equal(await behavior(gate('Write', { file_path: path.join(realProject, 'brand', 'new.txt') })), 'allow');
+
+        // Protection survives the resolution, by the real name and by the link name.
+        assert.equal(await behavior(gate('Read', { file_path: path.join(protectedDir, 'stafford.db') })), 'deny');
+        assert.equal(await behavior(gate('Read', { file_path: path.join(linkedProject, 'userdata', 'stafford.db') })), 'deny');
+
+        // And nothing outside the project became writable along the way.
+        assert.equal(await behavior(gate('Write', { file_path: path.join(base, 'escape.txt') })), 'deny');
+    } finally {
+        rmSync(base, { recursive: true, force: true });
+    }
+});
