@@ -3,9 +3,34 @@
 A single accounting of everything parked, taken from the plan and the tree rather than memory, so the
 next build is chosen against the whole board. Read-only: this decides nothing and builds nothing.
 
-## Update, 2026-08-20, the headless migration is done and v0.1.0 ships clean
+## Update, 2026-08-21, UI overhaul done, permissions phases 1 and 2 shipped
 
 Read this block first. It is the newest.
+
+Two arcs landed since the block below. The UI overhaul is complete and the app is de-webified: three React
+islands in a shared shell, hidden menu bar with accelerators kept, a custom frameless title bar on Windows with
+the native frame on macOS, retuned smaller window proportions, and Home as the landing view. The one vanilla
+surface left is the create and hire modals with their native `<select>` dropdowns, which need the modals moved to
+React before the shadcn Select can replace them. That is deferred, not lost.
+
+The permission system is live. Phases 1 and 2 are shipped on main. Colleague tool calls are checked at
+`can_use_tool` against project baselines plus per-colleague overrides, allow and deny enforced, and ask pauses
+the colleague's turn on a pending approval I answer in the app. Shutdown denies every pending ask. The model and
+phasing are in `docs/plans/PERMISSION-SYSTEM.md`.
+
+What is next, in order: permission phase 3 (the config UI to edit rules in the app), then the tasks feature
+(colleague task dispatch, the thing the permission arc was the foundation for), then the create and hire modals
+to React and the `<select>` swap.
+
+One verification is owed. I have not driven a genuinely destructive tool call, a real delete or overwrite, all
+the way through the in-app ASK click-through on a packaged build. Phase 2 is verified for approve and deny in a
+normal session, but not against real risk end to end. Do this on a packaged build before trusting the ask path:
+confirm the colleague pauses on the destructive call, my deny stops it, and my approve lets exactly that one call
+through. Recorded here as owed.
+
+## Update, 2026-08-20, the headless migration is done and v0.1.0 ships clean
+
+Read the block above first; this one is older.
 
 The headless stream-json migration is complete, phases 2 to 5 in `docs/plans/HEADLESS-STREAM-JSON.md`. Message
 delivery no longer drives a pty: a colleague runs headless through the stream-json protocol, state comes from
