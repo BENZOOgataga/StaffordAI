@@ -41,14 +41,14 @@ export interface BoundsOptions {
 }
 
 /**
- * First launch fills 75% of the work area's width but only 63% of its height, so the
- * window opens proportioned to the roster content rather than tall with empty space at
- * the bottom. Floored at 720x520, capped at 1600x1100. This is the first-launch default
- * only; a returning user's saved size is respected unchanged.
+ * First launch fills 66% of the work area's width and 70% of its height, a balanced
+ * rectangle rather than the wide, short one an equal fraction gives on a 16:9 display.
+ * Floored at 720x520, capped at 1600x1100. This is the first-launch default only; a
+ * returning user's saved size is respected unchanged.
  */
 export const WINDOW_DEFAULTS: BoundsOptions = {
-    widthFraction: 0.75,
-    heightFraction: 0.63,
+    widthFraction: 0.66,
+    heightFraction: 0.70,
     min: { width: 720, height: 520 },
     max: { width: 1600, height: 1100 }
 };
