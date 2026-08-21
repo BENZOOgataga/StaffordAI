@@ -12,12 +12,12 @@ import type { RosterCard } from '../shared/ipc.ts';
 const NOW = Date.parse('2026-08-11T12:00:00Z');
 
 function card(state: string, since: string | null = null): RosterCard {
-    return { id: 'h1', name: 'Marion', role: 'Lead developer', state, project: null, task: null,
+    return { id: 'h1', name: 'Marion', role: 'Lead developer', state, project: null, projectId: null, task: null,
         apprentices: 0, queued: 0, since, contextLost: false };
 }
 
 function named(id: string, state: string): RosterCard {
-    return { id, name: id, role: 'Developer', state, project: null, task: null,
+    return { id, name: id, role: 'Developer', state, project: null, projectId: null, task: null,
         apprentices: 0, queued: 0, since: null, contextLost: false };
 }
 

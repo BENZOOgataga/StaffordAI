@@ -167,6 +167,12 @@ export interface RosterCard {
     readonly state: string;
     /** Active project name, not a path. Null when the hire is on no project. */
     readonly project: string | null;
+    /**
+     * The active project's id, for a view that has to act rather than only display, such as
+     * the permissions tab naming the project whose rules it is reading. Still an id, never a
+     * path, so the rule that a renderer cannot name a directory is unchanged.
+     */
+    readonly projectId: string | null;
     /** The current task in one line, or null. Null until task dispatch exists. */
     readonly task: string | null;
     readonly apprentices: number;

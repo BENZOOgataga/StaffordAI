@@ -5,12 +5,16 @@
  * replaced the old raw Terminal in that slot once the pty was removed: it is a
  * rendered turn view (the colleague's replies and its tool calls) from the
  * headless runner's stream, not a raw terminal.
+ *
+ * Permissions is last, after Transcript, because it is the tab I open deliberately rather
+ * than the one I want on opening a colleague. It shows what that colleague may actually do
+ * and lets me set its exceptions; the project baselines live on their own screen.
  */
 
-export type TabId = 'conversation' | 'activity' | 'transcript';
+export type TabId = 'conversation' | 'activity' | 'transcript' | 'permissions';
 
 /** The tabs in priority order: the message exchange first, the transcript last. */
-export const TAB_ORDER: readonly TabId[] = ['conversation', 'activity', 'transcript'];
+export const TAB_ORDER: readonly TabId[] = ['conversation', 'activity', 'transcript', 'permissions'];
 
 /** Conversation is the front door, not the transcript. */
 export const DEFAULT_TAB: TabId = 'conversation';
@@ -19,10 +23,11 @@ export interface Lang {
     readonly conversation: string;
     readonly activity: string;
     readonly transcript: string;
+    readonly permissions: string;
 }
 
-const EN: Lang = { conversation: 'Conversation', activity: 'Activity', transcript: 'Transcript' };
-const FR: Lang = { conversation: 'Conversation', activity: 'Activité', transcript: 'Transcription' };
+const EN: Lang = { conversation: 'Conversation', activity: 'Activity', transcript: 'Transcript', permissions: 'Permissions' };
+const FR: Lang = { conversation: 'Conversation', activity: 'Activité', transcript: 'Transcription', permissions: 'Permissions' };
 
 export function tabLabels(lang: 'en' | 'fr'): Lang {
     return lang === 'fr' ? FR : EN;

@@ -8,6 +8,8 @@
  *   page    a file under out/renderer, e.g. preview.html or index.html
  *   out.png where to write the screenshot
  *   view    optional: a rail data-view to click after load (e.g. home), for index.html.
+ *   steps   optional: further CSS selectors to click in order, for a surface behind a
+ *           selection or a tab. A step that matches nothing fails the run.
  *           When set, a stub window.stafford bridge is injected so the real app renders
  *           with sample data and no main process, reproducing the live view exactly.
  *
@@ -23,6 +25,10 @@ const { app, BrowserWindow } = require('electron');
 const PAGE = process.argv[2] || 'preview.html';
 const OUT = process.argv[3] || 'ui-shot.png';
 const VIEW = process.argv[4] || '';
+// Extra CSS selectors to click after the view, in order, so a screenshot can reach a surface
+// that lives behind a selection and a tab rather than only behind a rail item. Each waits for
+// React to settle before the next.
+const STEPS = process.argv.slice(5).filter(Boolean);
 const ROOT = path.resolve(__dirname, '..', 'out', 'renderer');
 
 const TYPES = {
@@ -65,6 +71,21 @@ async function main() {
         );
         // The island is dynamically imported and React mounts, so give it longer.
         await new Promise((r) => setTimeout(r, 2500));
+    }
+    for (const selector of STEPS) {
+        const clicked = await win.webContents.executeJavaScript(
+            "(() => { const el = document.querySelector(" + JSON.stringify(selector) + "); " +
+            "if (!el) return false; " +
+            // Radix triggers act on pointer events, not on a bare click(), so a tab would
+            // report clicked and never change. Dispatch the real sequence instead.
+            "for (const type of ['pointerdown','mousedown','pointerup','mouseup','click']) { " +
+            "el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })); } " +
+            "return true; })()"
+        );
+        // A step that matched nothing is a broken screenshot, not a smaller one. Failing here
+        // beats writing a PNG of the wrong surface and calling it evidence.
+        if (!clicked) throw new Error('screenshot step matched nothing: ' + selector);
+        await new Promise((r) => setTimeout(r, 900));
     }
     const image = await win.webContents.capturePage();
     fs.writeFileSync(OUT, image.toPNG());

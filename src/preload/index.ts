@@ -16,7 +16,9 @@ import {
     type InvokeChannel, type EventChannel, type WindowInvokeChannel, type WindowEventChannel,
     type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
-    type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals
+    type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals,
+    type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
+    type PermissionAdd, type PermissionUpdate
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -134,6 +136,42 @@ const api = Object.freeze({
         answer: (id: string, approve: boolean, note: string | null): Promise<void> =>
             invoke('approval:answer', { id, approve, note }) as Promise<void>,
         onChanged: (listener: () => void): (() => void) => on('approvals:changed', () => listener())
+    }),
+
+    /**
+     * The permission configuration surface (phase 3).
+     *
+     * **This is the only path by which permission rules can be written, and that is the whole
+     * security story.** The invariant is that only Benzoo sets permissions. It holds because a
+     * colleague has no part of this object: it speaks stream-json to Claude Code over its own
+     * stdin and stdout, with no preload, no contextBridge and no ipcRenderer, so there is no
+     * bridge for it to call and no channel for it to name. Its only other route to the rules
+     * is the database file, which the gate denies because userData is a protected path, and
+     * that denial survives a case-varied spelling and a symlinked one.
+     *
+     * So adding an editing UI does not add a way in. It adds a caller to a surface a colleague
+     * could never reach, which is why the surface is worth being explicit about here rather
+     * than being an unremarkable block of methods.
+     *
+     * Named methods over raw channels, and frozen with the rest, so the reachable set is
+     * exactly these five reads and writes.
+     */
+    permissions: Object.freeze({
+        /** A project's stored rules, split into the baseline and the colleague overrides. */
+        rules: (projectId: string): Promise<PermissionRulesReply> =>
+            invoke('permissions:rules', { projectId }) as Promise<PermissionRulesReply>,
+        /** One colleague's resolved policy, each row tagged with where it came from. */
+        effective: (projectId: string, hireId: string): Promise<PermissionEffectiveReply> =>
+            invoke('permissions:effective', { projectId, hireId }) as Promise<PermissionEffectiveReply>,
+        /** hireId null adds a project baseline rule; a hire id adds that colleague's override. */
+        add: (payload: PermissionAdd): Promise<PermissionWriteReply> =>
+            invoke('permissions:add', payload) as Promise<PermissionWriteReply>,
+        update: (payload: PermissionUpdate): Promise<PermissionWriteReply> =>
+            invoke('permissions:update', payload) as Promise<PermissionWriteReply>,
+        remove: (id: string): Promise<PermissionWriteReply> =>
+            invoke('permissions:remove', { id }) as Promise<PermissionWriteReply>,
+        /** Fired after every write, so an open config view re-reads. */
+        onChanged: (listener: () => void): (() => void) => on('permissions:changed', () => listener())
     }),
 
     // The custom frameless title bar's window controls. frameless says whether this

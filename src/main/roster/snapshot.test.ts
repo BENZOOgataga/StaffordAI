@@ -28,7 +28,10 @@ test('a hire becomes a card with state and role, and the project name not a path
     assert.equal(snap.cards.length, 1);
     assert.deepEqual(snap.cards[0], {
         id: 'h1', name: 'Marion', role: 'Lead developer', state: 'working',
-        project: 'Stafford', task: null, apprentices: 0, queued: 0, since: null, contextLost: false
+        // The name is what the card shows; the id is what a view acts on. Both, and still no
+        // path, which is the rule this test was written to hold.
+        project: 'Stafford', projectId: 'p1', task: null,
+        apprentices: 0, queued: 0, since: null, contextLost: false
     });
 });
 

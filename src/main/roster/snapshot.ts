@@ -48,6 +48,9 @@ export function assembleRoster(sources: RosterSources): RosterSnapshot {
             role: hire.title,
             state: hire.state,
             project: hire.activeProjectId ? sources.projectName(hire.activeProjectId) : null,
+            // The id as well as the name. The name is what a card shows; the id is what a
+            // view acts on, and the permissions tab needs to name the project to the gate.
+            projectId: hire.activeProjectId,
             task: sources.currentTask(hire.id),
             apprentices: live?.apprentices ?? 0,
             queued: 0,
