@@ -97,8 +97,9 @@ function main(): void {
         }
     }
 
-    // The roster is the default view: mount and show it now.
-    showView('roster');
+    // Home is the default view on launch: the overview a person wants first, rather than
+    // dropping straight into the roster.
+    showView('home');
 }
 
 main();
