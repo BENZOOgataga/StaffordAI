@@ -1,9 +1,8 @@
 import * as React from 'react';
-import { cn } from '@/lib/utils';
 import { Textarea } from '@/components/ui/textarea';
 import { buildThread } from './conversation-model.ts';
-import { referenceLabel, type Lang } from '../channel-view.ts';
-import { activityTime } from '../activity-view.ts';
+import { ConversationThread } from './conversation-thread.tsx';
+import { type Lang } from '../channel-view.ts';
 import type { ChannelMessageRow } from '../../shared/ipc.ts';
 
 /**
@@ -59,39 +58,7 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang }: {
                 {items.length === 0 ? (
                     <p className="text-muted-foreground py-8 text-center text-sm">No messages yet. Say hello below.</p>
                 ) : (
-                    <div className="flex flex-col gap-3">
-                        {items.map((item) =>
-                            item.kind === 'event' ? (
-                                <div key={item.id} className="flex justify-center py-0.5">
-                                    <span className={cn('text-xs', item.waiting ? 'text-status-waiting' : 'text-muted-foreground')}>
-                                        {item.text}
-                                    </span>
-                                </div>
-                            ) : (
-                                <div key={item.messages[0]?.id ?? item.at}
-                                    className={cn('flex flex-col gap-1', item.side === 'you' ? 'items-end' : 'items-start')}>
-                                    <div className="text-muted-foreground flex items-center gap-2 px-1 text-xs">
-                                        <span className="font-medium">{item.sender}</span>
-                                        <span className="tabular-nums">{activityTime(item.at, now, lang)}</span>
-                                    </div>
-                                    {item.messages.map((m) => (
-                                        <div key={m.id}
-                                            className={cn(
-                                                'max-w-[78%] rounded-lg px-3 py-1.5 text-sm break-words whitespace-pre-wrap',
-                                                item.side === 'you'
-                                                    ? 'bg-secondary text-secondary-foreground'
-                                                    : 'bg-card border border-border'
-                                            )}>
-                                            {m.body}
-                                            {m.reference ? (
-                                                <span className="text-muted-foreground mt-1 block text-xs">{referenceLabel(m.reference)}</span>
-                                            ) : null}
-                                        </div>
-                                    ))}
-                                </div>
-                            )
-                        )}
-                    </div>
+                    <ConversationThread items={items} now={now} lang={lang} />
                 )}
             </div>
 
