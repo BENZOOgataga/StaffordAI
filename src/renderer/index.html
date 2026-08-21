@@ -47,6 +47,28 @@
 
   * { box-sizing: border-box; }
 
+  /* App-wide scrollbars. The default Chromium scrollbar, with its stepper arrows and
+     a wide opaque track, is the clearest tell that a native window is a web view. This
+     replaces it everywhere (vanilla views and the React islands share this document)
+     with a thin, quiet, arrow-less thumb on a transparent track, so no scroll area reads
+     as a raw browser widget. Styling the parts also drops the stepper buttons in
+     Chromium. Firefox-style properties are set too, for completeness. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.30); background-clip: padding-box; }
+  *::-webkit-scrollbar-corner { background: transparent; }
+  *::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+
   body {
     margin: 0;
     background: var(--bg);
