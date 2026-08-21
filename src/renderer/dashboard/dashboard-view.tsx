@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { StatusDot } from '@/components/ui/status-dot';
 import { List, ListRow } from '@/components/ui/list';
 import { AppShell } from '@/components/app-shell';
+import { ApprovalsBanner } from '../approvals/approvals-banner.tsx';
 import { statusForState, type Overview } from './dashboard-data.ts';
 import type { RosterCard } from '../../shared/ipc.ts';
 
@@ -69,6 +70,8 @@ export function DashboardView({ overview, current, onNavigate }: {
                         <h1 className="text-3xl font-semibold tracking-tight">Overview</h1>
                         <p className="text-muted-foreground text-base">Your colleagues and projects at a glance.</p>
                     </header>
+
+                    <ApprovalsBanner cards={overview?.cards ?? []} />
 
                     {overview === null ? (
                         <p className="text-muted-foreground text-sm">Loading.</p>

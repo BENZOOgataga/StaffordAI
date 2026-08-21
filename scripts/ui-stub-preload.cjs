@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('stafford', {
     },
     activity: { byHire: async () => ({ rows: [] }), onAppended: unsub },
     checkpoints: { saved: async () => null, ack: async () => {} },
+    approvals: { pending: async () => ({ pending: [] }), answer: async () => {}, onChanged: unsub },
     // Frameless like the real Windows app, so the harness renders the custom title bar.
     // The control methods are no-ops here; the real controls are proven in a real window.
     win: {

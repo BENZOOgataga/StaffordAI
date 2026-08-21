@@ -41,7 +41,9 @@ function deps(
         activityByHire: over.activityByHire ?? (() => []),
         savedCheckpoints: over.savedCheckpoints ?? (() => null),
         ackCheckpoints: over.ackCheckpoints ?? (() => { /* noop */ }),
-        channelReply: over.channelReply ?? (() => Promise.resolve())
+        channelReply: over.channelReply ?? (() => Promise.resolve()),
+        pendingApprovals: () => ({ pending: [] }),
+        answerApproval: () => { /* noop */ }
     };
 }
 

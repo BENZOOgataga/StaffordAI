@@ -24,14 +24,19 @@ export const INVOKE_CHANNELS = [
     'channel:reply',
     'activity:by-hire',
     'checkpoints:saved',
-    'checkpoints:ack'
+    'checkpoints:ack',
+    // The pending permission approvals (phase 2 ASK), and the person's answer.
+    'approvals:pending',
+    'approval:answer'
 ] as const;
 
 /** Main pushes to the renderer. One-way, no reply. */
 export const EVENT_CHANNELS = [
     'roster:changed',
     'channel:changed',
-    'activity:appended'
+    'activity:appended',
+    // A pending approval was added or resolved, so the renderer re-reads the list.
+    'approvals:changed'
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
@@ -271,5 +276,31 @@ export interface SavedCheckpoints {
 /** Marks a drain's saved-work notice seen, so it does not show again. */
 export interface CheckpointAck {
     readonly drainId: string;
+}
+
+/**
+ * One permission ask waiting on the person (phase 2). A colleague's turn is paused at this
+ * tool call until the person approves or denies it. action is the category; path or command
+ * is what the tool wants to touch. Kept to what the prompt shows, no file contents.
+ */
+export interface PendingApproval {
+    readonly id: string;
+    readonly hireId: string;
+    readonly action: string;
+    readonly path: string | null;
+    readonly command: string | null;
+    readonly at: string;
+}
+
+/** The current pending approvals, for the approvals surface. */
+export interface PendingApprovals {
+    readonly pending: readonly PendingApproval[];
+}
+
+/** The person's answer to one pending approval. The note becomes the deny reason. */
+export interface ApprovalAnswer {
+    readonly id: string;
+    readonly approve: boolean;
+    readonly note: string | null;
 }
 

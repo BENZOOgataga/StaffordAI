@@ -16,7 +16,7 @@ import {
     type InvokeChannel, type EventChannel, type WindowInvokeChannel, type WindowEventChannel,
     type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
-    type ActivityByHireReply, type ActivityRow, type SavedCheckpoints
+    type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -124,6 +124,16 @@ const api = Object.freeze({
             invoke('checkpoints:saved') as Promise<SavedCheckpoints | null>,
         ack: (drainId: string): Promise<void> =>
             invoke('checkpoints:ack', { drainId }) as Promise<void>
+    }),
+
+    // The permission approvals (phase 2). pending lists the asks waiting on the person,
+    // answer resolves one (the note becomes the deny reason), and onChanged fires when the
+    // pending set changes so the approvals surface re-reads.
+    approvals: Object.freeze({
+        pending: (): Promise<PendingApprovals> => invoke('approvals:pending') as Promise<PendingApprovals>,
+        answer: (id: string, approve: boolean, note: string | null): Promise<void> =>
+            invoke('approval:answer', { id, approve, note }) as Promise<void>,
+        onChanged: (listener: () => void): (() => void) => on('approvals:changed', () => listener())
     }),
 
     // The custom frameless title bar's window controls. frameless says whether this

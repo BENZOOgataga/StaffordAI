@@ -40,6 +40,7 @@ import { hireStoreOver, type HireStore } from './storage/hire-store.ts';
 import { assembleRoster } from './roster/snapshot.ts';
 import { ClaudeRunnerManager } from './agents/runner-manager.ts';
 import { makePermissionGate } from './agents/permission-gate.ts';
+import { ApprovalRegistry } from './agents/approval-registry.ts';
 import { locateClaude } from './agents/claude-locator.ts';
 import { savedNoticeFor } from './checkpoints/saved-work.ts';
 import fs from 'node:fs';
@@ -56,6 +57,9 @@ const { appId: APP_ID } = resolveAppId(process.env);
 
 let store: OpenResult | null = null;
 let repositories: Repositories | null = null;
+// The pending permission approvals (phase 2). Created once the store is open, so a paused
+// tool call can set the colleague's waiting state; denyAll runs on quit.
+let approvalRegistry: ApprovalRegistry | null = null;
 // The headless delivery path (the stream-json runner). It is the only path that
 // handles messages now; the old pty/hook/lifecycle stack was removed in phase 4.
 let runnerManager: ClaudeRunnerManager | null = null;
@@ -443,7 +447,12 @@ function buildDelivery(store: HireStore): void {
     const permissionGate = makePermissionGate({
         getPolicy: (projectId) => repositories?.projects.get(projectId)?.policy ?? null,
         getStoredRules: (projectId) => repositories?.permissionRules.forProject(projectId) ?? [],
-        protectedPaths: [app.getPath('userData')]
+        protectedPaths: [app.getPath('userData')],
+        // An ask pauses the turn on a pending approval until the person answers; without a
+        // registry (should not happen once the store is open) it falls back to deny.
+        onAsk: (request) => approvalRegistry
+            ? approvalRegistry.ask(request)
+            : Promise.resolve({ approve: false, note: null })
     });
 
     // The headless delivery path. It routes a colleague's messages through the
@@ -539,6 +548,11 @@ function buildDelivery(store: HireStore): void {
 let quitting = false;
 async function quit(): Promise<void> {
     quitting = true;
+
+    // Resolve any turn paused on a permission ask as deny, so a turn never resumes an
+    // action I did not approve and nothing is left awaiting a promise that would block the
+    // quit or the drain below.
+    approvalRegistry?.denyAll('Stafford is closing, so this action was not approved.');
 
     // Drain the colleagues the runner served: checkpoint, bounded wait, force-kill what
     // remains, one durable report row per agent. Bounded by its own total cap, so a stuck
@@ -674,6 +688,18 @@ app.whenReady().then(async () => {
     // events, which is also what the Transcript tab reads.
     if (repositories) {
         const store = hireStoreOver(repositories);
+        // The approval registry: a paused ask sets the colleague to waiting_for_you (the
+        // roster's existing waiting state) and pushes an approvals:changed signal so the
+        // approvals surface re-reads. Answering clears it back to working.
+        approvalRegistry = new ApprovalRegistry({
+            now: () => new Date().toISOString(),
+            uuid: () => randomUUID(),
+            onChange: () => { if (window && !window.isDestroyed()) window.webContents.send('approvals:changed'); },
+            onPending: (hireId, pending) => {
+                store.setState(hireId, pending ? 'waiting_for_you' : 'working');
+                notifyRosterChanged();
+            }
+        });
         buildDelivery(store);
     }
 
@@ -750,7 +776,11 @@ app.whenReady().then(async () => {
                 notifyChannelChanged();
             }
             await (runnerManager ? runnerManager.submit(hireId, text) : Promise.resolve());
-        }
+        },
+        // The pending permission approvals, and the person's answer, which resolves the
+        // paused seam for exactly that ask so the right turn continues or stops.
+        pendingApprovals: () => ({ pending: approvalRegistry ? approvalRegistry.list() : [] }),
+        answerApproval: (id, approve, note) => { approvalRegistry?.answer(id, approve, note); }
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +

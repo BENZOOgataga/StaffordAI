@@ -16,10 +16,11 @@ import {
     INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
     type ProjectCreated, type HireCreated, type ActivityRow, type ActivityByHireReply,
-    type SavedCheckpoints
+    type SavedCheckpoints, type PendingApprovals
 } from '../../shared/ipc.ts';
 import {
-    isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck
+    isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
+    isApprovalAnswer
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 
@@ -72,6 +73,10 @@ export interface HandlerDeps {
      * by the handler.
      */
     readonly channelReply: (hireId: string, text: string) => Promise<void>;
+    /** The permission asks currently waiting on the person (phase 2). */
+    readonly pendingApprovals: () => PendingApprovals;
+    /** The person's answer to a pending ask, which resolves that turn's paused seam. */
+    readonly answerApproval: (id: string, approve: boolean, note: string | null) => void;
 }
 
 /**
@@ -161,6 +166,14 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'channel:reply': (payload: unknown): Promise<void> => {
             if (!isChannelReply(payload)) throw new Error('channel:reply requires {hireId,text}');
             return deps.channelReply(payload.hireId, sanitiseMessage(payload.text));
+        },
+
+        // The pending permission approvals, read-only, and the person's answer. The answer
+        // resolves exactly the pending ask named by its id, so the right turn continues.
+        'approvals:pending': (): PendingApprovals => deps.pendingApprovals(),
+        'approval:answer': (payload: unknown): void => {
+            if (!isApprovalAnswer(payload)) throw new Error('approval:answer requires {id,approve,note}');
+            deps.answerApproval(payload.id, payload.approve, payload.note);
         }
     };
 }

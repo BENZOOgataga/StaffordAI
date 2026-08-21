@@ -18,6 +18,7 @@ import {
     type RunnerChild, type SpawnFn, type WireDirection
 } from './claude-runner.ts';
 import { makePermissionGate } from './permission-gate.ts';
+import { ApprovalRegistry } from './approval-registry.ts';
 import type { ProjectPolicy } from '../../domain/models.ts';
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
@@ -247,6 +248,40 @@ test('the permission gate wired at can_use_tool allows in scope and denies out o
     assert.equal((await decisionFor('Write', { file_path: path.resolve('/userdata/Stafford/stafford.db') })).behavior, 'deny');
     assert.equal((await decisionFor('Bash', { command: 'git push --force origin main' })).behavior, 'deny');
     assert.equal((await decisionFor('Bash', { command: 'npm test' })).behavior, 'allow');
+});
+
+test('an ask pauses the runner until answered: the decision is written only after the person approves', async () => {
+    const CWD = path.resolve('/proj');
+    const policy: ProjectPolicy = {
+        push: 'none', allowedRoles: [], toolCeiling: null, writePaths: null,
+        requirePipeline: false, allowWebFetch: true, permissionMode: 'default', maxConcurrentAgents: 1
+    };
+    const registry = new ApprovalRegistry({ now: () => 't', uuid: () => 'aid', onChange: () => {}, onPending: () => {} });
+    const gate = makePermissionGate({
+        getPolicy: () => policy, getStoredRules: () => [], protectedPaths: [path.resolve('/userdata')],
+        onAsk: (r) => registry.ask(r)
+    })({ hireId: 'h1', cwd: CWD, projectId: 'p' });
+
+    const fake = makeFakeSpawn();
+    const runner = new ClaudeRunner(baseDeps(fake, { canUseTool: gate }));
+    const turn = runner.runTurn({ text: 'x' });
+    const controlResponse = () => fake.writes().map((w) => JSON.parse(w.trim()) as Record<string, unknown>)
+        .find((o) => o.type === 'control_response');
+
+    // A destructive command resolves to ask, so the turn pauses: no response yet.
+    fake.emit('{"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"git push --force origin main"}}}\n');
+    await tick();
+    assert.equal(controlResponse(), undefined, 'the seam has not answered while the ask is pending');
+    assert.equal(registry.list().length, 1, 'the ask is pending');
+
+    // The person approves, and only now is the decision written back.
+    registry.answer(registry.list()[0]!.id, true, null);
+    await tick();
+    const decision = ((controlResponse() as Record<string, unknown>).response as Record<string, unknown>).response as Record<string, unknown>;
+    assert.equal(decision.behavior, 'allow');
+
+    fake.emit('{"type":"result","is_error":false,"session_id":"s"}\n');
+    await turn;
 });
 
 test('autoApproveTool is a named function that allows and echoes the input', () => {
