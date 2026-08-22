@@ -41,7 +41,22 @@ export const INVOKE_CHANNELS = [
     'permissions:effective',
     'permissions:add',
     'permissions:update',
-    'permissions:remove'
+    'permissions:remove',
+    // Tasks (docs/plans/TASKS.md, phase 1). Read a colleague's tasks, assign one, start it,
+    // and record my decision at review.
+    //
+    // The same structural argument as the permission writes above applies to `tasks:review`,
+    // and it is the whole reason the done-transition is safe. Approving is renderer-to-main
+    // only: it arrives on a channel a colleague has no way to speak on, since a colleague
+    // has no preload, no contextBridge and no ipcRenderer, and the only other route in would
+    // be a tool call against the database file, which the gate denies as a protected path.
+    // The lifecycle refuses a colleague reaching done as well, so the invariant holds twice
+    // over: once because a colleague cannot reach the channel, and once because the rule
+    // would refuse it even if it could.
+    'tasks:by-hire',
+    'tasks:assign',
+    'tasks:start',
+    'tasks:review'
 ] as const;
 
 /** Main pushes to the renderer. One-way, no reply. */
@@ -52,7 +67,9 @@ export const EVENT_CHANNELS = [
     // A pending approval was added or resolved, so the renderer re-reads the list.
     'approvals:changed',
     // A permission rule was added, edited or removed, so any open config view re-reads.
-    'permissions:changed'
+    'permissions:changed',
+    // A task was assigned, moved, or reviewed, so any open task view re-reads.
+    'tasks:changed'
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
@@ -408,4 +425,69 @@ export interface PermissionWriteReply {
     readonly ok: boolean;
     /** Set when the rule weakens protection of the user-only config. Advisory, never a block. */
     readonly warning: string | null;
+}
+
+// --- tasks (docs/plans/TASKS.md, phase 1) -----------------------------------
+
+/**
+ * One task as the renderer sees it.
+ *
+ * A branch name and a commit id cross, because those are what I act on at review and both
+ * are refs rather than filesystem paths. The working directory does not cross, which keeps
+ * the rule that a renderer never learns where anything lives on disk.
+ */
+export interface TaskRow {
+    readonly id: string;
+    readonly hireId: string;
+    readonly projectId: string;
+    /** The instruction I gave, verbatim. */
+    readonly text: string;
+    readonly state: string;
+    readonly createdAt: string;
+    readonly startedAt: string | null;
+    readonly completedAt: string | null;
+    readonly updatedAt: string | null;
+    /** The colleague's own closing account, the first thing I read at review. Sentinel stripped. */
+    readonly resultSummary: string | null;
+    readonly resultBranch: string | null;
+    readonly resultCommit: string | null;
+    readonly failedReason: string | null;
+}
+
+export interface TasksByHireRequest {
+    readonly hireId: string;
+    readonly limit: number;
+}
+
+export interface TasksReply {
+    readonly rows: readonly TaskRow[];
+}
+
+/** Assigning a task: a colleague and an instruction. The project comes from the colleague. */
+export interface TaskAssign {
+    readonly hireId: string;
+    readonly text: string;
+}
+
+export interface TaskStart {
+    readonly id: string;
+}
+
+/**
+ * My decision on a task waiting for me. `approve` is the only route to done, and it exists
+ * on this renderer-only channel alone.
+ */
+export interface TaskReview {
+    readonly id: string;
+    readonly decision: 'approve' | 'fail' | 'send-back';
+    /** My reason when failing it, shown on the task afterwards. */
+    readonly note: string | null;
+}
+
+/** What a task write returns: the task as it now stands, or why it was refused. */
+export interface TaskWriteReply {
+    readonly ok: boolean;
+    readonly task: TaskRow | null;
+    /** The lifecycle's own refusal, when a transition was not allowed. Null on success. */
+    readonly refused: string | null;
 }

@@ -113,17 +113,27 @@ export class TaskRepository {
     readonly #get: Statement;
     readonly #page: Statement;
     readonly #pageByProject: Statement;
+    readonly #byHire: Statement;
 
     constructor(db: StorageDatabase) {
         this.#insert = db.prepare(
-            'INSERT INTO tasks (id, agent_id, project_id, text, kind, origin, approvals, created_at, started_at, completed_at) ' +
-            'VALUES (@id, @agent_id, @project_id, @text, @kind, @origin, @approvals, @created_at, @started_at, @completed_at)');
+            'INSERT INTO tasks (id, agent_id, project_id, text, kind, origin, approvals, created_at, started_at, completed_at, ' +
+            'state, result_branch, result_commit, result_summary, session_id, failed_reason, updated_at) ' +
+            'VALUES (@id, @agent_id, @project_id, @text, @kind, @origin, @approvals, @created_at, @started_at, @completed_at, ' +
+            '@state, @result_branch, @result_commit, @result_summary, @session_id, @failed_reason, @updated_at)');
         this.#update = db.prepare(
             'UPDATE tasks SET agent_id=@agent_id, project_id=@project_id, text=@text, kind=@kind, origin=@origin, ' +
-            'approvals=@approvals, created_at=@created_at, started_at=@started_at, completed_at=@completed_at WHERE id=@id');
+            'approvals=@approvals, created_at=@created_at, started_at=@started_at, completed_at=@completed_at, ' +
+            'state=@state, result_branch=@result_branch, result_commit=@result_commit, ' +
+            'result_summary=@result_summary, session_id=@session_id, failed_reason=@failed_reason, ' +
+            'updated_at=@updated_at WHERE id=@id');
         this.#get = db.prepare('SELECT * FROM tasks WHERE id = ?');
         this.#page = db.prepare('SELECT * FROM tasks ORDER BY created_at, id LIMIT ? OFFSET ?');
         this.#pageByProject = db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?');
+        // Newest first, because a task view is about what needs me now and what just moved,
+        // not about the archive. Backed by the tasks_agent_state index from migration 0007.
+        this.#byHire = db.prepare(
+            'SELECT * FROM tasks WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?');
     }
 
     insert(task: Task): void { this.#insert.run(taskToRow(task)); }
@@ -135,6 +145,10 @@ export class TaskRepository {
     page(page: Page): Task[] { return rowsOf(this.#page, page.limit, page.offset).map(taskFromRow); }
     pageByProject(projectId: string, page: Page): Task[] {
         return rowsOf(this.#pageByProject, projectId, page.limit, page.offset).map(taskFromRow);
+    }
+    /** One colleague's tasks, newest first, capped by the caller. */
+    byHire(agentId: string, limit: number): Task[] {
+        return rowsOf(this.#byHire, agentId, limit).map(taskFromRow);
     }
 }
 

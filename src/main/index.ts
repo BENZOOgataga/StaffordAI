@@ -43,8 +43,9 @@ import { makePermissionGate, type PermissionGate } from './agents/permission-gat
 import { effectivePolicy, ruleKey, widensProtectedAccess } from '../domain/effective-policy.ts';
 import { defaultBaselineRules, defaultCategoryDefaults } from '../domain/permission-profile.ts';
 import type { PermissionRule, PermissionAction, PermissionEffect } from '../domain/permissions.ts';
-import type { PermissionRuleRecord } from '../domain/models.ts';
+import type { PermissionRuleRecord, Task } from '../domain/models.ts';
 import { ApprovalRegistry } from './agents/approval-registry.ts';
+import { TaskService, TaskTransitionError } from './tasks/task-service.ts';
 import { locateClaude } from './agents/claude-locator.ts';
 import { savedNoticeFor } from './checkpoints/saved-work.ts';
 import fs from 'node:fs';
@@ -52,7 +53,7 @@ import { randomUUID } from 'node:crypto';
 import type {
     RosterSnapshot, ActivityRow, SavedCheckpoints,
     PermissionRuleView, PermissionRulesReply, PermissionEffectiveReply, PermissionWriteReply,
-    PermissionAdd, PermissionUpdate
+    PermissionAdd, PermissionUpdate, TaskRow, TaskWriteReply
 } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 
@@ -74,6 +75,9 @@ let runnerManager: ClaudeRunnerManager | null = null;
 // The permission gate, held at module scope so a rule edit can drop its cache. It is built in
 // buildDelivery once the store is open.
 let permissionGate: PermissionGate | null = null;
+// The task service. Built alongside the runner manager, since a task is turns through that
+// manager plus the lifecycle rules around them.
+let taskService: TaskService | null = null;
 
 /**
  * Opens the database and brings it to the current schema, before anything a user
@@ -578,6 +582,42 @@ function notifyChannelChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('channel:changed');
 }
 
+function notifyTasksChanged(): void {
+    if (window && !window.isDestroyed()) window.webContents.send('tasks:changed');
+}
+
+function requireTasks(): TaskService {
+    if (!taskService) throw new Error('tasks are not available until the store is open');
+    return taskService;
+}
+
+/** A task as the renderer sees it: refs and text, never the working directory. */
+function taskRow(task: Task): TaskRow {
+    return {
+        id: task.id, hireId: task.agentId, projectId: task.projectId, text: task.text,
+        state: task.state, createdAt: task.createdAt, startedAt: task.startedAt,
+        completedAt: task.completedAt, updatedAt: task.updatedAt,
+        resultSummary: task.resultSummary, resultBranch: task.resultBranch,
+        resultCommit: task.resultCommit, failedReason: task.failedReason
+    };
+}
+
+/**
+ * Runs a task write and turns a refused transition into a reply rather than a rejected
+ * invoke. A refusal is an answer ("you cannot approve a task that is already closed"), and
+ * the renderer should show it; anything else is a real fault and still rejects.
+ */
+function taskWrite(run: () => Task): TaskWriteReply {
+    try {
+        return { ok: true, task: taskRow(run()), refused: null };
+    } catch (error) {
+        if (error instanceof TaskTransitionError) {
+            return { ok: false, task: null, refused: error.message };
+        }
+        throw error;
+    }
+}
+
 
 /**
  * Builds the headless delivery path: the ClaudeRunnerManager, the only thing that
@@ -786,6 +826,37 @@ function buildDelivery(store: HireStore): void {
             : {})
     });
     smoke('runner manager ready (headless delivery path)');
+
+    // The task service, on top of the runner manager rather than beside it. Its turns go
+    // through the same queue and the same permission gate a message uses, and its result is
+    // committed by the same checkpoint executor the drain uses, under the task's own ref.
+    taskService = new TaskService({
+        tasks: repositories.tasks,
+        now: () => new Date().toISOString(),
+        uuid: () => randomUUID(),
+        resolveTarget: (hireId) => {
+            const hire = repositories?.hires.get(hireId);
+            if (!hire || !hire.activeProjectId) return null;
+            const cwd = repositories?.projects.get(hire.activeProjectId)?.repos[0]?.path;
+            if (!cwd) return null;
+            return { cwd, projectId: hire.activeProjectId };
+        },
+        runTurn: (hireId, text, resumeSessionId) =>
+            runnerManager
+                ? runnerManager.submitTaskTurn(hireId, text, resumeSessionId)
+                : Promise.resolve(null),
+        checkpoint: (req) =>
+            checkpointRepo(realCheckpointDeps(currentPlatform()), {
+                cwd: req.cwd, hireId: req.hireId, stamp: new Date().toISOString(),
+                branch: req.branch, message: req.message
+            }),
+        // A colleague paused on an ask has stopped working, so the attempt ends and the task
+        // lands in review rather than the loop spending its bound against a blocked turn.
+        isAwaitingApproval: (hireId) =>
+            (approvalRegistry?.list() ?? []).some((a) => a.hireId === hireId),
+        onChanged: () => { notifyTasksChanged(); }
+    });
+    smoke('task service ready');
 }
 
 let quitting = false;
@@ -902,6 +973,143 @@ async function runDeliverySmoke(): Promise<void> {
     out('A resume session id: ' + (repositories.hires.get(A)?.sessions[projectId] ?? 'none'));
     out('B resume session id: ' + (repositories.hires.get(B)?.sessions[projectId] ?? 'none'));
     out('=== delivery smoke done ===');
+}
+
+/**
+ * Drives the task phase-1 proof inside the running app against real Claude. Gated by
+ * STAFFORD_TASK_SMOKE=1, with STAFFORD_TASK_SMOKE_CWD pointing at a git repo.
+ *
+ * It calls the real service, which drives the real runner manager, under the real permission
+ * gate, and commits with the real checkpoint executor. Nothing here is a stand-in: the point
+ * is to see a colleague work a task unattended and land in review, rather than to see a unit
+ * test agree with itself.
+ */
+async function runTaskSmoke(): Promise<void> {
+    const out = (line: string): void => { process.stderr.write('[task-smoke] ' + line + '\n'); };
+    const cwd = process.env.STAFFORD_TASK_SMOKE_CWD;
+    if (!repositories || !taskService || !cwd) { out('missing repositories, task service, or cwd'); return; }
+
+    const started = new Date().toISOString();
+    const projectId = 'tsmoke-' + started;
+    repositories.projects.insert({
+        id: projectId, name: 'task-smoke', repos: [{ path: cwd, label: 'repo' }],
+        policy: {
+            push: 'none' as const, allowedRoles: [], toolCeiling: null, writePaths: null,
+            requirePipeline: false, allowWebFetch: false, permissionMode: 'default', maxConcurrentAgents: 2
+        }
+    });
+    const hireId = 'tsmoke-' + started;
+    repositories.hires.insert({
+        id: hireId, name: 'Ada', type: 'lead-developer', title: 'Lead developer', seniority: 2,
+        ownerId: 'owner', sessions: {}, activeProjectId: projectId, state: 'idle',
+        hiredAt: started, firedAt: null
+    });
+
+    const show = (label: string, id: string): void => {
+        const t = repositories!.tasks.get(id);
+        out(label + ': state=' + (t?.state ?? '?') +
+            ' branch=' + (t?.resultBranch ?? 'none') +
+            ' commit=' + (t?.resultCommit?.slice(0, 8) ?? 'none'));
+        if (t?.resultSummary) out('    summary: ' + t.resultSummary.replace(/\s+/g, ' ').slice(0, 140));
+        if (t?.failedReason) out('    failed: ' + t.failedReason);
+    };
+
+    out('=== 1: assign a real task, work it under the gate, land in needs-you, approve ===');
+    // Two changes on purpose: one to a tracked file and one new file. The checkpoint stages
+    // tracked modifications only, so the result branch shows exactly which of the two a task
+    // result can carry today, rather than leaving that to be assumed.
+    const one = taskService.assign({
+        hireId,
+        text: 'Do two things in this repository. First, append a line saying "worked by Ada" to ' +
+            'README.md. Second, create a new file named task-proof.txt containing the single ' +
+            'word done. Then stop.'
+    });
+    out('assigned: state=' + one.state + ' (nothing has run yet)');
+    const worked = await taskService.start(one.id).finished;
+    show('after the attempt', one.id);
+    out('tool calls that went through can_use_tool: ' +
+        repositories.activity.byHire(hireId, 50).map((a) => a.tool).join(', '));
+
+    const git = realCheckpointDeps(currentPlatform());
+    if (worked.resultBranch) {
+        const shown = await git.runGit(
+            ['show', '--stat', '--oneline', worked.resultBranch], { cwd, timeoutMs: 10_000 });
+        out('git show ' + worked.resultBranch + ':');
+        for (const line of shown.stdout.trim().split('\n').slice(0, 10)) out('    ' + line);
+        const untracked = await git.runGit(['status', '--porcelain'], { cwd, timeoutMs: 10_000 });
+        out('still uncommitted in the working tree after the task:');
+        for (const line of untracked.stdout.trim().split('\n').slice(0, 10)) out('    ' + (line || '(nothing)'));
+    } else {
+        out('NO RESULT BRANCH, which means the colleague changed no tracked file');
+    }
+
+    out('=== 2: the invariant, live: the colleague tries to close its own task ===');
+    try {
+        taskService.applyTransitionForTest('colleague', one.id, 'done');
+        out('FAILED: a colleague reached done through the running service');
+    } catch (error) {
+        out('refused, as it must be: ' + (error instanceof Error ? error.message : String(error)));
+    }
+
+    out('=== 3: I approve, which is the only route to done ===');
+    show('approved', taskService.review(one.id, 'approve').id);
+
+    out('=== 4: an ASK during a task pauses the colleague and waits for me ===');
+    // A rule that makes one action ask, so the gate pauses the task mid-turn on a real tool
+    // call rather than on a simulated one.
+    //
+    // Deliberately `write` rather than `shell`. Claude Code decides for itself that some
+    // commands need no permission and never sends a can_use_tool for them, so a shell rule
+    // proves nothing about a command it chose to wave through. A file write is always put to
+    // the gate, so this scenario tests Stafford rather than Claude Code's own heuristic.
+    //
+    // Scoped at the exact file, not at the write category. Resolution ranks by specificity,
+    // and the default profile already allows writes anywhere under the repo root with a
+    // path-scoped rule, so a category-wide ask would lose to it and never fire. That is
+    // correct behaviour and worth knowing: to pause one thing, name that thing.
+    repositories.permissionRules.insert({
+        id: randomUUID(), projectId, hireId: null, action: 'write',
+        pathScope: path.join(cwd, 'asked.txt'), commandPattern: null,
+        effect: (process.env.STAFFORD_TASK_SMOKE_EFFECT as 'ask' | 'deny') ?? 'ask',
+        createdAt: new Date().toISOString(), createdBy: 'task-smoke'
+    });
+    permissionGate?.invalidate();
+
+    const three = taskService.assign({
+        hireId,
+        text: 'Create a file named asked.txt in the repository root containing the word yes. Then stop.'
+    });
+    const asking = taskService.start(three.id);
+
+    // Wait for the gate to park a pending ask, then answer it the way I would in the UI.
+    let pending = approvalRegistry?.list() ?? [];
+    for (let i = 0; i < 120 && pending.length === 0; i += 1) {
+        await new Promise((r) => setTimeout(r, 500));
+        pending = approvalRegistry?.list() ?? [];
+    }
+    if (pending.length === 0) {
+        out('NO ASK ARRIVED, so this scenario proved nothing');
+    } else {
+        const ask = pending[0]!;
+        out('paused on an ask: action=' + ask.action + ' command=' + (ask.command ?? 'none'));
+        out('the task while it waits: state=' + (repositories.tasks.get(three.id)?.state ?? '?') +
+            ', colleague roster state=' + (repositories.hires.get(hireId)?.state ?? '?'));
+        approvalRegistry?.answer(ask.id, true, null);
+        out('answered approve, so the paused turn resumes');
+    }
+    await asking.finished;
+    show('after the ask was answered', three.id);
+
+    out('=== 5: a forgotten sentinel lands in needs-you, not failed and not looping ===');
+    const two = taskService.assign({
+        hireId,
+        text: 'Reply with exactly the word ACKNOWLEDGED and nothing else. Do not use any tool, ' +
+            'and do not emit any completion marker.'
+    });
+    await taskService.start(two.id).finished;
+    show('after the bound', two.id);
+
+    out('=== task smoke done ===');
 }
 
 app.whenReady().then(async () => {
@@ -1028,7 +1236,24 @@ app.whenReady().then(async () => {
         // The pending permission approvals, and the person's answer, which resolves the
         // paused seam for exactly that ask so the right turn continues or stops.
         pendingApprovals: () => ({ pending: approvalRegistry ? approvalRegistry.list() : [] }),
-        answerApproval: (id, approve, note) => { approvalRegistry?.answer(id, approve, note); }
+        answerApproval: (id, approve, note) => { approvalRegistry?.answer(id, approve, note); },
+
+        // Tasks. The three writes go through the service, which is the only thing in the app
+        // that writes a task state and which names the actor itself on every write.
+        tasksByHire: (hireId, limit) => ({
+            rows: (repositories?.tasks.byHire(hireId, limit) ?? []).map(taskRow)
+        }),
+        assignTask: (payload) => taskWrite(() => requireTasks().assign(payload)),
+        startTask: (id) => taskWrite(() => {
+            // The reply carries the task as it stands once it is running; the attempt itself
+            // continues without the renderer waiting on it.
+            const { task, finished } = requireTasks().start(id);
+            void finished.catch((error: unknown) => {
+                smoke('task ' + id + ' ended badly: ' + (error instanceof Error ? error.message : String(error)));
+            });
+            return task;
+        }),
+        reviewTask: (payload) => taskWrite(() => requireTasks().review(payload.id, payload.decision, payload.note))
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +
@@ -1043,6 +1268,14 @@ app.whenReady().then(async () => {
     // that the "green tests, broken in the real app" regression always lived in.
     if (process.env.STAFFORD_DELIVERY_SMOKE === '1' && repositories && runnerManager) {
         await runDeliverySmoke();
+        void quit();
+        return;
+    }
+
+    // The task phase-1 proof, driven inside the real running app: the real service, the real
+    // runner, the real gate, the real checkpoint. Same shape as the delivery smoke above.
+    if (process.env.STAFFORD_TASK_SMOKE === '1' && repositories && taskService) {
+        await runTaskSmoke();
         void quit();
         return;
     }
