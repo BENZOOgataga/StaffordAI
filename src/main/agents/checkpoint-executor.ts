@@ -105,6 +105,18 @@ export function checkpointBranchName(hireId: string, stamp: string): string {
     return 'stafford/checkpoint/' + refSlug(hireId) + '/' + refSlug(stamp);
 }
 
+/**
+ * The branch a task's result lands on.
+ *
+ * A different prefix from the drain's checkpoints on purpose. A colleague that both works
+ * tasks and gets drained would otherwise pile branches under one prefix with nothing saying
+ * which is the result I am meant to review, and the task id in the name means a branch points
+ * back at its task without a lookup.
+ */
+export function taskBranchName(hireId: string, taskId: string): string {
+    return 'stafford/task/' + refSlug(hireId) + '/' + refSlug(taskId);
+}
+
 function outcome(reason: CheckpointReason, over: Partial<CheckpointOutcome> = {}): CheckpointOutcome {
     return { committed: false, branch: null, commitId: null, reason, detail: null, ...over };
 }

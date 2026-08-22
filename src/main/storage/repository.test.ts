@@ -40,7 +40,9 @@ function hire(id: string, at: string): HiredAgent {
 function task(id: string, at: string, projectId = 'p1'): Task {
     return {
         id, agentId: 'h1', projectId, text: 't', kind: 'feature', origin: { kind: 'user' },
-        approvals: [], createdAt: at, startedAt: null, completedAt: null
+        approvals: [], createdAt: at, startedAt: null, completedAt: null,
+        state: 'assigned', resultBranch: null, resultCommit: null,
+        resultSummary: null, sessionId: null, failedReason: null, updatedAt: null
     };
 }
 
