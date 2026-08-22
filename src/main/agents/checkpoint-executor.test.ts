@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { checkpointRepo, checkpointBranchName, type CheckpointDeps, type GitRun } from './checkpoint-executor.ts';
+import { checkpointRepo, checkpointBranchName, taskBranchName, type CheckpointDeps, type GitRun } from './checkpoint-executor.ts';
 import { realCheckpointDeps } from './checkpoint-git.ts';
 import { currentPlatform } from '../platform/index.ts';
 
@@ -196,4 +196,82 @@ test('checkpointBranchName is ref-safe: unsafe characters slugged, no dots or le
     assert.ok(!checkpointBranchName('..', 'y').includes('..'), 'no double dot in a ref');
     assert.ok(!checkpointBranchName('.hidden', 'y').includes('/.'), 'no leading dot in a segment');
     assert.equal(checkpointBranchName('name.lock', 'y'), 'stafford/checkpoint/name-lock/y');
+});
+
+// --- the task result branch -------------------------------------------------
+
+test('taskBranchName carries the task id and sits under its own prefix, not the drains', () => {
+    assert.equal(taskBranchName('marion', 'abc-123'), 'stafford/task/marion/abc-123');
+    assert.equal(taskBranchName('a b/c:d', 'x y'), 'stafford/task/a-b-c-d/x-y');
+    assert.ok(!taskBranchName('..', 'y').includes('..'), 'no double dot in a ref');
+    assert.equal(taskBranchName('n', 'name.lock'), 'stafford/task/n/name-lock');
+    assert.ok(!taskBranchName('h', 't').startsWith(checkpointBranchName('h', 't').split('/').slice(0, 2).join('/')),
+        'a task result and a drain checkpoint must be tellable apart by prefix alone');
+});
+
+test('a task result lands on the branch it names, and leaves the repo exactly as it was', async () => {
+    const dir = makeRepo();
+    try {
+        writeFileSync(path.join(dir, 'a.txt'), 'alpha changed\n');
+        const before = snapshot(dir);
+        const branch = taskBranchName('hire-1', 'task-7');
+
+        const out = await checkpointRepo(deps, {
+            cwd: dir, hireId: 'hire-1', stamp: '2026-08-22T00-00-00',
+            branch, message: 'Stafford task task-7'
+        });
+
+        assert.equal(out.committed, true);
+        assert.equal(out.branch, branch, 'the caller named the ref, so the drains name must not be used');
+        assert.equal(git(dir, 'log', '-1', '--format=%s', branch), 'Stafford task task-7');
+        assert.match(git(dir, 'show', '--stat', '--format=', branch), /a\.txt/);
+        assert.deepEqual(snapshot(dir), before,
+            'a task checkpoint disturbs the working tree, index, HEAD and branch exactly as little as a drain one');
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('THE SAFETY PROPERTY HOLDS FOR TASKS TOO: an untracked file is never swept into a result', async () => {
+    const dir = makeRepo();
+    try {
+        writeFileSync(path.join(dir, 'a.txt'), 'alpha changed\n');
+        // The shape of the accident this prevents: a secret sitting untracked beside the work.
+        writeFileSync(path.join(dir, '.env'), 'TOKEN=do-not-commit\n');
+        const branch = taskBranchName('hire-1', 'task-7');
+
+        const out = await checkpointRepo(deps, {
+            cwd: dir, hireId: 'hire-1', stamp: 's', branch, message: 'task'
+        });
+
+        assert.equal(out.committed, true);
+        const files = git(dir, 'show', '--stat', '--format=', branch);
+        assert.match(files, /a\.txt/, 'the tracked change is saved');
+        assert.equal(files.includes('.env'), false,
+            'an untracked file beside the work is not the work, and a result branch is pushable');
+        assert.equal(readFileSync(path.join(dir, '.env'), 'utf8'), 'TOKEN=do-not-commit\n',
+            'and it is left alone on disk rather than moved or staged');
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a task whose only output is a new file commits nothing, which is a known limit not a failure', async () => {
+    const dir = makeRepo();
+    try {
+        // The common shape of a real task: the deliverable is a file that did not exist.
+        writeFileSync(path.join(dir, 'new-work.txt'), 'the whole deliverable\n');
+
+        const out = await checkpointRepo(deps, {
+            cwd: dir, hireId: 'hire-1', stamp: 's',
+            branch: taskBranchName('hire-1', 'task-8'), message: 'task'
+        });
+
+        assert.equal(out.committed, false);
+        assert.equal(out.reason, 'clean',
+            'staging tracked changes only is what keeps a stray secret out, and the cost is this case');
+        assert.equal(out.branch, null);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
 });

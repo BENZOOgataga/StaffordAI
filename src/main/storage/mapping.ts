@@ -23,6 +23,7 @@ import type {
     DrainReportEntry, DrainOutcome, ChannelMessage, ChannelKind, ChannelRefKind, ActivityRecord, ActivityStatus,
     PermissionRuleRecord
 } from '../../domain/models.ts';
+import { TASK_STATE_VALUES } from '../../domain/task-lifecycle.ts';
 import {
     PUSH_POLICIES, TASK_KINDS, APPROVAL_VERDICTS, DRAIN_OUTCOMES, CHANNEL_KINDS, CHANNEL_REF_KINDS, ACTIVITY_STATUSES
 } from '../../domain/models.ts';
@@ -145,7 +146,10 @@ export function taskToRow(t: Task): Row {
     return {
         id: t.id, agent_id: t.agentId, project_id: t.projectId, text: t.text, kind: t.kind,
         origin: JSON.stringify(t.origin), approvals: JSON.stringify(t.approvals),
-        created_at: t.createdAt, started_at: t.startedAt, completed_at: t.completedAt
+        created_at: t.createdAt, started_at: t.startedAt, completed_at: t.completedAt,
+        state: t.state, result_branch: t.resultBranch, result_commit: t.resultCommit,
+        result_summary: t.resultSummary, session_id: t.sessionId,
+        failed_reason: t.failedReason, updated_at: t.updatedAt
     };
 }
 
@@ -160,7 +164,11 @@ export function taskFromRow(row: Row): Task {
         id: str(row, 'id'), agentId: str(row, 'agent_id'), projectId: str(row, 'project_id'),
         text: str(row, 'text'), kind: oneOf(row, 'kind', Object.values(TASK_KINDS)),
         origin: object<TaskOrigin>(row, 'origin'), approvals,
-        createdAt: str(row, 'created_at'), startedAt: nstr(row, 'started_at'), completedAt: nstr(row, 'completed_at')
+        createdAt: str(row, 'created_at'), startedAt: nstr(row, 'started_at'), completedAt: nstr(row, 'completed_at'),
+        state: oneOf(row, 'state', [...TASK_STATE_VALUES]),
+        resultBranch: nstr(row, 'result_branch'), resultCommit: nstr(row, 'result_commit'),
+        resultSummary: nstr(row, 'result_summary'), sessionId: nstr(row, 'session_id'),
+        failedReason: nstr(row, 'failed_reason'), updatedAt: nstr(row, 'updated_at')
     };
 }
 

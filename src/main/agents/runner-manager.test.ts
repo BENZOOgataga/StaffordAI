@@ -294,3 +294,95 @@ test('drainables expose each served colleague with a checkpoint that disposes th
     assert.ok(results.every((r) => r.committed), 'each colleague checkpoints');
     assert.deepEqual(committed.map((c) => c.hireId).sort(), ['hireA', 'hireB']);
 });
+
+// --- the task turn ----------------------------------------------------------
+
+test('a task turn returns its result, which a message turn has no way to report', async () => {
+    const { spawn } = responder();
+    const { deps } = fakeDeps(spawn);
+    const manager = new ClaudeRunnerManager(deps);
+
+    const result = await manager.submitTaskTurn('hireA', 'do the task', null);
+
+    assert.ok(result, 'a task needs the turn back to decide whether it finished');
+    assert.equal(result.status, 'completed');
+    assert.equal(result.assistantText, 'reply:do the task');
+    assert.equal(result.sessionId, 'sess-1');
+});
+
+test('a task resumes the session it was given, not the colleagues chat session', async () => {
+    const { spawn, children } = responder();
+    const { deps, rec } = fakeDeps(spawn);
+    const manager = new ClaudeRunnerManager(deps);
+
+    // A chat first, which binds a session for the colleague.
+    await manager.submit('hireA', 'hello');
+    assert.equal(rec.sessions.get('hireA'), 'sess-1');
+
+    await manager.submitTaskTurn('hireA', 'task turn', 'task-session-9');
+
+    const args = children[children.length - 1]!.args;
+    const resumeIdx = args.indexOf('--resume');
+    assert.notEqual(resumeIdx, -1, 'a task turn with a session id must resume it');
+    assert.equal(args[resumeIdx + 1], 'task-session-9',
+        'a task resumes its own thread, so a task transcript and a conversation stay separate');
+});
+
+test('a task turn does not bind its session onto the hire, so it cannot hijack the chat thread', async () => {
+    const { spawn } = responder();
+    const { deps, rec } = fakeDeps(spawn);
+    const manager = new ClaudeRunnerManager(deps);
+
+    await manager.submitTaskTurn('hireA', 'task turn', null);
+
+    assert.deepEqual(rec.binds, [], 'the task row owns the task session, not the hires sessions map');
+    assert.equal(rec.sessions.get('hireA'), undefined);
+});
+
+test('THE SHARED QUEUE: a message sent mid-task waits, rather than racing it in one working tree', async () => {
+    const { spawn, children } = responder();
+    const { deps } = fakeDeps(spawn);
+    const manager = new ClaudeRunnerManager(deps);
+
+    const task = manager.submitTaskTurn('hireA', 'task turn', null);
+    const message = manager.submit('hireA', 'a message while it works');
+    await Promise.all([task, message]);
+
+    assert.equal(children.length, 2, 'two turns ran');
+    // The user message, not whatever control frame the runner writes first.
+    const sent = (child: (typeof children)[number]): string => {
+        const line = child.writes.find((w) => w.includes('"type":"user"'));
+        return (JSON.parse((line ?? '{}').trim()) as { message?: { content?: string } }).message?.content ?? '';
+    };
+    assert.equal(sent(children[0]!), 'task turn');
+    assert.equal(sent(children[1]!), 'a message while it works',
+        'one colleague is one queue: two Claude children in one repo would race the working tree');
+});
+
+test('a task turn with no resolvable project returns null rather than pretending it ran', async () => {
+    const { spawn } = responder();
+    const { deps } = fakeDeps(spawn, { resolveTarget: () => null });
+    const manager = new ClaudeRunnerManager(deps);
+
+    assert.equal(await manager.submitTaskTurn('hireA', 'task turn', null), null);
+});
+
+test('a task turn goes through the same permission seam a message does', async () => {
+    const { spawn } = responder();
+    const seen: Array<{ hireId: string; projectId: string }> = [];
+    const { deps } = fakeDeps(spawn, {
+        makeCanUseTool: (ctx) => {
+            seen.push({ hireId: ctx.hireId, projectId: ctx.projectId });
+            return () => ({ behavior: 'allow', updatedInput: {} });
+        }
+    });
+    const manager = new ClaudeRunnerManager(deps);
+
+    await manager.submit('hireA', 'a message');
+    await manager.submitTaskTurn('hireA', 'a task', null);
+
+    assert.deepEqual(seen, [
+        { hireId: 'hireA', projectId: 'p-hireA' },
+        { hireId: 'hireA', projectId: 'p-hireA' }
+    ], 'a task must not be able to run under a looser policy than a message');
+});

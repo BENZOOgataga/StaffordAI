@@ -26,6 +26,8 @@ export const PUSH_POLICIES = {
 } as const;
 export type PushPolicy = (typeof PUSH_POLICIES)[keyof typeof PUSH_POLICIES];
 
+import type { TaskState } from './task-lifecycle.ts';
+
 /** A chore is a one-off; only a feature can open the pipeline. */
 export const TASK_KINDS = { CHORE: 'chore', FEATURE: 'feature' } as const;
 export type TaskKind = (typeof TASK_KINDS)[keyof typeof TASK_KINDS];
@@ -124,6 +126,17 @@ export interface Task {
     createdAt: string;
     startedAt: string | null;
     completedAt: string | null;
+    /** Where the task is in its lifecycle. See domain/task-lifecycle.ts for who may move it. */
+    state: TaskState;
+    /** The branch the colleague's work landed on, or null before there is any. */
+    resultBranch: string | null;
+    resultCommit: string | null;
+    /** The colleague's own closing account of what it did, the first thing I read at review. */
+    resultSummary: string | null;
+    /** The Claude session the task ran under, so its transcript is findable. */
+    sessionId: string | null;
+    failedReason: string | null;
+    updatedAt: string | null;
 }
 
 /**

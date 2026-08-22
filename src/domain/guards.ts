@@ -14,7 +14,8 @@
 import type {
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
     ProjectCreate, HireCreate, ApprovalAnswer,
-    PermissionRulesRequest, PermissionEffectiveRequest, PermissionAdd, PermissionUpdate, PermissionRemove
+    PermissionRulesRequest, PermissionEffectiveRequest, PermissionAdd, PermissionUpdate, PermissionRemove,
+    TasksByHireRequest, TaskAssign, TaskStart, TaskReview
 } from '../shared/ipc.ts';
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -158,4 +159,35 @@ export function isPermissionUpdate(value: unknown): value is PermissionUpdate {
 
 export function isPermissionRemove(value: unknown): value is PermissionRemove {
     return isObject(value) && isBoundedString(value.id, 256);
+}
+
+// --- tasks ------------------------------------------------------------------
+
+/** A read of one colleague's tasks, capped like the other per-hire reads. */
+export function isTasksByHire(value: unknown): value is TasksByHireRequest {
+    return isObject(value) && isHireId(value.hireId) && isBoundedInt(value.limit, 1, 500);
+}
+
+/**
+ * Assigning a task: a colleague and an instruction.
+ *
+ * The instruction is bounded because it becomes a prompt, and an unbounded one would be a
+ * way to hand a colleague something far larger than anything I would type. It is otherwise
+ * taken verbatim: it is my own words to my own colleague, so there is nothing to sanitise,
+ * and the thing that governs what the colleague may then do is the gate, not this string.
+ */
+export function isTaskAssign(value: unknown): value is TaskAssign {
+    return isObject(value) && isHireId(value.hireId) && isBoundedString(value.text, 8192);
+}
+
+export function isTaskStart(value: unknown): value is TaskStart {
+    return isObject(value) && isBoundedString(value.id, 256);
+}
+
+/** My review decision. The three verdicts are an exact set, so a stray string is refused. */
+export function isTaskReview(value: unknown): value is TaskReview {
+    if (!isObject(value)) return false;
+    if (!isBoundedString(value.id, 256)) return false;
+    if (value.decision !== 'approve' && value.decision !== 'fail' && value.decision !== 'send-back') return false;
+    return value.note === null || (typeof value.note === 'string' && value.note.length <= 4096);
 }

@@ -31,7 +31,7 @@
  * Tested against Claude Code 2.1.237 (same as phase 2).
  */
 
-import { ClaudeRunner, autoApproveTool, type CanUseTool, type RunnerChild, type SpawnFn, type WireDirection } from './claude-runner.ts';
+import { ClaudeRunner, autoApproveTool, type CanUseTool, type RunnerChild, type SpawnFn, type TurnResult, type WireDirection } from './claude-runner.ts';
 import { AGENT_STATES, type AgentState } from '../../domain/agent-state.ts';
 import type { CheckpointResult, DrainableAgent } from './drain.ts';
 
@@ -131,8 +131,33 @@ export class ClaudeRunnerManager {
         const live = this.#liveFor(hireId);
         // Chain onto the tail so turns run one at a time, in order. A failed turn does
         // not break the chain: the catch keeps the queue flowing for the next message.
-        const next = live.tail.then(() => this.#runTurn(hireId, text)).catch(() => {});
+        const next = live.tail.then(async () => { await this.#runTurn(hireId, text); }).catch(() => {});
         live.tail = next;
+        return next;
+    }
+
+    /**
+     * One turn of a task, on the same per-colleague queue as a chat message.
+     *
+     * The queue is the point of routing tasks through here rather than spawning a second
+     * runner. A task and a message to the same colleague would otherwise be two Claude
+     * children writing the same working tree at once, and the last writer would win a race
+     * nobody asked for. Sharing the queue means a message sent mid-task waits for the turn
+     * in flight, which is the behaviour a person expects from one colleague.
+     *
+     * It resumes the session the caller names rather than the colleague's chat session, and
+     * does not bind what it harvests into the hire's sessions map, so a task's transcript
+     * and a conversation stay separate threads. The task row owns its own session id.
+     *
+     * Returns null when the colleague has no resolvable project, which is the same "no turn
+     * can run" the message path treats as a no-op.
+     */
+    submitTaskTurn(hireId: string, text: string, resumeSessionId: string | null): Promise<TurnResult | null> {
+        const live = this.#liveFor(hireId);
+        const next = live.tail.then(() => this.#runTurn(hireId, text, { resumeSessionId, bindSession: false }));
+        // The queue must keep flowing even if this turn throws, exactly as submit does, but
+        // the caller still needs the failure rather than a silent null.
+        live.tail = next.then(() => {}, () => {});
         return next;
     }
 
@@ -190,11 +215,23 @@ export class ClaudeRunnerManager {
         return live;
     }
 
-    async #runTurn(hireId: string, text: string): Promise<void> {
+    /**
+     * The one turn body, shared by the message path and the task path.
+     *
+     * `over` lets a task resume its own session instead of the colleague's chat session and
+     * keep what it harvests out of the hire's sessions map. Everything else is deliberately
+     * identical for both callers: the same isolation, the same permission seam, the same
+     * reaper, the same roster state. A task must not be able to run under looser conditions
+     * than a message, and the surest way to guarantee that is one code path.
+     */
+    async #runTurn(
+        hireId: string, text: string,
+        over?: { resumeSessionId: string | null; bindSession: boolean }
+    ): Promise<TurnResult | null> {
         const target = this.#deps.resolveTarget(hireId);
         if (!target) {
             // No project/cwd resolvable, so there is nothing to run. Leave state as is.
-            return;
+            return null;
         }
         const live = this.#liveFor(hireId);
         live.cwd = target.cwd;
@@ -234,12 +271,16 @@ export class ClaudeRunnerManager {
         // lifecycle now, not from hooks, which no longer fire on this path.
         this.#setState(hireId, AGENT_STATES.WORKING);
 
-        const result = await runner.runTurn({ text, resumeSessionId: target.resumeSessionId });
+        const resumeSessionId = over ? over.resumeSessionId : target.resumeSessionId;
+        const result = await runner.runTurn({ text, resumeSessionId });
 
         live.runner = null;
 
-        // Persist the session id so the next turn resumes, and so it survives a restart.
-        if (result.sessionId) this.#deps.bindSession(hireId, target.projectId, result.sessionId);
+        // Persist the session id so the next turn resumes, and so it survives a restart. A
+        // task turn skips this: its session belongs to the task row, not to the chat thread.
+        if (result.sessionId && (over?.bindSession ?? true)) {
+            this.#deps.bindSession(hireId, target.projectId, result.sessionId);
+        }
 
         // Record Claude's reply into the conversation, both sides now visible. Only a
         // clean turn with text is recorded; a timeout or a dead process records nothing.
@@ -260,6 +301,8 @@ export class ClaudeRunnerManager {
         // Idle when the turn ends, whatever the outcome, so the card accepts input
         // again rather than sticking on working after an error.
         this.#setState(hireId, AGENT_STATES.IDLE);
+
+        return result;
     }
 
     #setState(hireId: string, state: AgentState): void {

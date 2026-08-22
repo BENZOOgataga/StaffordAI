@@ -40,7 +40,9 @@ function hire(id: string, at: string): HiredAgent {
 function task(id: string, at: string, projectId = 'p1'): Task {
     return {
         id, agentId: 'h1', projectId, text: 't', kind: 'feature', origin: { kind: 'user' },
-        approvals: [], createdAt: at, startedAt: null, completedAt: null
+        approvals: [], createdAt: at, startedAt: null, completedAt: null,
+        state: 'assigned', resultBranch: null, resultCommit: null,
+        resultSummary: null, sessionId: null, failedReason: null, updatedAt: null
     };
 }
 
@@ -77,6 +79,33 @@ test('a task inserts, reads back deep-equal, and updates', () => {
         const done: Task = { ...t, completedAt: '2026-08-10T01:00:00Z' };
         repos.tasks.update(done);
         assert.deepEqual(repos.tasks.get('t1'), done);
+    });
+});
+
+test('a task persists its lifecycle columns, not just the ones it was born with', () => {
+    // The fixture is all defaults, so a round-trip of a fresh task passes even when the
+    // statements never mention the lifecycle columns. A task that has actually been worked
+    // is the case that catches it, and it is the only case the service ever writes.
+    withRepos((repos) => {
+        const t = task('t1', '2026-08-10T00:00:00Z');
+        repos.tasks.insert(t);
+        const worked: Task = {
+            ...t, state: 'needs-you', startedAt: '2026-08-10T00:05:00Z',
+            resultBranch: 'stafford/task/h1/t1', resultCommit: 'abc1234',
+            resultSummary: 'Wrote the file.', sessionId: 'sess-1',
+            failedReason: null, updatedAt: '2026-08-10T00:09:00Z'
+        };
+        repos.tasks.update(worked);
+        assert.deepEqual(repos.tasks.get('t1'), worked,
+            'a lifecycle write that does not survive the database is a task that silently forgets it ran');
+    });
+});
+
+test('a task inserted mid-lifecycle keeps its state, so insert is not defaults-only', () => {
+    withRepos((repos) => {
+        const t: Task = { ...task('t2', '2026-08-10T00:00:00Z'), state: 'working', sessionId: 's9' };
+        repos.tasks.insert(t);
+        assert.deepEqual(repos.tasks.get('t2'), t);
     });
 });
 

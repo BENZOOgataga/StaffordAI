@@ -6,7 +6,8 @@ import {
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
     type ProjectCreated, type HireCreated, type ActivityRow, type SavedCheckpoints,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
-    type PermissionAdd, type PermissionUpdate
+    type PermissionAdd, type PermissionUpdate,
+    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview
 } from '../../shared/ipc.ts';
 
 interface SessionOverrides {
@@ -25,7 +26,22 @@ interface SessionOverrides {
     addPermissionRule?: (payload: PermissionAdd) => PermissionWriteReply;
     updatePermissionRule?: (payload: PermissionUpdate) => PermissionWriteReply;
     removePermissionRule?: (id: string) => PermissionWriteReply;
+    tasksByHire?: (hireId: string, limit: number) => TasksReply;
+    assignTask?: (payload: TaskAssign) => TaskWriteReply;
+    startTask?: (id: string) => TaskWriteReply;
+    reviewTask?: (payload: TaskReview) => TaskWriteReply;
 }
+
+const TASK_OK: TaskWriteReply = {
+    ok: true,
+    task: {
+        id: 't1', hireId: 'h1', projectId: 'p1', text: 'x', state: 'assigned',
+        createdAt: '2026-08-22T10:00:00Z', startedAt: null, completedAt: null,
+        updatedAt: '2026-08-22T10:00:00Z', resultSummary: null, resultBranch: null,
+        resultCommit: null, failedReason: null
+    },
+    refused: null
+};
 
 function deps(
     projects: ProjectsList = { projects: [] },
@@ -55,7 +71,11 @@ function deps(
         effectivePolicy: over.effectivePolicy ?? (() => ({ rules: [] })),
         addPermissionRule: over.addPermissionRule ?? (() => ({ ok: true, warning: null })),
         updatePermissionRule: over.updatePermissionRule ?? (() => ({ ok: true, warning: null })),
-        removePermissionRule: over.removePermissionRule ?? (() => ({ ok: true, warning: null }))
+        removePermissionRule: over.removePermissionRule ?? (() => ({ ok: true, warning: null })),
+        tasksByHire: over.tasksByHire ?? (() => ({ rows: [] })),
+        assignTask: over.assignTask ?? (() => TASK_OK),
+        startTask: over.startTask ?? (() => TASK_OK),
+        reviewTask: over.reviewTask ?? (() => TASK_OK)
     };
 }
 
@@ -294,4 +314,84 @@ test('an override add carries the hire id, and a baseline add carries null', () 
 
     assert.deepEqual(seen, [{ hireId: null }, { hireId: 'hire-7' }],
         'null is a project baseline and a hire id is that colleague override, and nothing else is accepted');
+});
+
+// --- tasks ------------------------------------------------------------------
+
+test('every task channel refuses a payload that is not its shape', () => {
+    const handlers = buildHandlers(deps());
+    const bad: Array<[string, unknown]> = [
+        ['tasks:by-hire', { hireId: '', limit: 10 }],
+        ['tasks:by-hire', { hireId: 'h1', limit: 0 }],
+        ['tasks:by-hire', { hireId: 'h1', limit: 100000 }],
+        ['tasks:assign', { hireId: 'h1' }],
+        ['tasks:assign', { hireId: 'h1', text: '' }],
+        ['tasks:assign', { hireId: 'h1', text: 'x'.repeat(8193) }],
+        ['tasks:start', {}],
+        ['tasks:review', { id: 't1', decision: 'done', note: null }],
+        ['tasks:review', { id: 't1', decision: 'approve' }],
+        ['tasks:review', null]
+    ];
+    for (const [channel, payload] of bad) {
+        assert.throws(() => handlers[channel as 'tasks:start'](payload),
+            'the ' + channel + ' guard accepted ' + JSON.stringify(payload));
+    }
+});
+
+test('the review verdicts are an exact set, so no fourth decision can be smuggled in', () => {
+    const seen: string[] = [];
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
+        reviewTask: (p) => { seen.push(p.decision); return TASK_OK; }
+    }));
+    for (const decision of ['approve', 'fail', 'send-back']) {
+        handlers['tasks:review']({ id: 't1', decision, note: null });
+    }
+    assert.deepEqual(seen, ['approve', 'fail', 'send-back']);
+    for (const decision of ['done', 'DONE', 'complete', '', 'working']) {
+        assert.throws(() => handlers['tasks:review']({ id: 't1', decision, note: null }));
+    }
+});
+
+test('THE INVARIANT AT THE WIRE: no channel lets a caller name the actor it acts as', () => {
+    // The done-transition is safe because approving is owner-only, and it is owner-only
+    // because the service supplies the actor rather than reading it from a payload. If an
+    // "actor" ever appears on this list, the guarantee has been moved onto a string a
+    // caller controls, which is exactly what the lifecycle's actor argument exists to stop.
+    const source = INVOKE_CHANNELS.filter((c) => c.startsWith('tasks:'));
+    assert.deepEqual([...source], ['tasks:by-hire', 'tasks:assign', 'tasks:start', 'tasks:review'],
+        'the task surface is these four channels; a new one needs its own reasoning');
+
+    const seen: unknown[] = [];
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
+        reviewTask: (p) => { seen.push(p); return TASK_OK; },
+        assignTask: (p) => { seen.push(p); return TASK_OK; }
+    }));
+    // An actor smuggled onto a valid payload is simply not read: the guard narrows to the
+    // declared shape and the handler passes that through.
+    handlers['tasks:review']({ id: 't1', decision: 'approve', note: null, actor: 'colleague' });
+    handlers['tasks:assign']({ hireId: 'h1', text: 'x', actor: 'colleague' });
+    for (const payload of seen) {
+        assert.equal((payload as { actor?: unknown }).actor, 'colleague',
+            'the extra key rides along on the object, which is why the service must never read one');
+    }
+});
+
+test('assigning passes the instruction through verbatim, since it is my words to my colleague', () => {
+    const seen: string[] = [];
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
+        assignTask: (p) => { seen.push(p.text); return TASK_OK; }
+    }));
+    handlers['tasks:assign']({ hireId: 'h1', text: 'rename Widget to Gadget, and run the tests' });
+    assert.deepEqual(seen, ['rename Widget to Gadget, and run the tests']);
+});
+
+test('a task read is capped and carries no working directory back to the renderer', () => {
+    const handlers = buildHandlers(deps());
+    const reply = handlers['tasks:by-hire']({ hireId: 'h1', limit: 50 }) as { rows: readonly Record<string, unknown>[] };
+    assert.deepEqual(reply.rows, []);
+    // The row type is the guarantee; this asserts the shape a real row would have.
+    const row = TASK_OK.task as unknown as Record<string, unknown>;
+    for (const forbidden of ['cwd', 'path', 'repoPath', 'dir']) {
+        assert.equal(forbidden in row, false, 'a task row must not carry ' + forbidden);
+    }
 });

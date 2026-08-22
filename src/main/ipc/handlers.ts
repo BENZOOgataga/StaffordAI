@@ -18,12 +18,14 @@ import {
     type ProjectCreated, type HireCreated, type ActivityRow, type ActivityByHireReply,
     type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
-    type PermissionAdd, type PermissionUpdate
+    type PermissionAdd, type PermissionUpdate,
+    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview
 } from '../../shared/ipc.ts';
 import {
     isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
     isApprovalAnswer,
-    isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove
+    isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove,
+    isTasksByHire, isTaskAssign, isTaskStart, isTaskReview
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 
@@ -92,6 +94,21 @@ export interface HandlerDeps {
     readonly pendingApprovals: () => PendingApprovals;
     /** The person's answer to a pending ask, which resolves that turn's paused seam. */
     readonly answerApproval: (id: string, approve: boolean, note: string | null) => void;
+    /** One colleague's tasks, newest first, capped. */
+    readonly tasksByHire: (hireId: string, limit: number) => TasksReply;
+    /** Creates a task for a colleague, in assigned. Does not start it. */
+    readonly assignTask: (payload: TaskAssign) => TaskWriteReply;
+    /**
+     * Starts an assigned task. Returns as soon as the run is under way rather than when it
+     * finishes, because the whole point of a task is that I walk away from it, and an invoke
+     * that waited for the colleague would hold the renderer for minutes.
+     */
+    readonly startTask: (id: string) => TaskWriteReply;
+    /**
+     * My decision at review. This is the only route to done in the entire application, and
+     * it is reachable only from Stafford's own window.
+     */
+    readonly reviewTask: (payload: TaskReview) => TaskWriteReply;
 }
 
 /**
@@ -214,6 +231,26 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'permissions:remove': (payload: unknown): PermissionWriteReply => {
             if (!isPermissionRemove(payload)) throw new Error('permissions:remove requires {id}');
             return deps.removePermissionRule(payload.id);
+        },
+
+        // Tasks. Read is per colleague and capped; the three writes each name their own
+        // actor inside the service, so nothing on the wire chooses who is acting.
+        'tasks:by-hire': (payload: unknown): TasksReply => {
+            if (!isTasksByHire(payload)) throw new Error('tasks:by-hire requires {hireId,limit}');
+            return deps.tasksByHire(payload.hireId, payload.limit);
+        },
+        'tasks:assign': (payload: unknown): TaskWriteReply => {
+            if (!isTaskAssign(payload)) throw new Error('tasks:assign requires {hireId,text}');
+            return deps.assignTask(payload);
+        },
+        'tasks:start': (payload: unknown): TaskWriteReply => {
+            if (!isTaskStart(payload)) throw new Error('tasks:start requires {id}');
+            return deps.startTask(payload.id);
+        },
+        // The only route to done. Renderer-to-main, like every channel here.
+        'tasks:review': (payload: unknown): TaskWriteReply => {
+            if (!isTaskReview(payload)) throw new Error('tasks:review requires {id,decision,note}');
+            return deps.reviewTask(payload);
         }
     };
 }

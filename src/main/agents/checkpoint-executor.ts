@@ -79,6 +79,18 @@ export interface CheckpointRequest {
     /** A timestamp string for the branch name, injected so the module reads no clock. */
     readonly stamp: string;
     readonly budgetMs?: number;
+    /**
+     * The ref to point at the commit, overriding the drain's checkpoint name. A task result
+     * uses `taskBranchName` here so it lands under its own prefix and carries its task id.
+     *
+     * Only the name changes. The staging rule does not, which is the reason a task reuses
+     * this function rather than committing for itself: `add -u` stages tracked modifications
+     * only, so a task result can never sweep up an untracked .env the colleague happened to
+     * write next to its work.
+     */
+    readonly branch?: string;
+    /** The commit message, overriding the drain's. */
+    readonly message?: string;
 }
 
 export const DEFAULT_CHECKPOINT_BUDGET_MS = 15_000;
@@ -103,6 +115,18 @@ function refSlug(value: string): string {
 /** The checkpoint branch for a hire and a timestamp, both slugged to be ref-safe. */
 export function checkpointBranchName(hireId: string, stamp: string): string {
     return 'stafford/checkpoint/' + refSlug(hireId) + '/' + refSlug(stamp);
+}
+
+/**
+ * The branch a task's result lands on.
+ *
+ * A different prefix from the drain's checkpoints on purpose. A colleague that both works
+ * tasks and gets drained would otherwise pile branches under one prefix with nothing saying
+ * which is the result I am meant to review, and the task id in the name means a branch points
+ * back at its task without a lookup.
+ */
+export function taskBranchName(hireId: string, taskId: string): string {
+    return 'stafford/task/' + refSlug(hireId) + '/' + refSlug(taskId);
 }
 
 function outcome(reason: CheckpointReason, over: Partial<CheckpointOutcome> = {}): CheckpointOutcome {
@@ -166,8 +190,8 @@ export async function checkpointRepo(deps: CheckpointDeps, req: CheckpointReques
             // a failure, so this is an honest clean, distinct from an error.
             if (tree === headTreeSha) return outcome('clean');
 
-            const branch = checkpointBranchName(req.hireId, req.stamp);
-            const message = 'Stafford checkpoint for ' + req.hireId + ' at ' + req.stamp;
+            const branch = req.branch ?? checkpointBranchName(req.hireId, req.stamp);
+            const message = req.message ?? ('Stafford checkpoint for ' + req.hireId + ' at ' + req.stamp);
             // commit-tree builds a commit object from the tree with HEAD as parent. It
             // reads no index and fires no hook. Signing off, identity Stafford.
             const commit = await run(

@@ -41,6 +41,8 @@ const TASK: Task = {
     id: 't1', agentId: 'h1', projectId: 'p1', text: 'do the thing', kind: 'feature',
     origin: { kind: 'agent', agentId: 'h2' },
     approvals: [{ agentId: 'h3', verdict: 'pending', note: null, at: null }],
+    state: 'assigned', resultBranch: null, resultCommit: null,
+    resultSummary: null, sessionId: null, failedReason: null, updatedAt: null,
     createdAt: '2026-08-10T00:00:00Z', startedAt: null, completedAt: null
 };
 

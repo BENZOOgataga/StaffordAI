@@ -18,7 +18,8 @@ import {
     type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
     type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
-    type PermissionAdd, type PermissionUpdate
+    type PermissionAdd, type PermissionUpdate,
+    type TasksReply, type TaskWriteReply
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -172,6 +173,31 @@ const api = Object.freeze({
             invoke('permissions:remove', { id }) as Promise<PermissionWriteReply>,
         /** Fired after every write, so an open config view re-reads. */
         onChanged: (listener: () => void): (() => void) => on('permissions:changed', () => listener())
+    }),
+
+    /**
+     * Tasks (phase 1).
+     *
+     * `review` is the same shape of claim as the permission writes above, and rests on the
+     * same fact: a colleague has no part of this object. Approving a task is the only route
+     * to done anywhere in the application, it exists on this bridge alone, and a colleague
+     * has no bridge. The lifecycle refuses a colleague reaching done as well, so the rule is
+     * enforced in two independent places rather than resting on this one.
+     *
+     * `start` returns as soon as the task is running, not when it finishes. A task is
+     * something I walk away from, so the call that begins one does not wait for it.
+     */
+    tasks: Object.freeze({
+        byHire: (hireId: string, limit: number): Promise<TasksReply> =>
+            invoke('tasks:by-hire', { hireId, limit }) as Promise<TasksReply>,
+        assign: (hireId: string, text: string): Promise<TaskWriteReply> =>
+            invoke('tasks:assign', { hireId, text }) as Promise<TaskWriteReply>,
+        start: (id: string): Promise<TaskWriteReply> =>
+            invoke('tasks:start', { id }) as Promise<TaskWriteReply>,
+        /** approve closes it, fail abandons it, send-back returns it to working. */
+        review: (id: string, decision: 'approve' | 'fail' | 'send-back', note: string | null = null): Promise<TaskWriteReply> =>
+            invoke('tasks:review', { id, decision, note }) as Promise<TaskWriteReply>,
+        onChanged: (listener: () => void): (() => void) => on('tasks:changed', () => listener())
     }),
 
     // The custom frameless title bar's window controls. frameless says whether this
