@@ -157,10 +157,29 @@ The instruction I gave, verbatim, because the first thing I need is to remember 
 
 The colleague's closing summary, which is `result_summary`, its own account of what it did.
 
-What actually changed, which is the branch and the diff. The checkpoint executor already produces a branch of
-tracked changes without disturbing the working tree, so a task checkpoints on completion the same way a drain
-does, and the review shows that branch and its diff. This is the part I trust more than the summary, because it
-is the work rather than a description of the work.
+What actually changed, which is the branch and the diff. This is the part I trust more than the summary, because
+it is the work rather than a description of the work.
+
+The result branch holds what that task did, and nothing else. This took a fix, and the reason is worth keeping
+written down. A drain checkpoint commits whatever is modified in the working tree, which is exactly right for a
+drain: on quit, save everything unsaved. It is wrong for a task result, and a checkpoint deliberately never
+resets the tree, so after one task the tree still carries its changes and the next task's branch inherited them.
+Measured on 2026-08-22, a task that changed nothing produced a branch holding the previous task's edit. That
+makes "review what this colleague did" a false claim, and approving a task could carry in work it never touched.
+
+So a task records the tracked state of the tree before its first turn, and the result is the difference between
+that and the state at the end, committed onto HEAD. The branch is one reviewable diff of the task's own work.
+
+Refusing to start on a dirty tree was the other candidate and is not viable: since the checkpoint leaves the
+tree alone, the tree is dirty the moment any task finishes, so a dirty-tree refusal would let exactly one task
+ever run until someone cleaned up by hand.
+
+A new file is a special case, because staging tracked changes only is what keeps a stray `.env` off a branch I
+might push, and the cost of that rule is that a task whose whole output is a new file would commit nothing. The
+answer is not to sweep up everything untracked. A colleague names the new files that are its deliverable, and
+each name is then validated: inside the repository, not ignored, not matching a secret pattern. Naming a file is
+a claim, not an authorisation. What was refused is recorded on the task, so the review can say why a file the
+colleague mentioned is not on the branch.
 
 Any asks the task hit along the way, from the `approvals` array, so I can see what it wanted to do and what I
 allowed.

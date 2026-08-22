@@ -149,7 +149,10 @@ export function taskToRow(t: Task): Row {
         created_at: t.createdAt, started_at: t.startedAt, completed_at: t.completedAt,
         state: t.state, result_branch: t.resultBranch, result_commit: t.resultCommit,
         result_summary: t.resultSummary, session_id: t.sessionId,
-        failed_reason: t.failedReason, updated_at: t.updatedAt
+        failed_reason: t.failedReason, updated_at: t.updatedAt,
+        baseline_tree: t.baselineTree,
+        declared_outputs: JSON.stringify(t.declaredOutputs),
+        refused_outputs: t.refusedOutputs
     };
 }
 
@@ -168,7 +171,12 @@ export function taskFromRow(row: Row): Task {
         state: oneOf(row, 'state', [...TASK_STATE_VALUES]),
         resultBranch: nstr(row, 'result_branch'), resultCommit: nstr(row, 'result_commit'),
         resultSummary: nstr(row, 'result_summary'), sessionId: nstr(row, 'session_id'),
-        failedReason: nstr(row, 'failed_reason'), updatedAt: nstr(row, 'updated_at')
+        failedReason: nstr(row, 'failed_reason'), updatedAt: nstr(row, 'updated_at'),
+        baselineTree: nstr(row, 'baseline_tree'),
+        // Null for every row written before migration 0008, so an absent column reads as none
+        // rather than throwing and taking the whole task list with it.
+        declaredOutputs: row['declared_outputs'] == null ? [] : json<string[]>(row, 'declared_outputs'),
+        refusedOutputs: nstr(row, 'refused_outputs')
     };
 }
 

@@ -11,7 +11,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     TASK_STATES, TASK_STATE_VALUES, canTransition, refusalReason, isTerminal, isTaskState,
-    claimsComplete, stripSentinel, TASK_DONE_SENTINEL, DEFAULT_TASK_TURN_LIMIT
+    claimsComplete, stripSentinel, TASK_DONE_SENTINEL, DEFAULT_TASK_TURN_LIMIT,
+    declaredOutputs, MAX_DECLARED_OUTPUTS
 } from './task-lifecycle.ts';
 
 test('THE INVARIANT: no colleague can move a task to done, from any state whatsoever', () => {
@@ -112,4 +113,47 @@ test('the turn bound is low, because an unbounded unattended task is the unsuper
     assert.ok(DEFAULT_TASK_TURN_LIMIT >= 2, 'one turn is not a task');
     assert.ok(DEFAULT_TASK_TURN_LIMIT <= 10,
         'the cost of too low is a review I did not need; the cost of too high is grinding unwatched');
+});
+
+// --- declared outputs, the wire format --------------------------------------
+
+test('a colleague names new files and they come back in order, de-duplicated', () => {
+    assert.deepEqual(declaredOutputs('Done. <<STAFFORD-TASK-OUTPUTS: a.ts, b/c.md , a.ts>>'),
+        ['a.ts', 'b/c.md']);
+});
+
+test('no marker means no declaration, and prose about files is not a declaration', () => {
+    assert.deepEqual(declaredOutputs('I created a.ts and b.md for you.'), [],
+        'naming files in prose is not naming them, exactly as saying finished is not the sentinel');
+    assert.deepEqual(declaredOutputs(''), []);
+});
+
+test('several markers accumulate, since a colleague may name files as it goes', () => {
+    assert.deepEqual(
+        declaredOutputs('<<STAFFORD-TASK-OUTPUTS: a.ts>> then later <<STAFFORD-TASK-OUTPUTS: b.ts>>'),
+        ['a.ts', 'b.ts']);
+});
+
+test('an unterminated marker yields nothing rather than swallowing the rest of the message', () => {
+    assert.deepEqual(declaredOutputs('<<STAFFORD-TASK-OUTPUTS: a.ts, b.ts and then I kept talking'), []);
+});
+
+test('the declaration is bounded, so a runaway list costs one parse and not a thousand checks', () => {
+    const many = Array.from({ length: 500 }, (_, i) => 'f' + String(i) + '.txt').join(', ');
+    assert.equal(declaredOutputs('<<STAFFORD-TASK-OUTPUTS: ' + many + '>>').length, MAX_DECLARED_OUTPUTS);
+});
+
+test('the summary I read has the outputs marker stripped as well as the sentinel', () => {
+    const text = 'Wrote the parser.\n<<STAFFORD-TASK-OUTPUTS: src/parse.ts>>\n' + TASK_DONE_SENTINEL;
+    assert.equal(stripSentinel(text), 'Wrote the parser.');
+});
+
+test('an unterminated marker is still cut out of the summary, not left as wire noise', () => {
+    assert.equal(stripSentinel('All good.\n<<STAFFORD-TASK-OUTPUTS: a.ts'), 'All good.');
+});
+
+test('declaring a file is not the same as finishing, so the two markers stay independent', () => {
+    assert.equal(claimsComplete('<<STAFFORD-TASK-OUTPUTS: a.ts>>'), false,
+        'naming an output must not close a task by accident');
+    assert.deepEqual(declaredOutputs(TASK_DONE_SENTINEL), []);
 });

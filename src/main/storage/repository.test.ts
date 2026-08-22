@@ -42,7 +42,8 @@ function task(id: string, at: string, projectId = 'p1'): Task {
         id, agentId: 'h1', projectId, text: 't', kind: 'feature', origin: { kind: 'user' },
         approvals: [], createdAt: at, startedAt: null, completedAt: null,
         state: 'assigned', resultBranch: null, resultCommit: null,
-        resultSummary: null, sessionId: null, failedReason: null, updatedAt: null
+        resultSummary: null, sessionId: null, failedReason: null, updatedAt: null,
+        baselineTree: null, declaredOutputs: [], refusedOutputs: null
     };
 }
 

@@ -77,8 +77,28 @@ export interface TaskServiceDeps {
     readonly runTurn: (
         hireId: string, text: string, resumeSessionId: string | null
     ) => Promise<TurnResult | null>;
-    /** Commits the colleague's tracked work to the task's result branch. */
-    readonly checkpoint: (req: { cwd: string; hireId: string; branch: string; message: string }) => Promise<CheckpointOutcome>;
+    /**
+     * The tracked state of the tree before the colleague's first turn, so the result can be
+     * exactly the task's own diff. Null means no baseline could be taken, which costs the
+     * isolation but must not stop the task.
+     */
+    readonly baseline?: (cwd: string) => Promise<string | null>;
+    /**
+     * Commits the task's own changes to its result branch. `baselineTree` is what the result
+     * is diffed against; `outputs` are validated new files to include.
+     */
+    readonly checkpoint: (req: {
+        cwd: string; hireId: string; branch: string; message: string;
+        baselineTree: string | null; outputs: readonly string[];
+    }) => Promise<CheckpointOutcome>;
+    /**
+     * Decides which of the new files the colleague named may be staged. Injected because the
+     * answer needs git (the ignore list, the index) and the rules are pure. When absent, no
+     * declared output is committed, which is the safe direction.
+     */
+    readonly resolveOutputs?: (
+        cwd: string, declared: readonly string[]
+    ) => Promise<{ accepted: readonly string[]; refused: string | null }>;
     /** True while a permission ask is pending for this colleague. */
     readonly isAwaitingApproval?: (hireId: string) => boolean;
     /** Signals a task changed, so any open view re-reads. */
@@ -135,7 +155,10 @@ export class TaskService {
             resultSummary: null,
             sessionId: null,
             failedReason: null,
-            updatedAt: at
+            updatedAt: at,
+            baselineTree: null,
+            declaredOutputs: [],
+            refusedOutputs: null
         };
         this.#deps.tasks.insert(task);
         this.#deps.onChanged?.();
@@ -168,7 +191,14 @@ export class TaskService {
 
     /** The attempt itself: turns until a stopping point, then the result and the state. */
     async #run(started: Task, cwd: string): Promise<Task> {
-        const task = started;
+        // The tracked state of the tree before the colleague touches anything. Everything the
+        // result contains is measured against this, which is what keeps one task's work out
+        // of another's branch. Taken here rather than in `start` because it needs git, and
+        // persisted because a task outlives a turn and a lost baseline silently loses the
+        // isolation with it.
+        const baselineTree = this.#deps.baseline ? await this.#deps.baseline(cwd) : null;
+        const task = baselineTree === null ? started : this.#patch(started, { baselineTree });
+
         const outcome = await runTask(
             {
                 runTurn: async (input): Promise<TurnResult> => {
@@ -189,8 +219,8 @@ export class TaskService {
             task.text
         );
 
-        const saved = await this.#commitResult(task, cwd, outcome);
-        return this.#recordOutcome(task, outcome, saved);
+        const result = await this.#commitResult(task, cwd, outcome);
+        return this.#recordOutcome(task, outcome, result);
     }
 
     /**
@@ -254,36 +284,79 @@ export class TaskService {
     }
 
     /**
-     * Commits whatever the colleague changed to the task's own branch.
+     * Writes fields that are not the lifecycle.
      *
-     * Run for every stopping reason, including a failure, because files already written to
-     * disk are not made safer by refusing to record them, and the staging rule means only
-     * tracked modifications are ever swept up. A checkpoint that finds nothing to save
-     * reports clean, which is an honest outcome and not an error.
+     * Separate from `#write` on purpose, and it must never set `state`. The invariant is that
+     * a state change is always checked against an actor, and the way that guarantee erodes is
+     * a convenience updater that quietly grows a state field. Keeping them apart makes the
+     * one place a state is written easy to point at.
      */
-    async #commitResult(task: Task, cwd: string, outcome: TaskRunOutcome): Promise<CheckpointOutcome | null> {
+    #patch(task: Task, fields: Omit<Partial<Task>, 'state'>): Task {
+        const next: Task = { ...task, ...fields, state: task.state, updatedAt: this.#deps.now() };
+        this.#deps.tasks.update(next);
+        this.#deps.onChanged?.();
+        return next;
+    }
+
+    /**
+     * Commits the task's own changes to its own branch.
+     *
+     * Diffed against the baseline taken before the first turn, so the branch holds what this
+     * task did and not whatever was already dirty. Run for every stopping reason, including a
+     * failure, because files already written to disk are not made safer by refusing to record
+     * them. A result that finds nothing to save reports clean, which is honest and not an
+     * error.
+     */
+    async #commitResult(
+        task: Task, cwd: string, outcome: TaskRunOutcome
+    ): Promise<{ saved: CheckpointOutcome | null; refused: string | null }> {
         const branch = taskBranchName(task.agentId, task.id);
+
+        // What the colleague named, put through the rules. A name is a claim; this is where
+        // it is decided. Without a resolver nothing new is committed, which is the safe way
+        // to be missing a dependency.
+        let accepted: readonly string[] = [];
+        let refused: string | null = null;
+        if (outcome.outputs.length > 0 && this.#deps.resolveOutputs) {
+            try {
+                const decided = await this.#deps.resolveOutputs(cwd, outcome.outputs);
+                accepted = decided.accepted;
+                refused = decided.refused;
+            } catch {
+                refused = 'the declared files could not be checked, so none were committed';
+            }
+        } else if (outcome.outputs.length > 0) {
+            refused = 'new files cannot be committed in this build, so none were';
+        }
+
         try {
-            return await this.#deps.checkpoint({
+            const saved = await this.#deps.checkpoint({
                 cwd, hireId: task.agentId, branch,
-                message: 'Stafford task ' + task.id + ' by ' + task.agentId + ': ' + firstLine(task.text)
+                message: 'Stafford task ' + task.id + ' by ' + task.agentId + ': ' + firstLine(task.text),
+                baselineTree: task.baselineTree,
+                outputs: accepted
             });
+            return { saved, refused };
         } catch {
-            // The checkpoint's contract is that it does not throw, but a task must still land
-            // somewhere I can see if it ever does. Losing the branch is better than losing
-            // the task, so the outcome below is recorded either way.
-            void outcome;
-            return null;
+            // The contract is that it does not throw, but a task must still land somewhere I
+            // can see if it ever does. Losing the branch is better than losing the task.
+            return { saved: null, refused };
         }
     }
 
     /** Turns a stop reason into the state the colleague is allowed to move the task to. */
-    #recordOutcome(task: Task, outcome: TaskRunOutcome, saved: CheckpointOutcome | null): Task {
+    #recordOutcome(
+        task: Task, outcome: TaskRunOutcome,
+        result: { saved: CheckpointOutcome | null; refused: string | null }
+    ): Task {
+        const saved = result.saved;
         const patch: Partial<Task> = {
             sessionId: outcome.sessionId,
             resultSummary: outcome.summary === '' ? null : outcome.summary,
             resultBranch: saved?.committed ? saved.branch : null,
-            resultCommit: saved?.committed ? saved.commitId : null
+            resultCommit: saved?.committed ? saved.commitId : null,
+            declaredOutputs: [...outcome.outputs],
+            refusedOutputs: result.refused
         };
 
         if (outcome.reason === 'runner-error') {

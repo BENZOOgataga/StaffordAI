@@ -137,6 +137,16 @@ export interface Task {
     sessionId: string | null;
     failedReason: string | null;
     updatedAt: string | null;
+    /**
+     * The tracked state of the working tree when the task started, as a tree sha. The result
+     * is built from the difference between this and the state at completion, so the branch
+     * holds what the task did rather than whatever was dirty. Null before a task starts.
+     */
+    baselineTree: string | null;
+    /** New files the colleague named as its deliverable. Empty until it says. */
+    declaredOutputs: string[];
+    /** Named files that were refused, with the reason, for the review. Null when none were. */
+    refusedOutputs: string | null;
 }
 
 /**

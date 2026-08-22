@@ -34,6 +34,8 @@ import { seedManagedConfig, type ManagedFs } from './agents/managed-config.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { runDrain, type DrainableAgent, type CheckpointResult } from './agents/drain.ts';
 import { checkpointRepo } from './agents/checkpoint-executor.ts';
+import { taskBaseline, commitTaskResult, ignoredPaths, trackedPaths } from './agents/task-result.ts';
+import { validateDeclaredOutputs, acceptedOutputs, refusedNote } from '../domain/declared-outputs.ts';
 import { realCheckpointDeps } from './agents/checkpoint-git.ts';
 import { killTree } from './agents/kill-tree.ts';
 import { hireStoreOver, type HireStore } from './storage/hire-store.ts';
@@ -845,11 +847,35 @@ function buildDelivery(store: HireStore): void {
             runnerManager
                 ? runnerManager.submitTaskTurn(hireId, text, resumeSessionId)
                 : Promise.resolve(null),
+        // The tracked state of the tree before the colleague's first turn. Everything the
+        // result contains is measured against this, so one task's work never lands on
+        // another's branch.
+        baseline: async (cwd) =>
+            (await taskBaseline(realCheckpointDeps(currentPlatform()), { cwd })).tree,
         checkpoint: (req) =>
-            checkpointRepo(realCheckpointDeps(currentPlatform()), {
-                cwd: req.cwd, hireId: req.hireId, stamp: new Date().toISOString(),
-                branch: req.branch, message: req.message
+            commitTaskResult(realCheckpointDeps(currentPlatform()), {
+                cwd: req.cwd, branch: req.branch, message: req.message,
+                baselineTree: req.baselineTree, declaredOutputs: req.outputs
             }),
+        // The colleague names new files; this decides which of them may be staged. The rules
+        // are pure and the two facts they need, what git ignores and what it already tracks,
+        // come from git rather than from a guess.
+        resolveOutputs: async (cwd, declared) => {
+            const gitDeps = realCheckpointDeps(currentPlatform());
+            // Shape-check first, so a path that leaves the repository is refused before it is
+            // ever handed to a git command.
+            const shaped = validateDeclaredOutputs(declared);
+            const candidates = acceptedOutputs(shaped);
+            const [ignored, tracked] = await Promise.all([
+                ignoredPaths(gitDeps, cwd, candidates),
+                trackedPaths(gitDeps, cwd, candidates)
+            ]);
+            const verdicts = validateDeclaredOutputs(declared, {
+                isIgnored: (p) => ignored.has(p),
+                isTracked: (p) => tracked.has(p)
+            });
+            return { accepted: acceptedOutputs(verdicts), refused: refusedNote(verdicts) };
+        },
         // A colleague paused on an ask has stopped working, so the attempt ends and the task
         // lands in review rather than the loop spending its bound against a blocked turn.
         isAwaitingApproval: (hireId) =>
@@ -1099,6 +1125,30 @@ async function runTaskSmoke(): Promise<void> {
     }
     await asking.finished;
     show('after the ask was answered', three.id);
+
+    out('=== 4b: RESULT ISOLATION: task B result must not contain task A leftover edit ===');
+    // The tree is still dirty from every task above, deliberately, since a checkpoint never
+    // resets it. That is the exact precondition under which a result used to inherit work it
+    // had not done.
+    const dirtyBefore = await git.runGit(['status', '--porcelain'], { cwd, timeoutMs: 10_000 });
+    out('dirty before task B: ' + dirtyBefore.stdout.trim().replace(/\n/g, ' | '));
+
+    const four = taskService.assign({
+        hireId,
+        text: 'Append a line saying "isolated" to isolation-target.txt, creating that file if it ' +
+            'does not exist. Change nothing else. Then stop.'
+    });
+    const isolated = await taskService.start(four.id).finished;
+    show('task B', four.id);
+    if (isolated.resultBranch) {
+        const files = await git.runGit(
+            ['diff', '--name-only', 'HEAD', isolated.resultBranch], { cwd, timeoutMs: 10_000 });
+        out('files in task B result, relative to HEAD:');
+        for (const line of files.stdout.trim().split('\n')) out('    ' + (line || '(none)'));
+    } else {
+        out('task B committed nothing: ' + (isolated.refusedOutputs ?? 'no tracked change and no named file'));
+    }
+    if (isolated.refusedOutputs) out('declarations refused: ' + isolated.refusedOutputs);
 
     out('=== 5: a forgotten sentinel lands in needs-you, not failed and not looping ===');
     const two = taskService.assign({
