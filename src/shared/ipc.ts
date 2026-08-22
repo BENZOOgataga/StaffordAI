@@ -56,7 +56,10 @@ export const INVOKE_CHANNELS = [
     'tasks:by-hire',
     'tasks:assign',
     'tasks:start',
-    'tasks:review'
+    'tasks:review',
+    // The changed files on a task's result branch, for the review. A read, and the only task
+    // channel that touches git rather than the store.
+    'tasks:diff'
 ] as const;
 
 /** Main pushes to the renderer. One-way, no reply. */
@@ -452,6 +455,12 @@ export interface TaskRow {
     readonly resultBranch: string | null;
     readonly resultCommit: string | null;
     readonly failedReason: string | null;
+    /** New files the colleague named as its deliverable. */
+    readonly declaredOutputs: readonly string[];
+    /** Named files that were not committed, with the reason, so a refusal is never silent. */
+    readonly refusedOutputs: string | null;
+    /** The Claude session, so the review can filter the transcript to this task. */
+    readonly sessionId: string | null;
 }
 
 export interface TasksByHireRequest {
@@ -482,6 +491,30 @@ export interface TaskReview {
     readonly decision: 'approve' | 'fail' | 'send-back';
     /** My reason when failing it, shown on the task afterwards. */
     readonly note: string | null;
+}
+
+/**
+ * One changed file on a task's result branch.
+ *
+ * A repo-relative path and two counts, which is what a review needs to see the shape of a
+ * change. Not the content: a diff body would put the colleague's work, and anything it read
+ * into a file, through the IPC boundary and into the renderer, and the branch is right there
+ * in git for the moment I want to read it properly.
+ */
+export interface TaskDiffFile {
+    readonly path: string;
+    readonly added: number;
+    readonly removed: number;
+}
+
+export interface TaskDiffRequest {
+    readonly id: string;
+}
+
+export interface TaskDiffReply {
+    readonly files: readonly TaskDiffFile[];
+    /** Why the diff could not be read, for a review that says so rather than showing nothing. */
+    readonly error: string | null;
 }
 
 /** What a task write returns: the task as it now stands, or why it was refused. */

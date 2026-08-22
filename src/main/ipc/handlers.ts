@@ -19,13 +19,13 @@ import {
     type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview
+    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply
 } from '../../shared/ipc.ts';
 import {
     isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
     isApprovalAnswer,
     isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove,
-    isTasksByHire, isTaskAssign, isTaskStart, isTaskReview
+    isTasksByHire, isTaskAssign, isTaskStart, isTaskReview, isTaskDiff
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 
@@ -109,6 +109,11 @@ export interface HandlerDeps {
      * it is reachable only from Stafford's own window.
      */
     readonly reviewTask: (payload: TaskReview) => TaskWriteReply;
+    /**
+     * The changed files on a task's result branch. Paths and counts, never diff content: the
+     * branch is in git for when I want to read the change properly.
+     */
+    readonly taskDiff: (id: string) => Promise<TaskDiffReply>;
 }
 
 /**
@@ -251,6 +256,10 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'tasks:review': (payload: unknown): TaskWriteReply => {
             if (!isTaskReview(payload)) throw new Error('tasks:review requires {id,decision,note}');
             return deps.reviewTask(payload);
+        },
+        'tasks:diff': (payload: unknown): Promise<TaskDiffReply> => {
+            if (!isTaskDiff(payload)) throw new Error('tasks:diff requires {id}');
+            return deps.taskDiff(payload.id);
         }
     };
 }

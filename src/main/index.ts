@@ -55,7 +55,7 @@ import { randomUUID } from 'node:crypto';
 import type {
     RosterSnapshot, ActivityRow, SavedCheckpoints,
     PermissionRuleView, PermissionRulesReply, PermissionEffectiveReply, PermissionWriteReply,
-    PermissionAdd, PermissionUpdate, TaskRow, TaskWriteReply
+    PermissionAdd, PermissionUpdate, TaskRow, TaskWriteReply, TaskDiffReply, TaskDiffFile
 } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 
@@ -600,8 +600,49 @@ function taskRow(task: Task): TaskRow {
         state: task.state, createdAt: task.createdAt, startedAt: task.startedAt,
         completedAt: task.completedAt, updatedAt: task.updatedAt,
         resultSummary: task.resultSummary, resultBranch: task.resultBranch,
-        resultCommit: task.resultCommit, failedReason: task.failedReason
+        resultCommit: task.resultCommit, failedReason: task.failedReason,
+        declaredOutputs: task.declaredOutputs, refusedOutputs: task.refusedOutputs,
+        sessionId: task.sessionId
     };
+}
+
+/**
+ * The changed files on a task's result branch.
+ *
+ * Numstat only. A diff body would carry the colleague's work, and whatever it read into a
+ * file, across the IPC boundary and into the renderer; the branch is in git for the moment I
+ * want to read the change properly. Since the result branch holds exactly the task's own work,
+ * this list is the honest answer to "what did it do".
+ */
+async function readTaskDiff(id: string): Promise<TaskDiffReply> {
+    const task = repositories?.tasks.get(id);
+    if (!task) return { files: [], error: 'no such task' };
+    if (!task.resultBranch) return { files: [], error: null };
+    const cwd = repositories?.projects.get(task.projectId)?.repos[0]?.path;
+    if (!cwd) return { files: [], error: 'the project has no repository on this machine' };
+
+    try {
+        const out = await realCheckpointDeps(currentPlatform()).runGit(
+            ['diff', '--numstat', 'HEAD', task.resultBranch], { cwd, timeoutMs: 15_000 });
+        if (out.timedOut) return { files: [], error: 'reading the diff took too long' };
+        if (out.code !== 0) return { files: [], error: 'the result branch could not be read' };
+        const files: TaskDiffFile[] = [];
+        for (const line of out.stdout.split('\n')) {
+            const parts = line.split('\t');
+            if (parts.length < 3) continue;
+            const path = parts.slice(2).join('\t').trim();
+            if (path === '') continue;
+            // A dash means a binary file, which has no line counts rather than zero of them.
+            files.push({
+                path,
+                added: parts[0] === '-' ? 0 : Number(parts[0]) || 0,
+                removed: parts[1] === '-' ? 0 : Number(parts[1]) || 0
+            });
+        }
+        return { files, error: null };
+    } catch {
+        return { files: [], error: 'the result branch could not be read' };
+    }
 }
 
 /**
@@ -1162,6 +1203,127 @@ async function runTaskSmoke(): Promise<void> {
     out('=== task smoke done ===');
 }
 
+/**
+ * Drives the task UI's own path, end to end, inside the real running app.
+ *
+ * Gated by STAFFORD_TASK_UI_SMOKE=1 with STAFFORD_TASK_UI_SMOKE_CWD at a git repo. Unlike the
+ * service smoke above, every call here goes through `window.stafford` evaluated in the real
+ * renderer: the real preload, the real contextBridge, the real ipcRenderer, the real ipcMain
+ * handler, the real guards, and then the service. That is precisely the path a click takes,
+ * so what it proves is the surface and not only the engine underneath it.
+ *
+ * It also proves the invariant from the only side that matters for the UI: the bridge exposes
+ * no way to move a task to done other than the review channel, which is mine.
+ */
+async function runTaskUiSmoke(): Promise<void> {
+    const out = (line: string): void => { process.stderr.write('[task-ui-smoke] ' + line + '\n'); };
+    const cwd = process.env.STAFFORD_TASK_UI_SMOKE_CWD;
+    if (!repositories || !cwd) { out('missing repositories or cwd'); return; }
+
+    const started = new Date().toISOString();
+    const projectId = 'uismoke-' + started;
+    repositories.projects.insert({
+        id: projectId, name: 'task-ui-smoke', repos: [{ path: cwd, label: 'repo' }],
+        policy: {
+            push: 'none' as const, allowedRoles: [], toolCeiling: null, writePaths: null,
+            requirePipeline: false, allowWebFetch: false, permissionMode: 'default', maxConcurrentAgents: 2
+        }
+    });
+    const hireId = 'uismoke-' + started;
+    repositories.hires.insert({
+        id: hireId, name: 'Ada', type: 'lead-developer', title: 'Lead developer', seniority: 2,
+        ownerId: 'owner', sessions: {}, activeProjectId: projectId, state: 'idle',
+        hiredAt: started, firedAt: null
+    });
+
+    openWindow();
+    const win = window;
+    if (!win) { out('no window'); return; }
+    await new Promise<void>((resolve) => {
+        if (!win.webContents.isLoading()) { resolve(); return; }
+        win.webContents.once('did-finish-load', () => resolve());
+    });
+
+    /** Runs an expression against the real bridge in the renderer. */
+    const bridge = async <T>(expression: string): Promise<T> =>
+        win.webContents.executeJavaScript(expression, true) as Promise<T>;
+
+    out('=== the bridge the renderer actually has ===');
+    const surface = await bridge<string[]>('Object.keys(window.stafford.tasks).sort()');
+    out('window.stafford.tasks: ' + surface.join(', '));
+    const routes = await bridge<string[]>(
+        'Object.keys(window.stafford).filter((k) => /task/i.test(k))');
+    out('top-level task surfaces on the bridge: ' + routes.join(', '));
+
+    out('=== 1: assign from the UI path ===');
+    const assigned = await bridge<{ ok: boolean; task: { id: string; state: string } | null }>(
+        'window.stafford.tasks.assign(' + JSON.stringify(hireId) + ', ' +
+        JSON.stringify('Append a line saying "from the UI" to README.md. Then stop.') + ')');
+    if (!assigned.ok || !assigned.task) { out('assign failed'); return; }
+    const taskId = assigned.task.id;
+    out('assigned: state=' + assigned.task.state);
+
+    out('=== 2: start it, and the reply comes back while it is still running ===');
+    const startedReply = await bridge<{ ok: boolean; task: { state: string } | null }>(
+        'window.stafford.tasks.start(' + JSON.stringify(taskId) + ')');
+    out('start replied with state=' + (startedReply.task?.state ?? '?') +
+        ' (the renderer is not held for the whole task)');
+
+    out('=== 3: wait for it to land in needs-you, the way the screen does ===');
+    for (let i = 0; i < 240; i += 1) {
+        if (repositories.tasks.get(taskId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const rows = await bridge<{ rows: Array<Record<string, unknown>> }>(
+        'window.stafford.tasks.byHire(' + JSON.stringify(hireId) + ', 50)');
+    const row = rows.rows.find((r) => r['id'] === taskId) ?? {};
+    out('the row the panel renders: state=' + String(row['state']) +
+        ' branch=' + String(row['resultBranch']) +
+        ' declared=' + JSON.stringify(row['declaredOutputs']) +
+        ' refused=' + String(row['refusedOutputs']));
+    out('summary: ' + String(row['resultSummary'] ?? '').replace(/\s+/g, ' ').slice(0, 120));
+
+    out('=== 4: the diff the review panel shows ===');
+    const diff = await bridge<{ files: Array<{ path: string; added: number; removed: number }>; error: string | null }>(
+        'window.stafford.tasks.diff(' + JSON.stringify(taskId) + ')');
+    if (diff.error) out('diff error: ' + diff.error);
+    for (const f of diff.files) out('    ' + f.path + '  +' + String(f.added) + ' / -' + String(f.removed));
+
+    out('=== 5: THE INVARIANT AT THE BRIDGE: there is no route to done but review ===');
+    const attempt = await bridge<string>(
+        '(async () => { try { const r = await window.stafford.tasks.review(' + JSON.stringify(taskId) +
+        ', "done", null); return "ACCEPTED " + JSON.stringify(r); } catch (e) { return "refused: " + String(e && e.message ? e.message : e); } })()');
+    out('asking the bridge to move it straight to "done": ' + attempt.slice(0, 160));
+
+    out('=== 6: approve from the UI path ===');
+    const approved = await bridge<{ ok: boolean; task: { state: string } | null; refused: string | null }>(
+        'window.stafford.tasks.review(' + JSON.stringify(taskId) + ', "approve", null)');
+    out('approved: ok=' + String(approved.ok) + ' state=' + (approved.task?.state ?? '?'));
+
+    out('=== 7: a second approve is refused, and the refusal is an answer not a crash ===');
+    const again = await bridge<{ ok: boolean; refused: string | null }>(
+        'window.stafford.tasks.review(' + JSON.stringify(taskId) + ', "approve", null)');
+    out('second approve: ok=' + String(again.ok) + ' refused=' + String(again.refused));
+
+    out('=== 8: fail, on a fresh task, from the UI path ===');
+    const second = await bridge<{ task: { id: string } | null }>(
+        'window.stafford.tasks.assign(' + JSON.stringify(hireId) + ', ' +
+        JSON.stringify('Reply with the word NOTED and nothing else.') + ')');
+    const secondId = second.task?.id ?? '';
+    await bridge('window.stafford.tasks.start(' + JSON.stringify(secondId) + ')');
+    for (let i = 0; i < 240; i += 1) {
+        if (repositories.tasks.get(secondId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const failed = await bridge<{ ok: boolean; task: { state: string } | null }>(
+        'window.stafford.tasks.review(' + JSON.stringify(secondId) + ', "fail", "not what I wanted")');
+    const failedRow = repositories.tasks.get(secondId);
+    out('failed: ok=' + String(failed.ok) + ' state=' + (failed.task?.state ?? '?') +
+        ' reason=' + String(failedRow?.failedReason));
+
+    out('=== task ui smoke done ===');
+}
+
 app.whenReady().then(async () => {
     applySessionSecurity(session.defaultSession);
 
@@ -1303,7 +1465,8 @@ app.whenReady().then(async () => {
             });
             return task;
         }),
-        reviewTask: (payload) => taskWrite(() => requireTasks().review(payload.id, payload.decision, payload.note))
+        reviewTask: (payload) => taskWrite(() => requireTasks().review(payload.id, payload.decision, payload.note)),
+        taskDiff: (id) => readTaskDiff(id)
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +
@@ -1326,6 +1489,14 @@ app.whenReady().then(async () => {
     // runner, the real gate, the real checkpoint. Same shape as the delivery smoke above.
     if (process.env.STAFFORD_TASK_SMOKE === '1' && repositories && taskService) {
         await runTaskSmoke();
+        void quit();
+        return;
+    }
+
+    // The task UI's own path: every call goes through the real preload bridge in the real
+    // window, so it proves the surface rather than the engine underneath it.
+    if (process.env.STAFFORD_TASK_UI_SMOKE === '1' && repositories && taskService) {
+        await runTaskUiSmoke();
         void quit();
         return;
     }

@@ -12,8 +12,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TAB_ORDER, DEFAULT_TAB, isTabId, tabLabels, tabLabel } from './detail-tabs.ts';
 
-test('the tabs are Conversation, Activity, Transcript, Permissions, in that order', () => {
-    assert.deepEqual([...TAB_ORDER], ['conversation', 'activity', 'transcript', 'permissions']);
+test('the tabs are Conversation, Tasks, Activity, Transcript, Permissions, in that order', () => {
+    assert.deepEqual([...TAB_ORDER], ['conversation', 'tasks', 'activity', 'transcript', 'permissions']);
+});
+
+test('Tasks sits second, since assigning work is something I act on rather than consult', () => {
+    assert.equal(TAB_ORDER[1], 'tasks');
+    assert.ok(TAB_ORDER.indexOf('tasks') < TAB_ORDER.indexOf('activity'),
+        'Activity is what I consult to see how; Tasks is what I act on, so it comes first');
 });
 
 test('Conversation is the default tab, not Transcript', () => {
