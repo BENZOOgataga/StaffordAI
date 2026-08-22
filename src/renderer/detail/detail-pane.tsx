@@ -4,6 +4,7 @@ import { ConversationPanel } from './conversation-panel.tsx';
 import { ActivityPanel } from './activity-panel.tsx';
 import { TranscriptPanel } from './transcript-panel.tsx';
 import { ColleaguePermissionsPanel } from '../permissions/colleague-permissions-panel.tsx';
+import { TasksPanel } from '../tasks/tasks-panel.tsx';
 import { useDetailData } from './use-detail-data.ts';
 import { buildActivityFeed, buildTranscript } from './feed-model.ts';
 import { tabLabels, DEFAULT_TAB, type TabId } from '../detail-tabs.ts';
@@ -59,6 +60,7 @@ export function DetailPane({ selected, cards, lang }: {
                         <div className="px-4 pt-3 pb-1">
                             <TabsList className="w-full">
                                 <TabsTrigger value="conversation">{tabLabels(lang).conversation}</TabsTrigger>
+                                <TabsTrigger value="tasks">{tabLabels(lang).tasks}</TabsTrigger>
                                 <TabsTrigger value="activity">{tabLabels(lang).activity}</TabsTrigger>
                                 <TabsTrigger value="transcript">{tabLabels(lang).transcript}</TabsTrigger>
                                 <TabsTrigger value="permissions">{tabLabels(lang).permissions}</TabsTrigger>
@@ -67,6 +69,12 @@ export function DetailPane({ selected, cards, lang }: {
 
                         <TabsContent value="conversation" className="mt-0 flex min-h-0 flex-1 flex-col">
                             <ConversationPanel hireId={hireId} rows={convRows} nameOf={nameOf} self={CHANNEL_SELF_SENDER} lang={lang} />
+                        </TabsContent>
+                        {/* Assign work and review what came back. In the detail pane rather
+                            than on a screen of its own, because a task is something I give to
+                            a person; a board across everyone is Model B. */}
+                        <TabsContent value="tasks" className="mt-0 flex min-h-0 flex-1 flex-col px-4 py-3">
+                            <TasksPanel hireId={hireId} hireName={selected.name} lang={lang} />
                         </TabsContent>
                         <TabsContent value="activity" className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 py-3">
                             <ActivityPanel feed={buildActivityFeed(convRows, actRows, hireId)} nameOf={nameOf} lang={lang} />

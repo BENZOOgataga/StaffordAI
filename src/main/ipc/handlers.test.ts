@@ -7,7 +7,7 @@ import {
     type ProjectCreated, type HireCreated, type ActivityRow, type SavedCheckpoints,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview
+    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply
 } from '../../shared/ipc.ts';
 
 interface SessionOverrides {
@@ -30,6 +30,7 @@ interface SessionOverrides {
     assignTask?: (payload: TaskAssign) => TaskWriteReply;
     startTask?: (id: string) => TaskWriteReply;
     reviewTask?: (payload: TaskReview) => TaskWriteReply;
+    taskDiff?: (id: string) => Promise<TaskDiffReply>;
 }
 
 const TASK_OK: TaskWriteReply = {
@@ -38,7 +39,8 @@ const TASK_OK: TaskWriteReply = {
         id: 't1', hireId: 'h1', projectId: 'p1', text: 'x', state: 'assigned',
         createdAt: '2026-08-22T10:00:00Z', startedAt: null, completedAt: null,
         updatedAt: '2026-08-22T10:00:00Z', resultSummary: null, resultBranch: null,
-        resultCommit: null, failedReason: null
+        resultCommit: null, failedReason: null, declaredOutputs: [], refusedOutputs: null,
+        sessionId: null
     },
     refused: null
 };
@@ -75,7 +77,8 @@ function deps(
         tasksByHire: over.tasksByHire ?? (() => ({ rows: [] })),
         assignTask: over.assignTask ?? (() => TASK_OK),
         startTask: over.startTask ?? (() => TASK_OK),
-        reviewTask: over.reviewTask ?? (() => TASK_OK)
+        reviewTask: over.reviewTask ?? (() => TASK_OK),
+        taskDiff: over.taskDiff ?? (() => Promise.resolve({ files: [], error: null }))
     };
 }
 
@@ -330,7 +333,9 @@ test('every task channel refuses a payload that is not its shape', () => {
         ['tasks:start', {}],
         ['tasks:review', { id: 't1', decision: 'done', note: null }],
         ['tasks:review', { id: 't1', decision: 'approve' }],
-        ['tasks:review', null]
+        ['tasks:review', null],
+        ['tasks:diff', {}],
+        ['tasks:diff', { id: '' }]
     ];
     for (const [channel, payload] of bad) {
         assert.throws(() => handlers[channel as 'tasks:start'](payload),
@@ -358,7 +363,7 @@ test('THE INVARIANT AT THE WIRE: no channel lets a caller name the actor it acts
     // "actor" ever appears on this list, the guarantee has been moved onto a string a
     // caller controls, which is exactly what the lifecycle's actor argument exists to stop.
     const source = INVOKE_CHANNELS.filter((c) => c.startsWith('tasks:'));
-    assert.deepEqual([...source], ['tasks:by-hire', 'tasks:assign', 'tasks:start', 'tasks:review'],
+    assert.deepEqual([...source], ['tasks:by-hire', 'tasks:assign', 'tasks:start', 'tasks:review', 'tasks:diff'],
         'the task surface is these four channels; a new one needs its own reasoning');
 
     const seen: unknown[] = [];

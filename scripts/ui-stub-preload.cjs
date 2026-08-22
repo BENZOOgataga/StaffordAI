@@ -26,7 +26,71 @@ contextBridge.exposeInMainWorld('stafford', {
     },
     activity: { byHire: async () => ({ rows: [] }), onAppended: unsub },
     checkpoints: { saved: async () => null, ack: async () => {} },
-    approvals: { pending: async () => ({ pending: [] }), answer: async () => {}, onChanged: unsub },
+    // One pending ask, so a screenshot shows both kinds of waiting at once: the approvals
+    // banner on the roster, and the same colleague's running task reading as paused.
+    approvals: {
+        pending: async () => ({
+            pending: [{
+                id: 'ap1', hireId: 'b', action: 'write',
+                path: '/proj/src/components/Gadget.tsx', command: null, at: '2026-08-22T09:11:00Z'
+            }]
+        }),
+        answer: async () => {},
+        onChanged: unsub
+    },
+    // Tasks. Sample rows covering the cases the review panel exists for: one waiting for me
+    // with a result branch, declared new files and a refusal (so a refused deliverable is
+    // visibly not silent), one still working, and one already approved.
+    tasks: {
+        byHire: async () => ({
+            rows: [
+                {
+                    id: 't1', hireId: 'b', projectId: 'p1',
+                    text: 'Add a parser for the config file and cover it with tests.',
+                    state: 'needs-you',
+                    createdAt: '2026-08-22T09:00:00Z', startedAt: '2026-08-22T09:00:10Z',
+                    completedAt: null, updatedAt: '2026-08-22T09:06:00Z',
+                    resultSummary: 'Added src/config/parse.ts with the parser and its tests. It handles the three shapes the existing config uses. I could not cover the legacy format because there is no sample of it in the repo.',
+                    resultBranch: 'stafford/task/b/t1', resultCommit: '4cb6973512ab',
+                    failedReason: null,
+                    declaredOutputs: ['src/config/parse.ts', 'src/config/parse.test.ts', '.env.local'],
+                    refusedOutputs: '.env.local (the name matches a secret file pattern, which is never committed)',
+                    sessionId: 's1'
+                },
+                {
+                    id: 't2', hireId: 'b', projectId: 'p1',
+                    text: 'Rename the Widget component to Gadget everywhere and update the imports.',
+                    state: 'working',
+                    createdAt: '2026-08-22T09:10:00Z', startedAt: '2026-08-22T09:10:05Z',
+                    completedAt: null, updatedAt: '2026-08-22T09:10:05Z',
+                    resultSummary: null, resultBranch: null, resultCommit: null, failedReason: null,
+                    declaredOutputs: [], refusedOutputs: null, sessionId: 's2'
+                },
+                {
+                    id: 't3', hireId: 'b', projectId: 'p1',
+                    text: 'Fix the off-by-one in the pagination cursor.',
+                    state: 'done',
+                    createdAt: '2026-08-21T14:00:00Z', startedAt: '2026-08-21T14:00:04Z',
+                    completedAt: '2026-08-21T14:20:00Z', updatedAt: '2026-08-21T14:20:00Z',
+                    resultSummary: 'The cursor compared with < where it needed <=. One line, plus a test.',
+                    resultBranch: 'stafford/task/b/t3', resultCommit: '9de1f0a7b3c2',
+                    failedReason: null, declaredOutputs: [], refusedOutputs: null, sessionId: 's3'
+                }
+            ]
+        }),
+        assign: async () => ({ ok: true, task: null, refused: null }),
+        start: async () => ({ ok: true, task: null, refused: null }),
+        review: async () => ({ ok: true, task: null, refused: null }),
+        diff: async () => ({
+            files: [
+                { path: 'src/config/parse.ts', added: 84, removed: 0 },
+                { path: 'src/config/parse.test.ts', added: 61, removed: 0 },
+                { path: 'src/config/index.ts', added: 3, removed: 1 }
+            ],
+            error: null
+        }),
+        onChanged: unsub
+    },
     // Permission configuration. Sample rules that exercise the cases worth looking at: a
     // plain baseline rule, a generated default-profile rule shown read-only, an override
     // that replaces a baseline rule, and an override that adds a scope the baseline never

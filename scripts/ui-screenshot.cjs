@@ -76,16 +76,27 @@ async function main() {
         const clicked = await win.webContents.executeJavaScript(
             "(() => { const el = document.querySelector(" + JSON.stringify(selector) + "); " +
             "if (!el) return false; " +
-            // Radix triggers act on pointer events, not on a bare click(), so a tab would
-            // report clicked and never change. Dispatch the real sequence instead.
-            "for (const type of ['pointerdown','mousedown','pointerup','mouseup','click']) { " +
+            // Two kinds of target need two different things, and doing only one of them
+            // silently screenshots the wrong surface. A Radix trigger acts on pointer events
+            // and ignores a bare click(), so the pointer sequence has to be dispatched. A
+            // plain React onClick, such as a roster row, did not fire from a synthetic click
+            // event and does fire from the native click(). So: dispatch the pointer sequence,
+            // then call click() once. Exactly one click reaches either kind of target.
+            "for (const type of ['pointerdown','mousedown','pointerup','mouseup']) { " +
             "el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })); } " +
+            "el.click(); " +
             "return true; })()"
         );
         // A step that matched nothing is a broken screenshot, not a smaller one. Failing here
         // beats writing a PNG of the wrong surface and calling it evidence.
         if (!clicked) throw new Error('screenshot step matched nothing: ' + selector);
         await new Promise((r) => setTimeout(r, 900));
+    }
+    // A read of the page after the steps, for working out why a screenshot shows the wrong
+    // surface. Printing what the DOM actually contains beats guessing at a selector.
+    if (process.env.SHOT_EVAL) {
+        const value = await win.webContents.executeJavaScript(process.env.SHOT_EVAL, true);
+        process.stdout.write('eval: ' + JSON.stringify(value) + '\n');
     }
     const image = await win.webContents.capturePage();
     fs.writeFileSync(OUT, image.toPNG());

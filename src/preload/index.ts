@@ -19,7 +19,7 @@ import {
     type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply
+    type TasksReply, type TaskWriteReply, type TaskDiffReply
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -197,6 +197,9 @@ const api = Object.freeze({
         /** approve closes it, fail abandons it, send-back returns it to working. */
         review: (id: string, decision: 'approve' | 'fail' | 'send-back', note: string | null = null): Promise<TaskWriteReply> =>
             invoke('tasks:review', { id, decision, note }) as Promise<TaskWriteReply>,
+        /** The changed files on a task's result branch, for the review. */
+        diff: (id: string): Promise<TaskDiffReply> =>
+            invoke('tasks:diff', { id }) as Promise<TaskDiffReply>,
         onChanged: (listener: () => void): (() => void) => on('tasks:changed', () => listener())
     }),
 
