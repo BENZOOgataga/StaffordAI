@@ -36,7 +36,8 @@ const COMMITTED: CheckpointOutcome = {
 interface Harness {
     service: TaskService;
     tasks: ReturnType<typeof store>;
-    checkpoints: { cwd: string; hireId: string; branch: string; message: string }[];
+    checkpoints: { cwd: string; hireId: string; branch: string; message: string;
+        baselineTree: string | null; outputs: readonly string[] }[];
     turns: string[];
 }
 
@@ -47,6 +48,9 @@ function harness(over: {
     target?: { cwd: string; projectId: string } | null;
     turnLimit?: number;
     awaiting?: boolean;
+    baseline?: string | null;
+    resolveOutputs?: (cwd: string, declared: readonly string[]) =>
+        Promise<{ accepted: readonly string[]; refused: string | null }>;
 } = {}): Harness {
     const tasks = store();
     const checkpoints: Harness['checkpoints'] = [];
@@ -71,6 +75,9 @@ function harness(over: {
             if (over.checkpointThrows) return Promise.reject(new Error('git exploded'));
             return Promise.resolve(over.checkpoint ?? COMMITTED);
         },
+        baseline: () => Promise.resolve(over.baseline === undefined ? 'base-tree' : over.baseline),
+        resolveOutputs: over.resolveOutputs
+            ?? ((_cwd, declared) => Promise.resolve({ accepted: declared, refused: null })),
         ...(over.turnLimit !== undefined ? { turnLimit: over.turnLimit } : {}),
         ...(over.awaiting !== undefined ? { isAwaitingApproval: (): boolean => over.awaiting! } : {})
     });
@@ -303,4 +310,94 @@ test('an unknown task id is refused rather than silently creating one', () => {
     const h = harness();
     assert.throws(() => h.service.review('nope', 'approve'), /no task nope/);
     assert.throws(() => h.service.start('nope'), /no task nope/);
+});
+
+// --- result isolation and declared outputs ----------------------------------
+
+test('the baseline is taken before the first turn and handed to the commit', async () => {
+    const h = harness({ baseline: 'tree-at-start' });
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    await h.service.start(t.id).finished;
+
+    assert.equal(h.checkpoints[0]?.baselineTree, 'tree-at-start',
+        'without the baseline the result is whatever was dirty, which is the bug this fixes');
+    assert.equal(h.tasks.get(t.id)?.baselineTree, 'tree-at-start',
+        'and it is persisted, since a task outlives a turn');
+});
+
+test('a baseline that could not be taken costs the isolation but never the task', async () => {
+    const h = harness({ baseline: null });
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    const after = await h.service.start(t.id).finished;
+
+    assert.equal(after.state, 'needs-you', 'a repo git cannot read is still a task I must see');
+    assert.equal(h.checkpoints[0]?.baselineTree, null);
+});
+
+test('the colleague names a new file and it reaches the commit as an output', async () => {
+    const h = harness({
+        replies: [turn({
+            assistantText: 'Made it.\n<<STAFFORD-TASK-OUTPUTS: src/new.ts>>\n' + TASK_DONE_SENTINEL
+        })]
+    });
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    const after = await h.service.start(t.id).finished;
+
+    assert.deepEqual(h.checkpoints[0]?.outputs, ['src/new.ts']);
+    assert.deepEqual(after.declaredOutputs, ['src/new.ts']);
+    assert.equal(after.resultSummary, 'Made it.',
+        'the marker is stripped, so the summary I read is not littered with wire format');
+});
+
+test('A REFUSED DECLARATION IS RECORDED, so the review says why a named file is not there', async () => {
+    const h = harness({
+        replies: [turn({ assistantText: '<<STAFFORD-TASK-OUTPUTS: .env, ok.txt>>\n' + TASK_DONE_SENTINEL })],
+        resolveOutputs: () => Promise.resolve({
+            accepted: ['ok.txt'], refused: '.env (the name matches a secret file pattern)'
+        })
+    });
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    const after = await h.service.start(t.id).finished;
+
+    assert.deepEqual(h.checkpoints[0]?.outputs, ['ok.txt'], 'only the accepted file is staged');
+    assert.match(after.refusedOutputs ?? '', /\.env/);
+    assert.deepEqual(after.declaredOutputs, ['.env', 'ok.txt'],
+        'what it claimed is kept alongside what was allowed, so the two can be compared');
+});
+
+test('a resolver that throws commits no new file, rather than committing them unchecked', async () => {
+    const h = harness({
+        replies: [turn({ assistantText: '<<STAFFORD-TASK-OUTPUTS: a.txt>>\n' + TASK_DONE_SENTINEL })],
+        resolveOutputs: () => Promise.reject(new Error('git exploded'))
+    });
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    const after = await h.service.start(t.id).finished;
+
+    assert.deepEqual(h.checkpoints[0]?.outputs, [],
+        'a check that could not run is not a pass; failing closed is the only safe direction');
+    assert.match(after.refusedOutputs ?? '', /could not be checked/);
+});
+
+test('no declaration means no outputs, and no warning about outputs', async () => {
+    const h = harness();
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    const after = await h.service.start(t.id).finished;
+
+    assert.deepEqual(h.checkpoints[0]?.outputs, []);
+    assert.deepEqual(after.declaredOutputs, []);
+    assert.equal(after.refusedOutputs, null);
+});
+
+test('a declaration made mid-task survives to the end, since a colleague may say it early', async () => {
+    const h = harness({
+        replies: [
+            turn({ assistantText: 'Created it.\n<<STAFFORD-TASK-OUTPUTS: early.txt>>' }),
+            turn({ assistantText: 'And done. ' + TASK_DONE_SENTINEL })
+        ],
+        turnLimit: 3
+    });
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    await h.service.start(t.id).finished;
+
+    assert.deepEqual(h.checkpoints[0]?.outputs, ['early.txt']);
 });

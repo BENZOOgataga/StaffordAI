@@ -58,3 +58,39 @@ file under `~/.claude`, so the seed has nothing to copy and the managed dir is e
 authenticate through Keychain with no copy. This is structured for (the copy is conditional on
 the credential file existing) but not yet verified on a real Mac. See the runbook in
 `docs/HANDOFF.md`.
+
+## A shell deny is best-effort, because Claude Code does not put every command through the gate
+
+Stafford's permission gate sits at `can_use_tool`. That is the right seam and it works: a
+denied write is refused, a rule set to ask pauses the turn until you answer, and a protected
+path is unreachable. It is only a boundary for the calls Claude Code actually sends to it.
+
+Measured on 2026-08-22 against Claude Code 2.1.237. With a rule denying the whole `shell`
+category, a colleague ran `echo asked` and it succeeded. The wire log shows why: between the
+`tool_use` and its `tool_result` there is no `control_request` at all, while a `Write` in the
+same session did produce one. Claude Code decided for itself that the command needed no
+permission and never asked. A compound command in the same run (`ls -la && tail -c 20 README.md
+| xxd | tail -2`) was put to the gate normally.
+
+So a category-level shell rule stops the commands Claude Code considers worth asking about, and
+does not stop the ones it does not. Treat it as a strong default rather than a containment
+boundary, and do not rely on it to keep a colleague away from something that matters.
+
+This is Claude Code's behaviour, not a defect in the gate, and Stafford cannot close it from
+where it sits. It matters more now that tasks run unattended, since nobody is watching the
+commands go by.
+
+What still holds, and is worth being clear about because it is what the security model actually
+rests on:
+
+- File reads and writes go through the gate, so path scopes, the protected `userData` directory
+  and the secret-file patterns are enforced on the calls that carry a path.
+- A command that is put to the gate is resolved against the full rule set as normal, including
+  the destructive-command patterns.
+- A task result branch never contains an untracked file the colleague did not name, and never
+  one matching a secret pattern, so a command that writes a secret to disk still cannot get it
+  onto a branch you push.
+
+If you need a hard boundary on what a colleague can execute, it has to come from outside Claude
+Code: run the colleague against a repository on a machine or in a container where the dangerous
+thing is not reachable.

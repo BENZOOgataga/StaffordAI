@@ -125,9 +125,68 @@ export function claimsComplete(text: string): boolean {
     return text.includes(TASK_DONE_SENTINEL);
 }
 
-/** The reply with the sentinel removed, so the summary I read is not littered with it. */
+/**
+ * The marker a colleague uses to name new files it created as part of the deliverable.
+ *
+ * It exists because the result commit stages tracked modifications only, which is what keeps
+ * a stray secret out of a branch I might push, and the cost of that rule is that a task whose
+ * whole output is a new file would commit nothing. The fix is not to sweep up every untracked
+ * file, since the colleague may well have created a `.env` as a side effect of running
+ * something. The fix is that a new file counts as the deliverable only when the colleague
+ * says so, by name.
+ *
+ * Naming a file is a claim, not an authorisation. Every path here is still validated against
+ * the repo root, the ignore rules and the secret patterns before anything is staged, so a
+ * colleague cannot use this to get a file committed that the rules would refuse.
+ */
+export const TASK_OUTPUTS_MARKER = '<<STAFFORD-TASK-OUTPUTS:';
+
+/** How many new files one task may declare. A deliverable, not a directory tree. */
+export const MAX_DECLARED_OUTPUTS = 50;
+
+/**
+ * The new files a colleague declared, in order and de-duplicated.
+ *
+ * Parsing only. Nothing here decides whether a path is acceptable: that is
+ * `validateDeclaredOutputs`, which needs the repo root and the ignore rules and therefore
+ * cannot live in a pure module. Keeping the two apart means the wire format can be tested
+ * without a filesystem and the safety rules can be tested without a colleague.
+ */
+export function declaredOutputs(text: string): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    let from = 0;
+    for (;;) {
+        const start = text.indexOf(TASK_OUTPUTS_MARKER, from);
+        if (start === -1) break;
+        const end = text.indexOf('>>', start + TASK_OUTPUTS_MARKER.length);
+        if (end === -1) break;
+        const body = text.slice(start + TASK_OUTPUTS_MARKER.length, end);
+        for (const raw of body.split(',')) {
+            const value = raw.trim();
+            if (value === '' || seen.has(value)) continue;
+            seen.add(value);
+            out.push(value);
+            // Bounded here rather than at the caller, so a colleague that emits a thousand
+            // names costs one parse and not a thousand filesystem checks.
+            if (out.length >= MAX_DECLARED_OUTPUTS) return out;
+        }
+        from = end + 2;
+    }
+    return out;
+}
+
+/** The reply with the sentinel and any outputs marker removed, so the summary reads cleanly. */
 export function stripSentinel(text: string): string {
-    return text.split(TASK_DONE_SENTINEL).join('').trim();
+    let out = text.split(TASK_DONE_SENTINEL).join('');
+    for (;;) {
+        const start = out.indexOf(TASK_OUTPUTS_MARKER);
+        if (start === -1) break;
+        const end = out.indexOf('>>', start + TASK_OUTPUTS_MARKER.length);
+        if (end === -1) { out = out.slice(0, start); break; }
+        out = out.slice(0, start) + out.slice(end + 2);
+    }
+    return out.trim();
 }
 
 /**

@@ -19,7 +19,8 @@
  */
 
 import {
-    TASK_DONE_SENTINEL, DEFAULT_TASK_TURN_LIMIT, claimsComplete, stripSentinel
+    TASK_DONE_SENTINEL, TASK_OUTPUTS_MARKER, DEFAULT_TASK_TURN_LIMIT,
+    claimsComplete, stripSentinel, declaredOutputs
 } from '../../domain/task-lifecycle.ts';
 import type { TurnResult } from './claude-runner.ts';
 
@@ -44,6 +45,11 @@ export interface TaskRunOutcome {
     readonly sessionId: string | null;
     /** A short note for a non-completed stop, shown at review. Never message text. */
     readonly detail: string | null;
+    /**
+     * New files the colleague named as its deliverable, as it wrote them. Claims, not
+     * decisions: every one is validated before anything is staged.
+     */
+    readonly outputs: readonly string[];
 }
 
 /** One turn, as this module needs it. The manager supplies the real runner behind this. */
@@ -79,6 +85,12 @@ export function taskOpeningPrompt(instruction: string): string {
         'with this exact marker on its own line:',
         TASK_DONE_SENTINEL,
         '',
+        'If you create any NEW files that are part of the deliverable, name them in your final',
+        'message on a line of this exact form, paths relative to the repository root:',
+        TASK_OUTPUTS_MARKER + ' path/one.ts, path/two.md>>',
+        'Only new files need naming. Changes to files that already exist are saved without it,',
+        'and a file you do not name is left out of the result, so name what matters.',
+        '',
         'Your work will be reviewed by a person before the task is closed, so finish with a short',
         'plain account of what you actually did and anything you could not do. Do not claim the',
         'task is complete if it is not; say what is blocking instead and stop.',
@@ -112,6 +124,9 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
     let sessionId: string | null = null;
     let summary = '';
     let turns = 0;
+    // Accumulated across turns, since a colleague may create a file early and only say so
+    // at the end, or name files as it goes. De-duplicated by the parser.
+    let outputs: string[] = [];
 
     for (let i = 0; i < limit; i += 1) {
         const text = i === 0 ? taskOpeningPrompt(instruction) : taskContinuationPrompt();
@@ -121,11 +136,16 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
 
         const reply = result.assistantText ?? '';
         if (reply.trim() !== '') summary = stripSentinel(reply);
+        const named = declaredOutputs(reply);
+        if (named.length > 0) outputs = [...new Set([...outputs, ...named])];
 
         // A dead process or a timeout is not something to retry blindly: the next turn would
         // hit the same wall, and burning the bound to discover that helps nobody.
         if (result.status === 'spawn-error' || result.status === 'exited' || result.status === 'timeout') {
-            return { reason: 'runner-error', turns, summary, sessionId, detail: result.detail ?? result.status };
+            return {
+                reason: 'runner-error', turns, summary, sessionId,
+                detail: result.detail ?? result.status, outputs
+            };
         }
 
         // An ask paused this colleague. The turn has ended; the task is waiting on me, and
@@ -133,17 +153,18 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
         if (deps.isAwaitingApproval?.()) {
             return {
                 reason: 'awaiting-approval', turns, summary, sessionId,
-                detail: 'a tool call needs your approval'
+                detail: 'a tool call needs your approval', outputs
             };
         }
 
         if (claimsComplete(reply)) {
-            return { reason: 'completed', turns, summary, sessionId, detail: null };
+            return { reason: 'completed', turns, summary, sessionId, detail: null, outputs };
         }
     }
 
     return {
         reason: 'turn-limit', turns, summary, sessionId,
-        detail: 'stopped after ' + String(limit) + ' turns without saying it was finished'
+        detail: 'stopped after ' + String(limit) + ' turns without saying it was finished',
+        outputs
     };
 }
