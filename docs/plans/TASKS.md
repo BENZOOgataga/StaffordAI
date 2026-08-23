@@ -157,8 +157,9 @@ rather than checking either for a plausible-looking value on its own.
 Stopping on no progress lands in needs-you, the same safe direction as a forgotten sentinel. The cost of
 stopping too early is a review I did not need; the cost of the opposite is a colleague grinding unwatched.
 
-The 20 is a starting point rather than a measured optimum. It is one constant, already injectable per run, and
-the thing to watch is whether real tasks start landing on the ceiling rather than on the sentinel.
+I proposed 20 with the cost per attempt rather than picking it silently, and Benzoo confirmed it on 2026-08-23.
+It is still not a measured optimum, so the thing to watch is whether real tasks start landing on the ceiling
+rather than on the sentinel. It is one constant and already injectable per run, so changing it is cheap.
 
 Completion detection is the open question I am least sure of, and I would rather name it than pretend it is
 solved. The candidate I favour for phase 1 is an explicit completion sentinel: the instruction is wrapped so
