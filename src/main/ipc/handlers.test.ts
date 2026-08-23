@@ -7,7 +7,7 @@ import {
     type ProjectCreated, type HireCreated, type ActivityRow, type SavedCheckpoints,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply
+    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply, type TaskBoardReply
 } from '../../shared/ipc.ts';
 
 interface SessionOverrides {
@@ -31,6 +31,7 @@ interface SessionOverrides {
     startTask?: (id: string) => TaskWriteReply;
     reviewTask?: (payload: TaskReview) => TaskWriteReply;
     taskDiff?: (id: string) => Promise<TaskDiffReply>;
+    taskBoard?: (closedLimit: number) => TaskBoardReply;
 }
 
 const TASK_OK: TaskWriteReply = {
@@ -78,7 +79,8 @@ function deps(
         assignTask: over.assignTask ?? (() => TASK_OK),
         startTask: over.startTask ?? (() => TASK_OK),
         reviewTask: over.reviewTask ?? (() => TASK_OK),
-        taskDiff: over.taskDiff ?? (() => Promise.resolve({ files: [], error: null }))
+        taskDiff: over.taskDiff ?? (() => Promise.resolve({ files: [], error: null })),
+        taskBoard: over.taskBoard ?? (() => ({ rows: [], closedTruncated: false }))
     };
 }
 
@@ -335,7 +337,10 @@ test('every task channel refuses a payload that is not its shape', () => {
         ['tasks:review', { id: 't1', decision: 'approve' }],
         ['tasks:review', null],
         ['tasks:diff', {}],
-        ['tasks:diff', { id: '' }]
+        ['tasks:diff', { id: '' }],
+        ['tasks:board', {}],
+        ['tasks:board', { closedLimit: -1 }],
+        ['tasks:board', { closedLimit: 5000 }]
     ];
     for (const [channel, payload] of bad) {
         assert.throws(() => handlers[channel as 'tasks:start'](payload),
@@ -363,7 +368,8 @@ test('THE INVARIANT AT THE WIRE: no channel lets a caller name the actor it acts
     // "actor" ever appears on this list, the guarantee has been moved onto a string a
     // caller controls, which is exactly what the lifecycle's actor argument exists to stop.
     const source = INVOKE_CHANNELS.filter((c) => c.startsWith('tasks:'));
-    assert.deepEqual([...source], ['tasks:by-hire', 'tasks:assign', 'tasks:start', 'tasks:review', 'tasks:diff'],
+    assert.deepEqual([...source],
+        ['tasks:by-hire', 'tasks:assign', 'tasks:start', 'tasks:review', 'tasks:diff', 'tasks:board'],
         'the task surface is these four channels; a new one needs its own reasoning');
 
     const seen: unknown[] = [];

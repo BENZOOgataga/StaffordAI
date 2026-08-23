@@ -114,6 +114,8 @@ export class TaskRepository {
     readonly #page: Statement;
     readonly #pageByProject: Statement;
     readonly #byHire: Statement;
+    readonly #open: Statement;
+    readonly #recentClosed: Statement;
 
     constructor(db: StorageDatabase) {
         this.#insert = db.prepare(
@@ -138,6 +140,20 @@ export class TaskRepository {
         // not about the archive. Backed by the tasks_agent_state index from migration 0007.
         this.#byHire = db.prepare(
             'SELECT * FROM tasks WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?');
+        // Every task that is not finished, across all colleagues, with no limit.
+        //
+        // Deliberately unbounded, unlike every other growing read here. The board exists so a
+        // task waiting on me is never hidden, and a limit is exactly how one would be: with
+        // enough finished work, an old needs-you task falls off the end of a page and stops
+        // being visible. The open set is bounded by how much is actually in flight, which is
+        // bounded by how many colleagues there are, so there is no runaway to protect against.
+        this.#open = db.prepare(
+            "SELECT * FROM tasks WHERE state IN ('assigned','working','needs-you') " +
+            'ORDER BY updated_at DESC, created_at DESC, id DESC');
+        // The finished ones are an archive and do get a limit, since nothing there needs me.
+        this.#recentClosed = db.prepare(
+            "SELECT * FROM tasks WHERE state IN ('done','failed') " +
+            'ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ?');
     }
 
     insert(task: Task): void { this.#insert.run(taskToRow(task)); }
@@ -153,6 +169,14 @@ export class TaskRepository {
     /** One colleague's tasks, newest first, capped by the caller. */
     byHire(agentId: string, limit: number): Task[] {
         return rowsOf(this.#byHire, agentId, limit).map(taskFromRow);
+    }
+    /** Every unfinished task across all colleagues, most recently moved first. */
+    open(): Task[] {
+        return rowsOf(this.#open).map(taskFromRow);
+    }
+    /** The most recently finished tasks across all colleagues, capped. */
+    recentClosed(limit: number): Task[] {
+        return rowsOf(this.#recentClosed, limit).map(taskFromRow);
     }
 }
 

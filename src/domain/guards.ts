@@ -15,7 +15,7 @@ import type {
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
     ProjectCreate, HireCreate, ApprovalAnswer,
     PermissionRulesRequest, PermissionEffectiveRequest, PermissionAdd, PermissionUpdate, PermissionRemove,
-    TasksByHireRequest, TaskAssign, TaskStart, TaskReview, TaskDiffRequest
+    TasksByHireRequest, TaskAssign, TaskStart, TaskReview, TaskDiffRequest, TaskBoardRequest
 } from '../shared/ipc.ts';
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -182,6 +182,11 @@ export function isTaskAssign(value: unknown): value is TaskAssign {
 
 export function isTaskStart(value: unknown): value is TaskStart {
     return isObject(value) && isBoundedString(value.id, 256);
+}
+
+/** A read of the whole board. Only the finished-task cap crosses. */
+export function isTaskBoard(value: unknown): value is TaskBoardRequest {
+    return isObject(value) && isBoundedInt(value.closedLimit, 0, 500);
 }
 
 /** A read of one task's result diff. */

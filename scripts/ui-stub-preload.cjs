@@ -89,6 +89,79 @@ contextBridge.exposeInMainWorld('stafford', {
         assign: async () => ({ ok: true, task: null, refused: null }),
         start: async () => ({ ok: true, task: null, refused: null }),
         review: async () => ({ ok: true, task: null, refused: null }),
+        // The board: tasks across BOTH colleagues, so a screenshot shows the thing the board
+        // exists for, every waiting task in one column regardless of whose it is.
+        board: async () => ({
+            rows: [
+                {
+                    id: 't1', hireId: 'b', projectId: 'p1',
+                    text: 'Add a parser for the config file and cover it with tests.',
+                    state: 'needs-you', createdAt: '2026-08-23T09:00:00Z', startedAt: '2026-08-23T09:00:10Z',
+                    completedAt: null, updatedAt: '2026-08-23T09:06:00Z',
+                    resultSummary: 'Added the parser and its tests.',
+                    resultBranch: 'stafford/task/b/t1', resultCommit: '4cb6973512ab', failedReason: null,
+                    declaredOutputs: [], refusedOutputs: null, sessionId: 's1',
+                    sendBacks: [
+                        { at: '2026-08-23T09:02:00Z', note: 'It drops blank lines.' },
+                        { at: '2026-08-23T09:04:00Z', note: 'Cover the legacy format too.' }
+                    ],
+                    attempts: 3
+                },
+                {
+                    id: 't4', hireId: 'a', projectId: 'p1',
+                    text: 'Write the migration notes for the storage change.',
+                    state: 'needs-you', createdAt: '2026-08-23T08:30:00Z', startedAt: '2026-08-23T08:30:05Z',
+                    completedAt: null, updatedAt: '2026-08-23T08:52:00Z',
+                    resultSummary: 'Wrote docs/migration.md.',
+                    resultBranch: 'stafford/task/a/t4', resultCommit: 'b71c40de9a11', failedReason: null,
+                    declaredOutputs: ['docs/migration.md'], refusedOutputs: null, sessionId: 's4',
+                    sendBacks: [], attempts: 1
+                },
+                {
+                    id: 't2', hireId: 'b', projectId: 'p1',
+                    text: 'Rename the Widget component to Gadget everywhere and update the imports.',
+                    state: 'working', createdAt: '2026-08-23T09:10:00Z', startedAt: '2026-08-23T09:10:05Z',
+                    completedAt: null, updatedAt: '2026-08-23T09:10:05Z',
+                    resultSummary: null, resultBranch: null, resultCommit: null, failedReason: null,
+                    declaredOutputs: [], refusedOutputs: null, sessionId: 's2', sendBacks: [], attempts: 1
+                },
+                {
+                    id: 't5', hireId: 'a', projectId: 'p1',
+                    text: 'Audit the dependency tree for anything unmaintained.',
+                    state: 'working', createdAt: '2026-08-23T09:12:00Z', startedAt: '2026-08-23T09:12:02Z',
+                    completedAt: null, updatedAt: '2026-08-23T09:12:02Z',
+                    resultSummary: null, resultBranch: null, resultCommit: null, failedReason: null,
+                    declaredOutputs: [], refusedOutputs: null, sessionId: 's5', sendBacks: [], attempts: 1
+                },
+                {
+                    id: 't6', hireId: 'a', projectId: 'p1',
+                    text: 'Draft the release notes for 0.2.',
+                    state: 'assigned', createdAt: '2026-08-23T09:20:00Z', startedAt: null,
+                    completedAt: null, updatedAt: '2026-08-23T09:20:00Z',
+                    resultSummary: null, resultBranch: null, resultCommit: null, failedReason: null,
+                    declaredOutputs: [], refusedOutputs: null, sessionId: null, sendBacks: [], attempts: 0
+                },
+                {
+                    id: 't3', hireId: 'b', projectId: 'p1',
+                    text: 'Fix the off-by-one in the pagination cursor.',
+                    state: 'done', createdAt: '2026-08-22T14:00:00Z', startedAt: '2026-08-22T14:00:04Z',
+                    completedAt: '2026-08-22T14:20:00Z', updatedAt: '2026-08-22T14:20:00Z',
+                    resultSummary: 'One line, plus a test.',
+                    resultBranch: 'stafford/task/b/t3', resultCommit: '9de1f0a7b3c2', failedReason: null,
+                    declaredOutputs: [], refusedOutputs: null, sessionId: 's3', sendBacks: [], attempts: 1
+                },
+                {
+                    id: 't7', hireId: 'a', projectId: 'p1',
+                    text: 'Port the old settings screen to the new shell.',
+                    state: 'failed', createdAt: '2026-08-22T11:00:00Z', startedAt: '2026-08-22T11:00:03Z',
+                    completedAt: '2026-08-22T11:40:00Z', updatedAt: '2026-08-22T11:40:00Z',
+                    resultSummary: null, resultBranch: null, resultCommit: null,
+                    failedReason: 'the old screen is gone, so there is nothing to port',
+                    declaredOutputs: [], refusedOutputs: null, sessionId: 's7', sendBacks: [], attempts: 1
+                }
+            ],
+            closedTruncated: true
+        }),
         diff: async () => ({
             files: [
                 { path: 'src/config/parse.ts', added: 84, removed: 0 },

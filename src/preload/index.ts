@@ -19,7 +19,7 @@ import {
     type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply, type TaskDiffReply
+    type TasksReply, type TaskWriteReply, type TaskDiffReply, type TaskBoardReply
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -200,6 +200,16 @@ const api = Object.freeze({
         /** The changed files on a task's result branch, for the review. */
         diff: (id: string): Promise<TaskDiffReply> =>
             invoke('tasks:diff', { id }) as Promise<TaskDiffReply>,
+        /**
+         * Every task across every colleague, for the board.
+         *
+         * A read, and the only one on this object that is not scoped to a colleague. The board
+         * writes nothing: acting on a card navigates to the review surface, which goes through
+         * `review` above, so there is no second route to a state change and the done-invariant
+         * is untouched by adding this.
+         */
+        board: (closedLimit: number): Promise<TaskBoardReply> =>
+            invoke('tasks:board', { closedLimit }) as Promise<TaskBoardReply>,
         onChanged: (listener: () => void): (() => void) => on('tasks:changed', () => listener())
     }),
 
