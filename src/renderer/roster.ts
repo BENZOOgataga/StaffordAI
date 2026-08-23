@@ -29,27 +29,31 @@ function main(): void {
     // notice is React now (the roster island), so it is no longer surfaced from here.
     rosterStore.start();
 
-    // The three React islands. Each fills the window when its view is active and is hidden
+    // The React islands. Each fills the window when its view is active and is hidden
     // otherwise; only one is ever shown. Each island renders the shared AppShell, so the
     // rail lives in one component.
     const homeView = document.getElementById('home') as HTMLElement;
     const rosterView = document.getElementById('roster-react') as HTMLElement;
     const channelView = document.getElementById('channel-react') as HTMLElement;
     const permissionsView = document.getElementById('permissions-react') as HTMLElement;
+    const boardView = document.getElementById('board-react') as HTMLElement;
     let dashboardMounted = false;
     let rosterMounted = false;
     let channelMounted = false;
     let permissionsMounted = false;
+    let boardMounted = false;
 
     const showView = (view: string): void => {
         const isHome = view === 'home';
         const isRoster = view === 'roster';
         const isChannel = view === 'channel';
         const isPermissions = view === 'permissions';
+        const isBoard = view === 'board';
         homeView.hidden = !isHome;
         rosterView.hidden = !isRoster;
         channelView.hidden = !isChannel;
         permissionsView.hidden = !isPermissions;
+        boardView.hidden = !isBoard;
 
         if (isHome && !dashboardMounted) {
             dashboardMounted = true;
@@ -79,6 +83,16 @@ function main(): void {
                     channelMounted = false;
                     channelView.textContent = 'The channel could not load.';
                     console.error('[channel] mount failed:', error);
+                });
+        }
+        if (isBoard && !boardMounted) {
+            boardMounted = true;
+            import('./board/mount.tsx')
+                .then((m) => m.mountBoard(boardView, lang, showView))
+                .catch((error: unknown) => {
+                    boardMounted = false;
+                    boardView.textContent = 'The task board could not load.';
+                    console.error('[board] mount failed:', error);
                 });
         }
         if (isPermissions && !permissionsMounted) {

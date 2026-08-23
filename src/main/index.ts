@@ -1383,6 +1383,67 @@ async function runTaskUiSmoke(): Promise<void> {
         'window.stafford.tasks.review(' + JSON.stringify(thirdId) + ', "approve", null)');
     out('approved: ok=' + String(closed.ok) + ' state=' + (closed.task?.state ?? '?'));
 
+    out('=== 13: THE BOARD: tasks across MORE THAN ONE colleague, read through the bridge ===');
+    // A second colleague, so the board is answering across people rather than for one.
+    const otherId = 'uismoke-b-' + started;
+    repositories.hires.insert({
+        id: otherId, name: 'Boris', type: 'lead-developer', title: 'Lead developer', seniority: 2,
+        ownerId: 'owner', sessions: {}, activeProjectId: projectId, state: 'idle',
+        hiredAt: started, firedAt: null
+    });
+    // And one of Ada's left unreviewed, so the waiting column has to hold two people's work.
+    // Every earlier scenario closed its task, which would otherwise make this prove nothing.
+    const adaWaiting = await bridge<{ task: { id: string } | null }>(
+        'window.stafford.tasks.assign(' + JSON.stringify(hireId) + ', ' +
+        JSON.stringify('Append a line saying "from Ada" to README.md. Then stop.') + ')');
+    const adaWaitingId = adaWaiting.task?.id ?? '';
+    await bridge('window.stafford.tasks.start(' + JSON.stringify(adaWaitingId) + ')');
+    for (let i = 0; i < 240; i += 1) {
+        if (repositories.tasks.get(adaWaitingId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+
+    const borisTask = await bridge<{ task: { id: string } | null }>(
+        'window.stafford.tasks.assign(' + JSON.stringify(otherId) + ', ' +
+        JSON.stringify('Append a line saying "from Boris" to README.md. Then stop.') + ')');
+    const borisId = borisTask.task?.id ?? '';
+    await bridge('window.stafford.tasks.start(' + JSON.stringify(borisId) + ')');
+    for (let i = 0; i < 240; i += 1) {
+        if (repositories.tasks.get(borisId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+
+    const readBoard = async (): Promise<Array<{ state: string; hire: string; text: string }>> => {
+        const reply = await bridge<{ rows: Array<Record<string, unknown>>; closedTruncated: boolean }>(
+            'window.stafford.tasks.board(40)');
+        return reply.rows.map((r) => ({
+            state: String(r['state']),
+            hire: String(r['hireId']) === hireId ? 'Ada' : String(r['hireId']) === otherId ? 'Boris' : '?',
+            text: String(r['text']).split('\n')[0]!.slice(0, 44)
+        }));
+    };
+
+    const before = await readBoard();
+    const byState = (rows: typeof before): string =>
+        ['needs-you', 'working', 'assigned', 'done', 'failed']
+            .map((st) => st + '=' + String(rows.filter((r) => r.state === st).length)).join(' ');
+    out('board, grouped: ' + byState(before));
+    out('every task waiting for me, across everyone:');
+    for (const row of before.filter((r) => r.state === 'needs-you')) {
+        out('    [' + row.hire + '] ' + row.text);
+    }
+    const colleagues = new Set(before.filter((r) => r.state === 'needs-you').map((r) => r.hire));
+    out('  distinct colleagues in the waiting column: ' + [...colleagues].join(', '));
+
+    out('=== 14: the board follows a state change, which is what makes it live ===');
+    const waiting = before.filter((r) => r.state === 'needs-you');
+    out('waiting before approving: ' + String(waiting.length));
+    await bridge('window.stafford.tasks.review(' + JSON.stringify(borisId) + ', "approve", null)');
+    const after = await readBoard();
+    out('board after approving Boris task: ' + byState(after));
+    out('waiting after: ' + String(after.filter((r) => r.state === 'needs-you').length) +
+        ' (the tasks:changed event is what the screen re-reads on)');
+
     out('=== task ui smoke done ===');
 }
 
@@ -1549,7 +1610,17 @@ app.whenReady().then(async () => {
             }
             return task;
         }),
-        taskDiff: (id) => readTaskDiff(id)
+        taskDiff: (id) => readTaskDiff(id),
+        // Unfinished tasks in full, finished ones capped. See TaskRepository.open for why the
+        // unfinished set is deliberately not paginated.
+        taskBoard: (closedLimit) => {
+            const open = repositories?.tasks.open() ?? [];
+            const closed = repositories?.tasks.recentClosed(closedLimit + 1) ?? [];
+            return {
+                rows: [...open, ...closed.slice(0, closedLimit)].map(taskRow),
+                closedTruncated: closed.length > closedLimit
+            };
+        }
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +

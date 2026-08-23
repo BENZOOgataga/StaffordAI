@@ -19,13 +19,13 @@ import {
     type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply
+    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply, type TaskBoardReply
 } from '../../shared/ipc.ts';
 import {
     isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
     isApprovalAnswer,
     isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove,
-    isTasksByHire, isTaskAssign, isTaskStart, isTaskReview, isTaskDiff
+    isTasksByHire, isTaskAssign, isTaskStart, isTaskReview, isTaskDiff, isTaskBoard
 } from '../../domain/guards.ts';
 import { sanitiseMessage } from '../../domain/message-input.ts';
 
@@ -114,6 +114,8 @@ export interface HandlerDeps {
      * branch is in git for when I want to read the change properly.
      */
     readonly taskDiff: (id: string) => Promise<TaskDiffReply>;
+    /** Every task across every colleague, for the board. A read; the board writes nothing. */
+    readonly taskBoard: (closedLimit: number) => TaskBoardReply;
 }
 
 /**
@@ -260,6 +262,10 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'tasks:diff': (payload: unknown): Promise<TaskDiffReply> => {
             if (!isTaskDiff(payload)) throw new Error('tasks:diff requires {id}');
             return deps.taskDiff(payload.id);
+        },
+        'tasks:board': (payload: unknown): TaskBoardReply => {
+            if (!isTaskBoard(payload)) throw new Error('tasks:board requires {closedLimit}');
+            return deps.taskBoard(payload.closedLimit);
         }
     };
 }

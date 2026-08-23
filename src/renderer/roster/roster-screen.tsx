@@ -165,7 +165,13 @@ export function RosterScreen({
                     </div>
                 </section>
 
-                <DetailPane selected={state.selectedCard} cards={state.cards} lang={lang} />
+                <DetailPane
+                    selected={state.selectedCard}
+                    cards={state.cards}
+                    lang={lang}
+                    openTab={state.openTab}
+                    openTabNonce={state.openTabNonce}
+                />
                 </div>
             </div>
         </AppShell>

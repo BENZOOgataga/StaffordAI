@@ -59,7 +59,10 @@ export const INVOKE_CHANNELS = [
     'tasks:review',
     // The changed files on a task's result branch, for the review. A read, and the only task
     // channel that touches git rather than the store.
-    'tasks:diff'
+    'tasks:diff',
+    // Every task across every colleague, for the board. A read, and the board writes nothing:
+    // acting on a card navigates to the review surface, which uses the channels above.
+    'tasks:board'
 ] as const;
 
 /** Main pushes to the renderer. One-way, no reply. */
@@ -514,6 +517,23 @@ export interface TaskDiffFile {
     readonly path: string;
     readonly added: number;
     readonly removed: number;
+}
+
+export interface TaskBoardRequest {
+    /** How many finished tasks to include. Unfinished ones are never capped. */
+    readonly closedLimit: number;
+}
+
+export interface TaskBoardReply {
+    /**
+     * Every unfinished task plus the most recent finished ones, most recently moved first.
+     *
+     * The unfinished ones are complete rather than a page, because the board exists so a task
+     * waiting on me is never hidden and a limit is exactly how one would be hidden.
+     */
+    readonly rows: readonly TaskRow[];
+    /** True when older finished tasks were left out, so the column can say so. */
+    readonly closedTruncated: boolean;
 }
 
 export interface TaskDiffRequest {

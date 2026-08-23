@@ -7,7 +7,7 @@ import { ColleaguePermissionsPanel } from '../permissions/colleague-permissions-
 import { TasksPanel } from '../tasks/tasks-panel.tsx';
 import { useDetailData } from './use-detail-data.ts';
 import { buildActivityFeed, buildTranscript } from './feed-model.ts';
-import { tabLabels, DEFAULT_TAB, type TabId } from '../detail-tabs.ts';
+import { tabLabels, isTabId, DEFAULT_TAB, type TabId } from '../detail-tabs.ts';
 import type { Lang } from '../channel-view.ts';
 import { CHANNEL_SELF_SENDER, type RosterCard } from '../../shared/ipc.ts';
 
@@ -18,17 +18,29 @@ import { CHANNEL_SELF_SENDER, type RosterCard } from '../../shared/ipc.ts';
  * as the right island beside the roster; with no colleague selected it shows a real empty
  * state. Selecting a colleague resets to the Conversation tab, as before.
  */
-export function DetailPane({ selected, cards, lang }: {
+export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
     selected: RosterCard | null;
     cards: readonly RosterCard[];
     lang: Lang;
+    /** A tab request, from the board sending me to a task. Null for the usual default. */
+    openTab?: string | null;
+    /** Changes on every request, so the same tab can be asked for twice. */
+    openTabNonce?: number;
 }): React.JSX.Element {
     const hireId = selected?.id ?? null;
     const { convRows, actRows } = useDetailData(hireId);
     const [tab, setTab] = React.useState<TabId>(DEFAULT_TAB);
 
-    // A fresh colleague opens on the front tab, the conversation.
-    React.useEffect(() => { setTab(DEFAULT_TAB); }, [hireId]);
+    // A fresh colleague opens on the front tab, the conversation, unless something asked for
+    // a particular one. The board does, because arriving on Conversation after clicking a
+    // task card means one more click to reach the thing I clicked for.
+    // The request is not cleared after use, deliberately. Clearing it changed `openTab` and
+    // so re-ran this effect, which then fell through to the default and undid the very tab it
+    // had just opened. The nonce makes a repeat request distinguishable instead, and an
+    // ordinary roster selection clears the request as part of selecting.
+    React.useEffect(() => {
+        setTab(openTab && isTabId(openTab) ? openTab : DEFAULT_TAB);
+    }, [hireId, openTab, openTabNonce]);
 
     const nameOf = React.useCallback((senderId: string): string => {
         if (senderId === CHANNEL_SELF_SENDER) return 'You';

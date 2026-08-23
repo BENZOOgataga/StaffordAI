@@ -23,6 +23,22 @@ export interface RosterState {
     /** The selected colleague's card, kept fresh from the snapshot, for the detail header. */
     readonly selectedCard: RosterCard | null;
     readonly muted: boolean;
+    /**
+     * The detail tab to open on the next selection, or null for the usual default.
+     *
+     * Set when the board sends me to a colleague, because arriving on the Conversation tab
+     * after clicking a task card means one more click to reach the thing I clicked for. It is
+     * a one-shot request rather than a stored preference: the detail pane consumes it and the
+     * next ordinary selection opens on the front tab as before.
+     */
+    readonly openTab: string | null;
+    /**
+     * Bumped every time a tab is requested, so asking for the same tab on the same colleague
+     * twice is still two requests. Without it, going back to the board and clicking another
+     * card for a colleague I had since moved off the Tasks tab would change nothing, because
+     * neither the colleague nor the requested tab differs from last time.
+     */
+    readonly openTabNonce: number;
     /** A clock for the elapsed labels, bumped on a slow timer. */
     readonly now: number;
 }
@@ -35,20 +51,22 @@ let selectedId: string | null = null;
 let selectedCard: RosterCard | null = null;
 let muted = false;
 let started = false;
+let openTab: string | null = null;
+let openTabNonce = 0;
 
 /**
  * The cached immutable snapshot. useSyncExternalStore requires getSnapshot to return a
  * stable reference between changes, so the object is rebuilt only in emit(), never per
  * call, and returned as-is otherwise.
  */
-let snapshot: RosterState = { cards: [], badged: new Set(), unseenCount: 0, selectedId: null, selectedCard: null, muted: false, now: Date.now() };
+let snapshot: RosterState = { cards: [], badged: new Set(), unseenCount: 0, selectedId: null, selectedCard: null, muted: false, openTab: null, openTabNonce: 0, now: Date.now() };
 
 function rebuild(): void {
     const badged = new Set<string>();
     for (const card of cards) {
         if (alerts.isBadged(card.id)) badged.add(card.id);
     }
-    snapshot = { cards, badged, unseenCount: alerts.unseenCount, selectedId, selectedCard, muted, now: Date.now() };
+    snapshot = { cards, badged, unseenCount: alerts.unseenCount, selectedId, selectedCard, muted, openTab, openTabNonce, now: Date.now() };
 }
 
 function emit(): void {
@@ -80,8 +98,27 @@ export const rosterStore = {
     select(card: RosterCard): void {
         selectedId = card.id;
         selectedCard = card;
+        openTab = null;
         emit();
     },
+
+    /**
+     * Selects a colleague by id and asks the detail pane to open a particular tab.
+     *
+     * For the board, which knows a hire id rather than a card and wants me to land on the
+     * task I clicked rather than on that colleague's conversation. A colleague that is not on
+     * the roster is a no-op rather than a blank pane.
+     */
+    selectFor(hireId: string, tab: string): void {
+        const card = cards.find((c) => c.id === hireId);
+        if (!card) return;
+        selectedId = card.id;
+        selectedCard = card;
+        openTab = tab;
+        openTabNonce += 1;
+        emit();
+    },
+
 
     toggleMute(): void {
         muted = !muted;
