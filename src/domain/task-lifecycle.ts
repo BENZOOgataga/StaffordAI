@@ -193,8 +193,36 @@ export function stripSentinel(text: string): string {
  * How many turns one task may take before it stops and asks for me.
  *
  * Bounded because the whole point is that I walk away, and an unattended thing with no bound
- * is the one shape I cannot supervise. Low rather than generous: the cost of too low is a
- * review I did not need, and the cost of too high is a colleague grinding unwatched. Hitting
- * the bound is not a failure, it lands in needs-you and I judge it.
+ * is the one shape I cannot supervise. Hitting the bound is not a failure: it lands in
+ * needs-you and I judge it.
+ *
+ * **Raised from 6 to 20 on 2026-08-23.** Six was chosen before any task had run. Measured
+ * against real runs since, one turn is not a small unit: a Stafford turn ends at Claude Code's
+ * `result`, which is where the model stops of its own accord, so a single turn already
+ * contains several tool calls and its own internal rounds. The trivial tasks measured finished
+ * in one to three turns and cost roughly $0.13 each, so six was generous for those and would
+ * still be far too few for a real feature, which is the shape this bound was blocking.
+ *
+ * The raise is only safe because of `IDLE_TURN_LIMIT` below. A higher ceiling would otherwise
+ * mean a stuck colleague burns twenty turns instead of six, which is the opposite of what a
+ * safety valve is for. With the idle stop, the stuck case now costs two turns rather than the
+ * whole bound, so this change raises the ceiling for work that is progressing while making the
+ * runaway case cheaper than it was at 6.
  */
-export const DEFAULT_TASK_TURN_LIMIT = 6;
+export const DEFAULT_TASK_TURN_LIMIT = 20;
+
+/**
+ * How many consecutive turns a colleague may take without doing anything before the attempt
+ * stops and lands in review.
+ *
+ * A turn that called no tool and did not claim completion moved nothing: no file changed, and
+ * the only thing that happened is that it talked. One of those is ordinary, since a colleague
+ * can legitimately spend a turn reading its own reasoning or saying it is about to do
+ * something. Two in a row is a colleague that has stopped making progress, and the remaining
+ * bound spent on it buys nothing.
+ *
+ * It stops in the safe direction, the same as the sentinel does: it lands in needs-you rather
+ * than failing, so the cost of stopping too early is a review I did not need. That is what
+ * makes it acceptable to act on a signal this cheap.
+ */
+export const IDLE_TURN_LIMIT = 2;

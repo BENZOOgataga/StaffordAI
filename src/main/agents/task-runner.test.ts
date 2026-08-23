@@ -12,7 +12,9 @@ import {
     runTask, taskOpeningPrompt, taskContinuationPrompt, taskSendBackPrompt,
     taskSendBackRestartPrompt, type RunTaskTurn
 } from './task-runner.ts';
-import { TASK_DONE_SENTINEL } from '../../domain/task-lifecycle.ts';
+import {
+    TASK_DONE_SENTINEL, DEFAULT_TASK_TURN_LIMIT, IDLE_TURN_LIMIT
+} from '../../domain/task-lifecycle.ts';
 import type { TurnResult } from './claude-runner.ts';
 
 function turn(over: Partial<TurnResult> = {}): TurnResult {
@@ -20,6 +22,17 @@ function turn(over: Partial<TurnResult> = {}): TurnResult {
         status: 'completed', sessionId: 'sess-1', assistantText: 'working on it',
         toolUses: [], isError: false, ...over
     };
+}
+
+/**
+ * A turn that actually did something.
+ *
+ * Since the idle stop landed, a turn with no tool call is a colleague that moved nothing, and
+ * two of those end the attempt. A test about the ceiling has to represent a colleague that is
+ * working, or it stops for the other reason and proves nothing about the bound.
+ */
+function workingTurn(over: Partial<TurnResult> = {}): TurnResult {
+    return turn({ toolUses: [{ name: 'Edit', input: {} }], ...over });
 }
 
 /** A runner that replies with a scripted sequence, and records what it was asked. */
@@ -49,9 +62,9 @@ test('the sentinel ends the task, and the summary has it stripped', async () => 
 
 test('a task is several turns, since one turn ends a turn and not a job', async () => {
     const { run, resumes } = scripted([
-        turn({ assistantText: 'reading the code' }),
-        turn({ assistantText: 'still going' }),
-        turn({ assistantText: 'done now ' + TASK_DONE_SENTINEL })
+        workingTurn({ assistantText: 'reading the code' }),
+        workingTurn({ assistantText: 'still going' }),
+        workingTurn({ assistantText: 'done now ' + TASK_DONE_SENTINEL })
     ]);
     const out = await runTask({ runTurn: run }, 'do the thing');
 
@@ -62,7 +75,9 @@ test('a task is several turns, since one turn ends a turn and not a job', async 
 
 test('THE SAFE DIRECTION: a forgotten sentinel spends the bound and lands in review', async () => {
     // A colleague that never says it finished must not close the task and must not run forever.
-    const { run } = scripted([turn({ assistantText: 'I think that is everything, looks good.' })]);
+    // It keeps working here, so it reaches the ceiling rather than the idle stop; both land in
+    // review, and this is the one that proves the ceiling still holds.
+    const { run } = scripted([workingTurn({ assistantText: 'I think that is everything, looks good.' })]);
     const out = await runTask({ runTurn: run, turnLimit: 3 }, 'do the thing');
 
     assert.equal(out.reason, 'turn-limit',
@@ -73,7 +88,7 @@ test('THE SAFE DIRECTION: a forgotten sentinel spends the bound and lands in rev
 
 test('the bound is honoured exactly, not approximately', async () => {
     for (const limit of [1, 2, 5]) {
-        const { run, asked } = scripted([turn({ assistantText: 'no marker here' })]);
+        const { run, asked } = scripted([workingTurn({ assistantText: 'no marker here' })]);
         const out = await runTask({ runTurn: run, turnLimit: limit }, 'x');
         assert.equal(out.turns, limit);
         assert.equal(asked.length, limit);
@@ -109,9 +124,9 @@ test('an outcome is never "done": this module cannot close a task', async () => 
 
 test('the last non-empty reply survives as the summary, even if a later turn says nothing', async () => {
     const { run } = scripted([
-        turn({ assistantText: 'I changed the parser.' }),
-        turn({ assistantText: '' }),
-        turn({ assistantText: '' })
+        workingTurn({ assistantText: 'I changed the parser.' }),
+        workingTurn({ assistantText: '' }),
+        workingTurn({ assistantText: '' })
     ]);
     const out = await runTask({ runTurn: run, turnLimit: 3 }, 'x');
     assert.equal(out.summary, 'I changed the parser.', 'a silent final turn must not blank the review');
@@ -203,7 +218,7 @@ test('the restart is tried once, so an always-dead runner cannot loop on it', as
 });
 
 test('a send-back that spends its bound still lands in review, like any other attempt', async () => {
-    const { run, asked } = scripted([turn({ assistantText: 'thinking about it' })]);
+    const { run, asked } = scripted([workingTurn({ assistantText: 'thinking about it' })]);
     const out = await runTask({
         runTurn: run, turnLimit: 3,
         continuation: { sessionId: 's1', note: 'fix it', priorSummary: '' }
@@ -220,7 +235,7 @@ test('the restart spends a turn from the bound, since an unattended retry is sti
     const run: RunTaskTurn = () => {
         call += 1;
         if (call === 1) return Promise.resolve(turn({ status: 'exited', isError: true, detail: 'gone' }));
-        return Promise.resolve(turn({ assistantText: 'still going' }));
+        return Promise.resolve(workingTurn({ assistantText: 'still going' }));
     };
     const out = await runTask({
         runTurn: run, turnLimit: 3,
@@ -242,4 +257,119 @@ test('the restart prompt copes with a colleague that said nothing last time', ()
     assert.match(p, /left no account/);
     assert.match(p, /check the working tree/);
     assert.match(p, /my note/);
+});
+
+// --- the depth bound, and the idle stop that makes raising it safe ----------
+
+test('a task can now run well past the old bound of six when it is making progress', async () => {
+    // Twelve working turns then the sentinel: under the old bound this task could never have
+    // finished, which is the ceiling this change exists to raise.
+    let call = 0;
+    const run: RunTaskTurn = () => {
+        call += 1;
+        const working = turn({ assistantText: 'step ' + String(call), toolUses: [{ name: 'Edit', input: {} }] });
+        if (call < 13) return Promise.resolve(working);
+        return Promise.resolve(turn({
+            assistantText: 'done ' + TASK_DONE_SENTINEL, toolUses: [{ name: 'Edit', input: {} }]
+        }));
+    };
+    const out = await runTask({ runTurn: run }, 'a real piece of work');
+
+    assert.equal(out.reason, 'completed');
+    assert.equal(out.turns, 13, 'thirteen turns, which the old bound of six would have cut off');
+});
+
+test('the ceiling is still a ceiling: a colleague working forever is stopped and reviewed', async () => {
+    const { run, asked } = scripted([
+        turn({ assistantText: 'still going', toolUses: [{ name: 'Edit', input: {} }] })
+    ]);
+    const out = await runTask({ runTurn: run, turnLimit: 8 }, 'x');
+
+    assert.equal(out.reason, 'turn-limit', 'an unattended thing with no bound is unsupervisable');
+    assert.equal(asked.length, 8);
+});
+
+test('THE IDLE STOP: two turns that do nothing end the attempt, rather than spending the bound', async () => {
+    const { run, asked } = scripted([turn({ assistantText: 'thinking about it', toolUses: [] })]);
+    const out = await runTask({ runTurn: run, turnLimit: 20 }, 'x');
+
+    assert.equal(out.reason, 'no-progress');
+    assert.equal(asked.length, 2,
+        'a stalled colleague now costs two turns, where at the old bound of six it cost six');
+    assert.match(out.detail ?? '', /turns that did nothing/);
+});
+
+test('RAISING THE CEILING MADE THE STUCK CASE CHEAPER, which is what makes the raise safe', async () => {
+    // The whole argument for 20 over 6: the runaway case does not scale with the bound.
+    for (const limit of [6, 20, 100]) {
+        const { run, asked } = scripted([turn({ assistantText: 'nothing to report', toolUses: [] })]);
+        const out = await runTask({ runTurn: run, turnLimit: limit }, 'x');
+        assert.equal(out.reason, 'no-progress');
+        assert.equal(asked.length, 2, 'the stuck cost is flat at ' + String(limit) + ', not proportional');
+    }
+});
+
+test('one quiet turn is allowed, since a colleague may legitimately pause to think', async () => {
+    let call = 0;
+    const run: RunTaskTurn = () => {
+        call += 1;
+        // Quiet, then works, then quiet, then works: never two in a row, so it must not stop.
+        const quiet = call % 2 === 1;
+        if (call >= 7) {
+            return Promise.resolve(turn({
+                assistantText: 'done ' + TASK_DONE_SENTINEL, toolUses: [{ name: 'Edit', input: {} }]
+            }));
+        }
+        return Promise.resolve(turn({
+            assistantText: 'x', toolUses: quiet ? [] : [{ name: 'Edit', input: {} }]
+        }));
+    };
+    const out = await runTask({ runTurn: run, turnLimit: 20 }, 'x');
+
+    assert.equal(out.reason, 'completed', 'an alternating pause must not be read as a stall');
+    assert.equal(out.turns, 7);
+});
+
+test('a turn that does work resets the idle count, so progress buys back the tolerance', async () => {
+    let call = 0;
+    const run: RunTaskTurn = () => {
+        call += 1;
+        // quiet, work, quiet, quiet -> stops on the fourth, not the third.
+        const tools = call === 2 ? [{ name: 'Edit', input: {} }] : [];
+        return Promise.resolve(turn({ assistantText: 'x', toolUses: tools }));
+    };
+    const out = await runTask({ runTurn: run, turnLimit: 20 }, 'x');
+
+    assert.equal(out.reason, 'no-progress');
+    assert.equal(out.turns, 4);
+});
+
+test('THE SENTINEL STILL WINS: a quiet turn that claims completion completes, never stalls', async () => {
+    // Completion is checked before the idle test, so a colleague that finishes by simply
+    // saying so, having done its work in an earlier turn, is not mistaken for a stall.
+    const { run } = scripted([turn({ assistantText: 'all done ' + TASK_DONE_SENTINEL, toolUses: [] })]);
+    const out = await runTask({ runTurn: run, turnLimit: 20 }, 'x');
+
+    assert.equal(out.reason, 'completed');
+    assert.equal(out.turns, 1);
+});
+
+test('no stop reason is ever "done": the loop still cannot close a task', async () => {
+    const cases: Array<[string, Partial<TurnResult>]> = [
+        ['completed', { assistantText: TASK_DONE_SENTINEL }],
+        ['no-progress', { assistantText: 'nothing', toolUses: [] }],
+        ['runner-error', { status: 'exited', isError: true }]
+    ];
+    for (const [, over] of cases) {
+        const { run } = scripted([turn(over)]);
+        const out = await runTask({ runTurn: run, turnLimit: 3 }, 'x');
+        assert.notEqual(out.reason as string, 'done');
+    }
+});
+
+test('the default bound is the documented one, so the constant and the docs cannot drift', () => {
+    assert.equal(DEFAULT_TASK_TURN_LIMIT, 20);
+    assert.equal(IDLE_TURN_LIMIT, 2);
+    assert.ok(IDLE_TURN_LIMIT < DEFAULT_TASK_TURN_LIMIT,
+        'the idle stop has to bite before the ceiling, or it does nothing');
 });

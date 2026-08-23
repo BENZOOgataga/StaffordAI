@@ -440,9 +440,11 @@ export class TaskService {
             });
         }
 
-        // completed, turn-limit and awaiting-approval all land in the same place, because all
-        // three mean the same thing to me: the colleague has stopped and I have to look. The
-        // difference between them is what I read at review, not where the task goes.
+        // completed, turn-limit, no-progress and awaiting-approval all land in the same place,
+        // because all four mean the same thing to me: the colleague has stopped and I have to
+        // look. The difference between them is what I read at review, not where the task goes.
+        // In particular no-progress is a review and not a failure, the same safe direction as
+        // a forgotten sentinel: a colleague that stalled may still have done most of the work.
         return this.#write('colleague', task, TASK_STATES.NEEDS_YOU, {
             ...patch, failedReason: null
         });

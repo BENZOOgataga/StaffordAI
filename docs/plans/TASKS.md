@@ -135,6 +135,32 @@ whether the task is complete. If it is not, and the cap is not spent, it continu
 prompt. If the cap is spent, the task goes to needs-you with a note saying it ran out of turns, which is a
 review outcome rather than a failure.
 
+**The cap is 20, raised from 6 on 2026-08-23, and the raise came with an idle stop.**
+
+Six was picked before any task had run. Measured against real runs since, a turn is not a small unit: a
+Stafford turn ends at Claude Code's `result`, which is where the model stops of its own accord, so one turn
+already contains several tool calls and its own internal rounds. Trivial tasks measured at one to three turns
+and roughly $0.13 a turn, so six was generous for those and nowhere near enough for a real feature, which is
+the shape the cap was quietly blocking.
+
+Raising a ceiling on an unattended loop is only safe if the runaway case does not scale with it. So the raise
+is paired with a second, tighter stop: **two consecutive turns that call no tool and claim no completion end
+the attempt**. A turn with no tool call moved nothing, and the only thing that happened is that the colleague
+talked. One of those is ordinary, since it can legitimately spend a turn reasoning. Two in a row is a colleague
+that has stalled, and the rest of the cap spent on it buys nothing.
+
+The result is that the ceiling went up for work that is progressing while the stuck case got cheaper than it
+was at 6: a stalled colleague now costs two turns rather than the whole cap, whatever the cap is. That property
+is what the number rests on, so it is asserted in a test that compares the two constants against each other
+rather than checking either for a plausible-looking value on its own.
+
+Stopping on no progress lands in needs-you, the same safe direction as a forgotten sentinel. The cost of
+stopping too early is a review I did not need; the cost of the opposite is a colleague grinding unwatched.
+
+I proposed 20 with the cost per attempt rather than picking it silently, and Benzoo confirmed it on 2026-08-23.
+It is still not a measured optimum, so the thing to watch is whether real tasks start landing on the ceiling
+rather than on the sentinel. It is one constant and already injectable per run, so changing it is cheap.
+
 Completion detection is the open question I am least sure of, and I would rather name it than pretend it is
 solved. The candidate I favour for phase 1 is an explicit completion sentinel: the instruction is wrapped so
 the colleague is told to finish its final message with a fixed marker when it considers the task complete, and
@@ -311,8 +337,10 @@ Whether needs-you should be one badge or two. I have designed it as one state wi
 turn out that a task paused mid-work and a task awaiting review feel different enough to want separate signals
 on the roster. Cheap to split later, since it is a presentation change over one state.
 
-How many turns the cap should be, and whether it is per project. Starting low is right, since the failure mode
-of too low is a review I did not need, and of too high is a colleague grinding unattended.
+Whether the cap should be per project rather than one constant. It is 20 as of 2026-08-23, with an idle stop
+that makes the stalled case cost two turns regardless, and it is already injectable per run. What would justify
+making it configurable is evidence that real tasks differ enough between projects to need it, which I do not
+have yet: the thing to watch is whether tasks start landing on the ceiling rather than on the sentinel.
 
 ## Next action and recommendation
 
