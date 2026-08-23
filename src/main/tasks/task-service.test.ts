@@ -39,6 +39,7 @@ interface Harness {
     checkpoints: { cwd: string; hireId: string; branch: string; message: string;
         baselineTree: string | null; outputs: readonly string[] }[];
     turns: string[];
+    resumes: (string | null)[];
 }
 
 function harness(over: {
@@ -55,6 +56,7 @@ function harness(over: {
     const tasks = store();
     const checkpoints: Harness['checkpoints'] = [];
     const turns: string[] = [];
+    const resumes: (string | null)[] = [];
     const replies = over.replies ?? [turn({ assistantText: 'done ' + TASK_DONE_SENTINEL })];
     let i = 0;
     let n = 0;
@@ -64,8 +66,9 @@ function harness(over: {
         now: () => '2026-08-22T10:0' + String(n++ % 10) + ':00Z',
         uuid: () => 't1',
         resolveTarget: () => (over.target === undefined ? { cwd: '/repo', projectId: 'p1' } : over.target),
-        runTurn: (_hireId, text) => {
+        runTurn: (_hireId, text, resumeSessionId) => {
             turns.push(text);
+            resumes.push(resumeSessionId);
             const reply = replies[Math.min(i, replies.length - 1)];
             i += 1;
             return Promise.resolve(reply ?? null);
@@ -82,7 +85,7 @@ function harness(over: {
         ...(over.awaiting !== undefined ? { isAwaitingApproval: (): boolean => over.awaiting! } : {})
     });
 
-    return { service, tasks, checkpoints, turns };
+    return { service, tasks, checkpoints, turns, resumes };
 }
 
 // --- the invariant, against the live service --------------------------------
@@ -113,7 +116,7 @@ test('only I close a task, and approving is what closes it', async () => {
     const h = harness();
     const t = h.service.assign({ hireId: 'h1', text: 'do it' });
     await h.service.start(t.id).finished;
-    const done = h.service.review(t.id, 'approve');
+    const done = h.service.review(t.id, 'approve').task;
     assert.equal(done.state, 'done');
     assert.ok(done.completedAt, 'an approved task records when it closed');
 });
@@ -155,7 +158,7 @@ test('the full loop: assign, work, needs-you with a result branch, approve', asy
     assert.equal(reviewed.sessionId, 'sess-1');
     assert.ok(reviewed.startedAt);
 
-    assert.equal(h.service.review(t.id, 'approve').state, 'done');
+    assert.equal(h.service.review(t.id, 'approve').task.state, 'done');
 });
 
 test('the result lands on the task branch, not on a drain checkpoint branch', async () => {
@@ -274,26 +277,31 @@ test('failing at review records my reason, not whatever the colleague said', asy
     const h = harness();
     const t = h.service.assign({ hireId: 'h1', text: 'x' });
     await h.service.start(t.id).finished;
-    const failed = h.service.review(t.id, 'fail', 'wrong approach entirely');
+    const failed = h.service.review(t.id, 'fail', 'wrong approach entirely').task;
     assert.equal(failed.state, 'failed');
     assert.equal(failed.failedReason, 'wrong approach entirely');
 });
 
-test('send-back returns the task to working without starting a run', async () => {
+test('send-back returns the task to working AND puts the colleague back to work', async () => {
     const h = harness();
     const t = h.service.assign({ hireId: 'h1', text: 'x' });
     await h.service.start(t.id).finished;
     const before = h.turns.length;
-    const back = h.service.review(t.id, 'send-back');
+
+    const { task: back, finished } = h.service.review(t.id, 'send-back', 'try again');
     assert.equal(back.state, 'working');
-    assert.equal(h.turns.length, before, 'a second attempt is still an explicit start');
+    assert.ok(finished, 'send-back is the one decision that runs, so it hands back a promise');
+    await finished;
+
+    assert.ok(h.turns.length > before,
+        'a send-back that changed a state and ran nothing is the half-built version this replaces');
 });
 
 test('starting a task that is already working is refused, not run twice', async () => {
     const h = harness();
     const t = h.service.assign({ hireId: 'h1', text: 'x' });
     await h.service.start(t.id).finished;
-    h.service.review(t.id, 'send-back');
+    h.service.review(t.id, 'send-back', 'try again');
     // It is working now. A second start would be two runners in one working tree.
     assert.throws(() => h.service.start(t.id), TaskTransitionError);
 });
@@ -400,4 +408,136 @@ test('a declaration made mid-task survives to the end, since a colleague may say
     await h.service.start(t.id).finished;
 
     assert.deepEqual(h.checkpoints[0]?.outputs, ['early.txt']);
+});
+
+// --- send-back: the review loop ---------------------------------------------
+
+test('THE CONTINUATION: the send-back run resumes the task session and carries my note', async () => {
+    const h = harness({ replies: [turn({ sessionId: 'sess-A', assistantText: 'v1 ' + TASK_DONE_SENTINEL })] });
+    const t = h.service.assign({ hireId: 'h1', text: 'write a parser' });
+    await h.service.start(t.id).finished;
+    assert.equal(h.tasks.get(t.id)?.sessionId, 'sess-A');
+
+    const before = h.turns.length;
+    await h.service.review(t.id, 'send-back', 'it drops empty lines').finished;
+
+    assert.equal(h.resumes[before], 'sess-A',
+        'without the resume the colleague cannot see its own work, which is the whole point');
+    assert.match(h.turns[before] ?? '', /it drops empty lines/);
+    assert.match(h.turns[before] ?? '', /continuation, not a fresh start/);
+});
+
+test('THE BASELINE IS KEPT, so the branch is the task cumulative work and not just attempt two', async () => {
+    const h = harness({ baseline: 'tree-at-start' });
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    await h.service.start(t.id).finished;
+    await h.service.review(t.id, 'send-back', 'again').finished;
+
+    assert.equal(h.checkpoints.length, 2);
+    assert.equal(h.checkpoints[1]?.baselineTree, 'tree-at-start',
+        'retaking the baseline would measure only the second attempt and lose the first work');
+    assert.equal(h.tasks.get(t.id)?.baselineTree, 'tree-at-start');
+});
+
+test('a send-back lands back in needs-you, so the loop closes rather than running away', async () => {
+    const h = harness();
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    await h.service.start(t.id).finished;
+    const after = await h.service.review(t.id, 'send-back', 'again').finished;
+
+    assert.equal(after?.state, 'needs-you');
+    assert.equal(h.service.review(t.id, 'approve').task.state, 'done',
+        'and I can then approve it, which is the loop closing');
+});
+
+test('several send-backs work, and the history keeps every note in order', async () => {
+    const h = harness();
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    await h.service.start(t.id).finished;
+    await h.service.review(t.id, 'send-back', 'first correction').finished;
+    await h.service.review(t.id, 'send-back', 'second correction').finished;
+    await h.service.review(t.id, 'send-back', 'third correction').finished;
+
+    const notes = (h.tasks.get(t.id)?.sendBacks ?? []).map((s) => s.note);
+    assert.deepEqual(notes, ['first correction', 'second correction', 'third correction'],
+        'a review that lost an earlier note shows a diff that changed for no visible reason');
+    assert.equal(h.tasks.get(t.id)?.attempts, 4, 'one first attempt and three more');
+    assert.equal(h.tasks.get(t.id)?.state, 'needs-you');
+});
+
+test('the note is recorded before the run, so a run that dies still shows what I asked for', async () => {
+    const h = harness({ replies: [turn({ status: 'exited', isError: true, detail: 'died' })] });
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    // The first attempt fails, so the task is terminal; use a fresh one that reaches review.
+    const ok = harness();
+    const t2 = ok.service.assign({ hireId: 'h1', text: 'x' });
+    await ok.service.start(t2.id).finished;
+    void h; void t;
+
+    const { task } = ok.service.review(t2.id, 'send-back', 'the note that must survive');
+    assert.deepEqual(task.sendBacks.map((s) => s.note), ['the note that must survive'],
+        'recorded at the transition, not after the attempt');
+});
+
+test('SEND-BACK NEEDS A NOTE, because putting a colleague back to work with nothing is not feedback', async () => {
+    const h = harness();
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    await h.service.start(t.id).finished;
+    const before = h.turns.length;
+
+    for (const note of [null, '', '   ']) {
+        assert.throws(() => h.service.review(t.id, 'send-back', note), /needs a note/);
+    }
+    assert.equal(h.tasks.get(t.id)?.state, 'needs-you', 'a refused send-back moves nothing');
+    assert.equal(h.turns.length, before, 'and runs nothing');
+});
+
+test('a closed task refuses send-back with the lifecycle reason, not a complaint about the note', async () => {
+    const h = harness();
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    await h.service.start(t.id).finished;
+    h.service.review(t.id, 'approve');
+
+    assert.throws(() => h.service.review(t.id, 'send-back', 'please change it'), TaskTransitionError);
+    assert.throws(() => h.service.review(t.id, 'send-back', null), TaskTransitionError,
+        'the task being closed is the more fundamental answer than a missing note');
+});
+
+test('the previous result is cleared when a new attempt starts, not shown beside the new work', async () => {
+    const h = harness();
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    await h.service.start(t.id).finished;
+    assert.ok(h.tasks.get(t.id)?.resultBranch);
+
+    const { task } = h.service.review(t.id, 'send-back', 'again');
+    assert.equal(task.resultBranch, null, 'the branch describes the result being replaced');
+    assert.equal(task.resultCommit, null);
+});
+
+test('THE INVARIANT: a colleague can neither send its own task back nor close it', () => {
+    const h = harness();
+    const t = h.service.assign({ hireId: 'h1', text: 'x' });
+    h.tasks.update({ ...t, state: 'needs-you' });
+
+    for (const to of ['working', 'done'] as const) {
+        assert.throws(
+            () => h.service.applyTransitionForTest('colleague', t.id, to),
+            TaskTransitionError,
+            'a colleague moved its own task out of needs-you to ' + to);
+    }
+    assert.equal(h.tasks.get(t.id)?.state, 'needs-you');
+});
+
+test('approve and fail still end the task synchronously, with nothing left running', async () => {
+    for (const decision of ['approve', 'fail'] as const) {
+        const h = harness();
+        const t = h.service.assign({ hireId: 'h1', text: 'x' });
+        await h.service.start(t.id).finished;
+        const before = h.turns.length;
+
+        const { task, finished } = h.service.review(t.id, decision, 'because');
+        assert.equal(finished, null, decision + ' must not start a run');
+        assert.equal(task.state, decision === 'approve' ? 'done' : 'failed');
+        assert.equal(h.turns.length, before);
+    }
 });

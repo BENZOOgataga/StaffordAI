@@ -43,7 +43,8 @@ function task(id: string, at: string, projectId = 'p1'): Task {
         approvals: [], createdAt: at, startedAt: null, completedAt: null,
         state: 'assigned', resultBranch: null, resultCommit: null,
         resultSummary: null, sessionId: null, failedReason: null, updatedAt: null,
-        baselineTree: null, declaredOutputs: [], refusedOutputs: null
+        baselineTree: null, declaredOutputs: [], refusedOutputs: null,
+        sendBacks: [], attempts: 0
     };
 }
 

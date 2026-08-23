@@ -55,8 +55,27 @@ export interface TaskRunOutcome {
 /** One turn, as this module needs it. The manager supplies the real runner behind this. */
 export type RunTaskTurn = (input: { text: string; resumeSessionId: string | null }) => Promise<TurnResult>;
 
+/**
+ * A send-back: continue an existing session with my note as the next instruction.
+ *
+ * The session and the note travel together as one option rather than two, because a note
+ * without a session is a restart and a session without a note is just another turn. Neither
+ * of those is a send-back, and letting a caller set one without the other would make both
+ * expressible by accident.
+ */
+export interface TaskContinuation {
+    /** The task's prior Claude session, to resume. Null forces the restart path below. */
+    readonly sessionId: string | null;
+    /** My feedback, which becomes the first turn's instruction. */
+    readonly note: string;
+    /** The colleague's last closing account, used only if the session cannot be resumed. */
+    readonly priorSummary: string;
+}
+
 export interface TaskRunDeps {
     readonly runTurn: RunTaskTurn;
+    /** Set for a send-back: resume the task's session and open with my note. */
+    readonly continuation?: TaskContinuation;
     /** The bound. Injected so a test does not run six real turns. */
     readonly turnLimit?: number;
     /** True while a permission ask is pending for this colleague, checked between turns. */
@@ -99,6 +118,71 @@ export function taskOpeningPrompt(instruction: string): string {
     ].join('\n');
 }
 
+/**
+ * The instruction that restarts a task I sent back.
+ *
+ * The whole value of a send-back is that the colleague builds on what it already did with my
+ * correction, rather than doing the job again from nothing. So this is written as the next
+ * thing said in a conversation that is already under way: it does not restate the task, does
+ * not re-explain the marker convention beyond the reminder, and says plainly that the earlier
+ * work stands unless the note contradicts it.
+ *
+ * It carries no summary of the prior work, because when this prompt is used the session is
+ * being resumed and the colleague can already see everything it did. The fallback below is
+ * the one that has to reconstruct that.
+ */
+export function taskSendBackPrompt(note: string): string {
+    return [
+        'I have reviewed your work on this task and I am sending it back for changes.',
+        '',
+        'What I want different:',
+        note,
+        '',
+        'Keep what you already did unless the above contradicts it, and change what I asked for.',
+        'This is a continuation, not a fresh start.',
+        '',
+        'When the task is genuinely finished, end your final message with this exact marker on',
+        'its own line:',
+        TASK_DONE_SENTINEL,
+        '',
+        'If you cannot do what I asked, say why and stop rather than guessing.'
+    ].join('\n');
+}
+
+/**
+ * The same, for when the prior session could not be resumed.
+ *
+ * A lost session is the one case where the colleague genuinely cannot see its earlier work,
+ * so the prompt has to hand it back what there is: the original task, its own closing account
+ * of what it did, and my note. That is weaker than resuming, and it says so, because a
+ * colleague told to continue from work it cannot see would otherwise assume the files are as
+ * it left them and be wrong about what it already changed.
+ *
+ * The files themselves are still on disk, which is why this is recoverable at all: it is told
+ * to look rather than to trust the summary.
+ */
+export function taskSendBackRestartPrompt(instruction: string, priorSummary: string, note: string): string {
+    return [
+        'You worked on this task before, but that session could not be resumed, so you cannot',
+        'see your earlier messages. Your earlier changes are still in the working tree.',
+        '',
+        'The task was:',
+        instruction,
+        '',
+        priorSummary.trim() === ''
+            ? 'You left no account of what you did, so check the working tree before changing anything.'
+            : 'What you reported doing last time:\n' + priorSummary,
+        '',
+        'I have reviewed it and I want this different:',
+        note,
+        '',
+        'Read the current state of the files before you change them, rather than assuming what',
+        'is there. When the task is genuinely finished, end your final message with this exact',
+        'marker on its own line:',
+        TASK_DONE_SENTINEL
+    ].join('\n');
+}
+
 /** The nudge for a turn that ended without the sentinel and without finishing. */
 export function taskContinuationPrompt(): string {
     return [
@@ -121,7 +205,16 @@ export function taskContinuationPrompt(): string {
  */
 export async function runTask(deps: TaskRunDeps, instruction: string): Promise<TaskRunOutcome> {
     const limit = deps.turnLimit ?? DEFAULT_TASK_TURN_LIMIT;
-    let sessionId: string | null = null;
+    // A send-back resumes the task's own session, so the colleague opens the turn already
+    // able to see everything it did. A first attempt starts from null, as before.
+    let sessionId: string | null = deps.continuation?.sessionId ?? null;
+    // Set once the resume has been abandoned, so the fallback is tried exactly one time and a
+    // repeatedly unresumable session cannot spend the bound rediscovering that.
+    let restarted = false;
+    // Whether the next turn is still the opening one. Tracked apart from the loop index
+    // because a send-back that loses its session retries the opening turn, which spends a
+    // turn from the bound without advancing the conversation.
+    let opening = true;
     let summary = '';
     let turns = 0;
     // Accumulated across turns, since a colleague may create a file early and only say so
@@ -129,7 +222,7 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
     let outputs: string[] = [];
 
     for (let i = 0; i < limit; i += 1) {
-        const text = i === 0 ? taskOpeningPrompt(instruction) : taskContinuationPrompt();
+        const text = turnText(deps, instruction, opening, restarted);
         const result = await deps.runTurn({ text, resumeSessionId: sessionId });
         turns += 1;
         if (result.sessionId) sessionId = result.sessionId;
@@ -142,6 +235,18 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
         // A dead process or a timeout is not something to retry blindly: the next turn would
         // hit the same wall, and burning the bound to discover that helps nobody.
         if (result.status === 'spawn-error' || result.status === 'exited' || result.status === 'timeout') {
+            // The one exception: a send-back whose first turn died while resuming a session.
+            // A session that cannot be resumed is a recoverable situation and not a dead task,
+            // because the colleague's earlier changes are still on disk. So drop the resume
+            // and try once more from a fresh session, telling it what it cannot see. Only
+            // once, and only on the first turn, so this cannot become a retry loop.
+            if (deps.continuation && !restarted && opening && sessionId !== null) {
+                restarted = true;
+                sessionId = null;
+                // `opening` stays true: the conversation has not advanced, so the next turn is
+                // still the one that has to carry my note.
+                continue;
+            }
             return {
                 reason: 'runner-error', turns, summary, sessionId,
                 detail: result.detail ?? result.status, outputs
@@ -160,6 +265,8 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
         if (claimsComplete(reply)) {
             return { reason: 'completed', turns, summary, sessionId, detail: null, outputs };
         }
+
+        opening = false;
     }
 
     return {
@@ -167,4 +274,18 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
         detail: 'stopped after ' + String(limit) + ' turns without saying it was finished',
         outputs
     };
+}
+
+/**
+ * The text for one turn: the opening, a send-back, a send-back that lost its session, or the
+ * plain nudge. Split out because the four cases read as a table and inlining them made the
+ * loop about prompt selection rather than about when to stop.
+ */
+function turnText(deps: TaskRunDeps, instruction: string, opening: boolean, restarted: boolean): string {
+    if (!opening) return taskContinuationPrompt();
+    const c = deps.continuation;
+    if (!c) return taskOpeningPrompt(instruction);
+    return restarted
+        ? taskSendBackRestartPrompt(instruction, c.priorSummary, c.note)
+        : taskSendBackPrompt(c.note);
 }

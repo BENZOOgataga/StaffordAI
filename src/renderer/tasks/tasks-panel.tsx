@@ -73,6 +73,7 @@ export function TasksPanel({ hireId, hireName, lang }: {
                                         key={task.id}
                                         task={task}
                                         copy={copy}
+                                        lang={lang}
                                         awaitingApproval={awaitingApproval}
                                         expanded={open === task.id}
                                         onToggle={() => setOpen(open === task.id ? null : task.id)}
@@ -88,9 +89,10 @@ export function TasksPanel({ hireId, hireName, lang }: {
 }
 
 /** One task in the list: its state, its instruction, and its review when opened. */
-function TaskItem({ task, copy, awaitingApproval, expanded, onToggle }: {
+function TaskItem({ task, copy, lang, awaitingApproval, expanded, onToggle }: {
     task: TaskRow;
     copy: ReturnType<typeof taskCopy>;
+    lang: Lang;
     awaitingApproval: boolean;
     expanded: boolean;
     onToggle: () => void;
@@ -143,7 +145,7 @@ function TaskItem({ task, copy, awaitingApproval, expanded, onToggle }: {
             {expanded ? (
                 <div className="border-border mt-1 border-t pt-3">
                     {reviewable
-                        ? <TaskReview task={task} />
+                        ? <TaskReview task={task} lang={lang} />
                         : <ClosedOrRunning task={task} />}
                 </div>
             ) : null}

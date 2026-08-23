@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Check, X, GitBranch, FileDiff, FilePlus2, ShieldAlert } from 'lucide-react';
+import { Check, X, Undo2, GitBranch, FileDiff, FilePlus2, ShieldAlert, MessageSquareReply } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { useTaskDiff, reviewTask } from './use-tasks.ts';
-import { resultLine, shortCommit, refusalLines, deliveredOutputs } from './task-model.ts';
+import { resultLine, shortCommit, refusalLines, deliveredOutputs, attemptLine, taskCopy } from './task-model.ts';
+import type { Lang } from '../channel-view.ts';
 import type { TaskRow } from '../../shared/ipc.ts';
 
 /**
@@ -20,24 +21,30 @@ import type { TaskRow } from '../../shared/ipc.ts';
  * this task's own changes, so a file listed is a file this colleague touched, rather than
  * whatever happened to be dirty when it finished.
  *
- * Approve and Fail are consequential and are the only two shipped. Approving is the single
- * route to done in the whole application, and it exists on the renderer-to-main task channel
- * alone, which no colleague can reach. Send-back is deliberately absent rather than
- * half-built: the transition is legal already, but returning a task to working without
- * feeding my note into the next turn would leave it sitting in a state nothing is running,
- * which is worse than not offering it. That note-as-instruction is phase 2.
+ * Three controls, all consequential, all owner-only on the renderer-to-main task channel that
+ * no colleague can reach. Approve is the single route to done in the whole application. Fail
+ * abandons it. Send back is the one that is not an ending: it puts the colleague back to work
+ * with my note as its next instruction, resuming the session it was already in, so it builds
+ * on what it did rather than starting again. That is what makes a task iterative instead of
+ * one-shot, and it is why the note is required for that button and optional for the others.
  */
-export function TaskReview({ task }: { task: TaskRow }): React.JSX.Element {
+export function TaskReview({ task, lang }: { task: TaskRow; lang: Lang }): React.JSX.Element {
     const diff = useTaskDiff(task.id, task.resultCommit);
     const [note, setNote] = React.useState('');
     const [busy, setBusy] = React.useState(false);
     const [refused, setRefused] = React.useState<string | null>(null);
 
-    const decide = (decision: 'approve' | 'fail'): void => {
+    const copy = taskCopy(lang);
+    const trimmed = note.trim();
+
+    const decide = (decision: 'approve' | 'fail' | 'send-back'): void => {
+        // Guarded here as well as in the service, so the button reads as unavailable rather
+        // than failing after a click. The service is the rule; this is the affordance.
+        if (decision === 'send-back' && trimmed === '') return;
         setBusy(true);
         void (async () => {
             try {
-                const reply = await reviewTask(task.id, decision, note.trim() === '' ? null : note.trim());
+                const reply = await reviewTask(task.id, decision, trimmed === '' ? null : trimmed);
                 setRefused(reply.ok ? null : reply.refused);
             } catch (error) {
                 setRefused(error instanceof Error ? error.message : String(error));
@@ -52,6 +59,10 @@ export function TaskReview({ task }: { task: TaskRow }): React.JSX.Element {
 
     return (
         <div className="flex flex-col gap-4">
+            {attemptLine(task) ? (
+                <p className="text-muted-foreground text-xs">{attemptLine(task)}</p>
+            ) : null}
+
             <Section label="What I asked for">
                 <p className="text-sm whitespace-pre-wrap break-words">{task.text}</p>
             </Section>
@@ -134,27 +145,52 @@ export function TaskReview({ task }: { task: TaskRow }): React.JSX.Element {
                 </Section>
             ) : null}
 
+            {/* Every note I have sent back, oldest first. Without these the review shows a
+                diff that changed for no visible reason, and on a third attempt I would have
+                no way to remember what I already asked for. */}
+            {task.sendBacks.length > 0 ? (
+                <Section label={copy.sendBackHistory}>
+                    <ul className="flex list-none flex-col gap-1.5 p-0">
+                        {task.sendBacks.map((sent, i) => (
+                            <li key={sent.at + String(i)} className="flex min-w-0 items-start gap-2 text-sm">
+                                <MessageSquareReply className="text-muted-foreground mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                                <span className="text-muted-foreground min-w-0 break-words whitespace-pre-wrap">{sent.note}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </Section>
+            ) : null}
+
             <Separator />
 
             <div className="flex flex-col gap-2">
                 <Input
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
-                    placeholder="Reason (optional, kept on the task if you fail it)"
-                    aria-label="Reason for this decision"
+                    placeholder={copy.notePlaceholder}
+                    aria-label="Note for this decision"
                     className="h-9"
                 />
                 <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" disabled={busy} onClick={() => decide('approve')}>
-                        <Check aria-hidden="true" /> Approve
+                        <Check aria-hidden="true" /> {copy.approve}
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy || trimmed === ''}
+                        onClick={() => decide('send-back')}
+                        title={trimmed === '' ? 'Write what should change first' : undefined}
+                    >
+                        <Undo2 aria-hidden="true" /> {copy.sendBack}
                     </Button>
                     <Button size="sm" variant="secondary" disabled={busy} onClick={() => decide('fail')}>
-                        <X aria-hidden="true" /> Fail
+                        <X aria-hidden="true" /> {copy.fail}
                     </Button>
-                    <span className="text-muted-foreground text-xs">
-                        Approving closes the task. Only you can.
-                    </span>
                 </div>
+                <span className="text-muted-foreground text-xs">
+                    {copy.onlyYouClose} Sending it back sets it working again on your note.
+                </span>
                 {refused ? <p className="text-status-error/90 text-sm">{refused}</p> : null}
             </div>
         </div>

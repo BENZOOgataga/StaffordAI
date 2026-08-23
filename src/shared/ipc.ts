@@ -459,6 +459,10 @@ export interface TaskRow {
     readonly declaredOutputs: readonly string[];
     /** Named files that were not committed, with the reason, so a refusal is never silent. */
     readonly refusedOutputs: string | null;
+    /** Every send-back I wrote on this task, oldest first. */
+    readonly sendBacks: readonly { readonly at: string; readonly note: string }[];
+    /** How many times the colleague has run this task. */
+    readonly attempts: number;
     /** The Claude session, so the review can filter the transcript to this task. */
     readonly sessionId: string | null;
 }
@@ -489,7 +493,12 @@ export interface TaskStart {
 export interface TaskReview {
     readonly id: string;
     readonly decision: 'approve' | 'fail' | 'send-back';
-    /** My reason when failing it, shown on the task afterwards. */
+    /**
+     * My reason when failing it, and my required feedback when sending it back. On a
+     * send-back this becomes the next turn's instruction, which is why it cannot be empty:
+     * a colleague put back to work with nothing to go on either wastes an attempt or returns
+     * the same result.
+     */
     readonly note: string | null;
 }
 
