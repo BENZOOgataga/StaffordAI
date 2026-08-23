@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     taskCopy, groupOf, buildTaskGroups, stateText, isClosed, isReviewable, isStartable,
-    resultLine, shortCommit, refusalLines, deliveredOutputs
+    resultLine, shortCommit, refusalLines, deliveredOutputs, attemptLine
 } from './task-model.ts';
 import type { TaskRow } from '../../shared/ipc.ts';
 
@@ -21,7 +21,7 @@ function task(over: Partial<TaskRow> = {}): TaskRow {
         createdAt: '2026-08-22T10:00:00Z', startedAt: null, completedAt: null,
         updatedAt: '2026-08-22T10:00:00Z', resultSummary: null, resultBranch: null,
         resultCommit: null, failedReason: null, declaredOutputs: [], refusedOutputs: null,
-        sessionId: null, ...over
+        sessionId: null, sendBacks: [], attempts: 0, ...over
     };
 }
 
@@ -151,5 +151,44 @@ test('the French copy is present and differs, so the panel is translatable', () 
     assert.notEqual(fr.needsYou, EN.needsYou);
     for (const key of Object.keys(EN) as (keyof typeof EN)[]) {
         assert.ok(fr[key].length > 0, 'the French copy is missing ' + key);
+    }
+});
+
+// --- send-back ---------------------------------------------------------------
+
+test('a first attempt says nothing about attempts, since every task would say the same', () => {
+    assert.equal(attemptLine(task({ attempts: 0 })), null);
+    assert.equal(attemptLine(task({ attempts: 1 })), null);
+});
+
+test('a task that has been round again says so, and says how many times I sent it back', () => {
+    assert.equal(attemptLine(task({ attempts: 2, sendBacks: [{ at: 'x', note: 'a' }] })),
+        'Attempt 2, sent back once');
+    assert.equal(
+        attemptLine(task({ attempts: 3, sendBacks: [{ at: 'x', note: 'a' }, { at: 'y', note: 'b' }] })),
+        'Attempt 3, sent back 2 times');
+});
+
+test('a second attempt with no send-back is still reported, since something ran it again', () => {
+    assert.equal(attemptLine(task({ attempts: 2, sendBacks: [] })), 'Attempt 2');
+});
+
+test('a sent-back task is still reviewable when it lands, so the loop can repeat', () => {
+    const t = task({ state: 'needs-you', attempts: 3, sendBacks: [{ at: 'x', note: 'a' }] });
+    assert.equal(isReviewable(t), true);
+    assert.equal(groupOf(t), 'needs-you');
+});
+
+test('a task working on a send-back is in progress, not waiting for me', () => {
+    const t = task({ state: 'working', attempts: 1, sendBacks: [{ at: 'x', note: 'a' }] });
+    assert.equal(groupOf(t), 'active');
+    assert.equal(isReviewable(t), false, 'it is running my correction; there is nothing to decide yet');
+});
+
+test('the French copy covers the three controls, so the review is translatable', () => {
+    const fr = taskCopy('fr');
+    for (const key of ['approve', 'fail', 'sendBack', 'notePlaceholder', 'sendBackHistory'] as const) {
+        assert.ok(fr[key].length > 0, 'the French copy is missing ' + key);
+        assert.notEqual(fr[key], EN[key], key + ' is untranslated');
     }
 });

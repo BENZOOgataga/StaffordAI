@@ -602,7 +602,7 @@ function taskRow(task: Task): TaskRow {
         resultSummary: task.resultSummary, resultBranch: task.resultBranch,
         resultCommit: task.resultCommit, failedReason: task.failedReason,
         declaredOutputs: task.declaredOutputs, refusedOutputs: task.refusedOutputs,
-        sessionId: task.sessionId
+        sessionId: task.sessionId, sendBacks: task.sendBacks, attempts: task.attempts
     };
 }
 
@@ -1119,7 +1119,7 @@ async function runTaskSmoke(): Promise<void> {
     }
 
     out('=== 3: I approve, which is the only route to done ===');
-    show('approved', taskService.review(one.id, 'approve').id);
+    show('approved', taskService.review(one.id, 'approve').task.id);
 
     out('=== 4: an ASK during a task pauses the colleague and waits for me ===');
     // A rule that makes one action ask, so the gate pauses the task mid-turn on a real tool
@@ -1321,7 +1321,78 @@ async function runTaskUiSmoke(): Promise<void> {
     out('failed: ok=' + String(failed.ok) + ' state=' + (failed.task?.state ?? '?') +
         ' reason=' + String(failedRow?.failedReason));
 
+    out('=== 9: SEND-BACK: reject with a note, the colleague continues, then approve ===');
+    const third = await bridge<{ task: { id: string } | null }>(
+        'window.stafford.tasks.assign(' + JSON.stringify(hireId) + ', ' +
+        JSON.stringify('Create a file called greeting.txt containing the single word hello. Then stop.') + ')');
+    const thirdId = third.task?.id ?? '';
+    await bridge('window.stafford.tasks.start(' + JSON.stringify(thirdId) + ')');
+    for (let i = 0; i < 240; i += 1) {
+        if (repositories.tasks.get(thirdId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const pass1 = repositories.tasks.get(thirdId);
+    out('first attempt: state=' + String(pass1?.state) + ' attempts=' + String(pass1?.attempts) +
+        ' session=' + String(pass1?.sessionId));
+    out('  greeting.txt now: ' + readIfPresent(cwd, 'greeting.txt'));
+
+    const sentBack = await bridge<{ ok: boolean; task: { state: string } | null }>(
+        'window.stafford.tasks.review(' + JSON.stringify(thirdId) + ', "send-back", ' +
+        JSON.stringify('Make it say hello world instead of hello, and keep it one line.') + ')');
+    out('send-back replied: ok=' + String(sentBack.ok) + ' state=' + (sentBack.task?.state ?? '?'));
+
+    for (let i = 0; i < 240; i += 1) {
+        if (repositories.tasks.get(thirdId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const pass2 = repositories.tasks.get(thirdId);
+    out('after the send-back: state=' + String(pass2?.state) +
+        ' attempts=' + String(pass2?.attempts) +
+        ' session=' + String(pass2?.sessionId) +
+        ' same-session=' + String(pass1?.sessionId === pass2?.sessionId));
+    out('  notes I sent: ' + JSON.stringify((pass2?.sendBacks ?? []).map((n) => n.note)));
+    out('  summary: ' + String(pass2?.resultSummary ?? '').replace(/\s+/g, ' ').slice(0, 140));
+    out('  greeting.txt now: ' + readIfPresent(cwd, 'greeting.txt'));
+    const branch2 = pass2?.resultBranch;
+    if (branch2) {
+        const shown = await realCheckpointDeps(currentPlatform()).runGit(
+            ['diff', '--name-only', 'HEAD', branch2], { cwd, timeoutMs: 10_000 });
+        out('  result branch holds: ' + shown.stdout.trim().split('\n').join(', '));
+    }
+
+    out('=== 10: a second send-back, so the loop repeats and the history keeps both ===');
+    await bridge('window.stafford.tasks.review(' + JSON.stringify(thirdId) + ', "send-back", ' +
+        JSON.stringify('Actually make it say hello there, and nothing else.') + ')');
+    for (let i = 0; i < 240; i += 1) {
+        if (repositories.tasks.get(thirdId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const twice = repositories.tasks.get(thirdId);
+    out('after two send-backs: state=' + String(twice?.state) + ' attempts=' + String(twice?.attempts));
+    out('  notes I sent: ' + JSON.stringify((twice?.sendBacks ?? []).map((n) => n.note)));
+    out('  greeting.txt now: ' + readIfPresent(cwd, 'greeting.txt'));
+
+    out('=== 11: send-back with no note is refused, so a colleague is never sent back blind ===');
+    const blank = await bridge<string>(
+        '(async () => { try { const r = await window.stafford.tasks.review(' + JSON.stringify(thirdId) +
+        ', "send-back", null); return "ACCEPTED " + JSON.stringify(r); } catch (e) { return "refused: " + String(e && e.message ? e.message : e); } })()');
+    out(blank.slice(0, 160));
+
+    out('=== 12: approve the sent-back task, closing the loop ===');
+    const closed = await bridge<{ ok: boolean; task: { state: string } | null }>(
+        'window.stafford.tasks.review(' + JSON.stringify(thirdId) + ', "approve", null)');
+    out('approved: ok=' + String(closed.ok) + ' state=' + (closed.task?.state ?? '?'));
+
     out('=== task ui smoke done ===');
+}
+
+/** A file's contents for the smoke log, or a note that it is not there. Bounded. */
+function readIfPresent(cwd: string, name: string): string {
+    try {
+        return JSON.stringify(fs.readFileSync(path.join(cwd, name), 'utf8').slice(0, 80));
+    } catch {
+        return '(not present)';
+    }
 }
 
 app.whenReady().then(async () => {
@@ -1465,7 +1536,19 @@ app.whenReady().then(async () => {
             });
             return task;
         }),
-        reviewTask: (payload) => taskWrite(() => requireTasks().review(payload.id, payload.decision, payload.note)),
+        // Approve and fail are decisions. Send-back is a decision that also puts the
+        // colleague back to work, so its reply comes back as soon as the run is under way and
+        // the attempt continues without the renderer waiting on it, exactly as start does.
+        reviewTask: (payload) => taskWrite(() => {
+            const { task, finished } = requireTasks().review(payload.id, payload.decision, payload.note);
+            if (finished) {
+                void finished.catch((error: unknown) => {
+                    smoke('task ' + payload.id + ' send-back ended badly: ' +
+                        (error instanceof Error ? error.message : String(error)));
+                });
+            }
+            return task;
+        }),
         taskDiff: (id) => readTaskDiff(id)
     });
 

@@ -19,6 +19,7 @@
  */
 
 import type {
+    SendBack,
     HiredAgent, Project, ProjectPolicy, ProjectRepo, Task, TaskOrigin, Approval, PolicyLogEntry,
     DrainReportEntry, DrainOutcome, ChannelMessage, ChannelKind, ChannelRefKind, ActivityRecord, ActivityStatus,
     PermissionRuleRecord
@@ -152,7 +153,9 @@ export function taskToRow(t: Task): Row {
         failed_reason: t.failedReason, updated_at: t.updatedAt,
         baseline_tree: t.baselineTree,
         declared_outputs: JSON.stringify(t.declaredOutputs),
-        refused_outputs: t.refusedOutputs
+        refused_outputs: t.refusedOutputs,
+        send_backs: JSON.stringify(t.sendBacks),
+        attempts: t.attempts
     };
 }
 
@@ -176,7 +179,11 @@ export function taskFromRow(row: Row): Task {
         // Null for every row written before migration 0008, so an absent column reads as none
         // rather than throwing and taking the whole task list with it.
         declaredOutputs: row['declared_outputs'] == null ? [] : json<string[]>(row, 'declared_outputs'),
-        refusedOutputs: nstr(row, 'refused_outputs')
+        refusedOutputs: nstr(row, 'refused_outputs'),
+        // Null for every row written before migration 0009, so an absent column reads as no
+        // send-backs rather than throwing and taking the whole task list with it.
+        sendBacks: row['send_backs'] == null ? [] : json<SendBack[]>(row, 'send_backs'),
+        attempts: row['attempts'] == null ? 0 : Number(row['attempts'])
     };
 }
 

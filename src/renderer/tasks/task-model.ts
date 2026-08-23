@@ -29,18 +29,30 @@ export interface TaskCopy {
     readonly done: string;
     readonly failed: string;
     readonly waitingApproval: string;
+    readonly approve: string;
+    readonly fail: string;
+    readonly sendBack: string;
+    readonly notePlaceholder: string;
+    readonly sendBackHistory: string;
+    readonly onlyYouClose: string;
 }
 
 const EN: TaskCopy = {
     needsYou: 'Waiting for you', active: 'In progress', closed: 'Finished',
     assigned: 'Assigned, not started', working: 'Working', done: 'Approved',
-    failed: 'Failed', waitingApproval: 'Paused, needs your approval'
+    failed: 'Failed', waitingApproval: 'Paused, needs your approval',
+    approve: 'Approve', fail: 'Fail', sendBack: 'Send back',
+    notePlaceholder: 'What should change? Required to send back, optional otherwise.',
+    sendBackHistory: 'What I sent back', onlyYouClose: 'Approving closes the task. Only you can.'
 };
 
 const FR: TaskCopy = {
     needsYou: 'En attente de vous', active: 'En cours', closed: 'Terminées',
     assigned: 'Assignée, pas démarrée', working: 'En cours', done: 'Approuvée',
-    failed: 'Échouée', waitingApproval: 'En pause, votre approbation est requise'
+    failed: 'Échouée', waitingApproval: 'En pause, votre approbation est requise',
+    approve: 'Approuver', fail: 'Rejeter', sendBack: 'Renvoyer',
+    notePlaceholder: 'Que faut-il changer ? Obligatoire pour renvoyer, sinon facultatif.',
+    sendBackHistory: 'Ce que j\'ai renvoyé', onlyYouClose: 'Approuver clôt la tâche. Vous seul le pouvez.'
 };
 
 export function taskCopy(lang: 'en' | 'fr'): TaskCopy {
@@ -123,6 +135,20 @@ export function resultLine(task: TaskRow, files: readonly TaskDiffFile[] | null)
     const removed = files.reduce((n, f) => n + f.removed, 0);
     const count = files.length === 1 ? '1 file' : String(files.length) + ' files';
     return count + ', +' + String(added) + ' / -' + String(removed);
+}
+
+/**
+ * How an attempt reads in one line, or null on a first attempt.
+ *
+ * Only shown once a task has been round more than once, because "attempt 1" on every task
+ * would be noise on the common case and says nothing.
+ */
+export function attemptLine(task: TaskRow): string | null {
+    if (task.attempts <= 1) return null;
+    const sent = task.sendBacks.length;
+    if (sent === 0) return 'Attempt ' + String(task.attempts);
+    return 'Attempt ' + String(task.attempts) + ', sent back ' +
+        (sent === 1 ? 'once' : String(sent) + ' times');
 }
 
 /** A short commit id for display. The full one is on the branch. */

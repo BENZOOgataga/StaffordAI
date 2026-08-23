@@ -30,7 +30,7 @@ import {
     TASK_STATES, canTransition, refusalReason, isTerminal,
     type TaskActor, type TaskState
 } from '../../domain/task-lifecycle.ts';
-import { runTask, type TaskRunOutcome } from '../agents/task-runner.ts';
+import { runTask, type TaskRunOutcome, type TaskContinuation } from '../agents/task-runner.ts';
 import { taskBranchName } from '../agents/checkpoint-executor.ts';
 import type { CheckpointOutcome } from '../agents/checkpoint-executor.ts';
 import type { TurnResult } from '../agents/claude-runner.ts';
@@ -158,7 +158,9 @@ export class TaskService {
             updatedAt: at,
             baselineTree: null,
             declaredOutputs: [],
-            refusedOutputs: null
+            refusedOutputs: null,
+            sendBacks: [],
+            attempts: 0
         };
         this.#deps.tasks.insert(task);
         this.#deps.onChanged?.();
@@ -190,14 +192,23 @@ export class TaskService {
     }
 
     /** The attempt itself: turns until a stopping point, then the result and the state. */
-    async #run(started: Task, cwd: string): Promise<Task> {
+    async #run(started: Task, cwd: string, continuation?: TaskContinuation): Promise<Task> {
         // The tracked state of the tree before the colleague touches anything. Everything the
         // result contains is measured against this, which is what keeps one task's work out
         // of another's branch. Taken here rather than in `start` because it needs git, and
         // persisted because a task outlives a turn and a lost baseline silently loses the
         // isolation with it.
-        const baselineTree = this.#deps.baseline ? await this.#deps.baseline(cwd) : null;
-        const task = baselineTree === null ? started : this.#patch(started, { baselineTree });
+        //
+        // **A send-back keeps the baseline the task already had, and that is the whole reason
+        // its result stays honest across attempts.** Retaking it would measure only the second
+        // attempt, so the branch would lose everything the first one did and show a diff that
+        // is not the task's work. The cost is that anything I edited myself between the two
+        // attempts falls inside the task's window, which is the same entanglement the single
+        // attempt case already has: when the task and I touch one file, the result records the
+        // state the task left, because those changes cannot honestly be separated.
+        const existing = started.baselineTree;
+        const baselineTree = existing ?? (this.#deps.baseline ? await this.#deps.baseline(cwd) : null);
+        const task = baselineTree === existing ? started : this.#patch(started, { baselineTree });
 
         const outcome = await runTask(
             {
@@ -214,7 +225,8 @@ export class TaskService {
                 ...(this.#deps.turnLimit !== undefined ? { turnLimit: this.#deps.turnLimit } : {}),
                 ...(this.#deps.isAwaitingApproval
                     ? { isAwaitingApproval: (): boolean => this.#deps.isAwaitingApproval!(task.agentId) }
-                    : {})
+                    : {}),
+                ...(continuation ? { continuation } : {})
             },
             task.text
         );
@@ -226,23 +238,82 @@ export class TaskService {
     /**
      * Benzoo's decision on a task waiting for him.
      *
-     * Approve and fail are the two ways a task ends, and both are owner-only by construction:
-     * this method passes the owner actor itself, and the lifecycle refuses done to a colleague
-     * from every state. Send-back returns it to working without starting a run, so a second
-     * attempt is still an explicit start.
+     * All three are owner-only by construction: this method passes the owner actor itself, and
+     * the lifecycle refuses done to a colleague from every state and refuses a colleague any
+     * move out of needs-you, which is what makes send-back mine as well.
+     *
+     * Approve and fail end the task and are synchronous. Send-back does not end it, and does
+     * not merely change a state either: it puts the colleague back to work with my note as its
+     * next instruction, so `finished` is set for that case and null for the other two. A
+     * caller that wants to walk away simply does not await it.
      */
-    review(taskId: string, decision: ReviewDecision, note: string | null = null): Task {
+    review(taskId: string, decision: ReviewDecision, note: string | null = null): {
+        task: Task; finished: Promise<Task> | null;
+    } {
         const task = this.#require(taskId);
         const at = this.#deps.now();
         if (decision === 'approve') {
-            return this.#write('owner', task, TASK_STATES.DONE, { completedAt: at });
+            return { task: this.#write('owner', task, TASK_STATES.DONE, { completedAt: at }), finished: null };
         }
         if (decision === 'fail') {
-            return this.#write('owner', task, TASK_STATES.FAILED, {
-                completedAt: at, failedReason: note ?? 'not accepted at review'
-            });
+            return {
+                task: this.#write('owner', task, TASK_STATES.FAILED, {
+                    completedAt: at, failedReason: note ?? 'not accepted at review'
+                }),
+                finished: null
+            };
         }
-        return this.#write('owner', task, TASK_STATES.WORKING, {});
+        return this.#sendBack(task, note, at);
+    }
+
+    /**
+     * Sends a task back to work with my note as the next instruction.
+     *
+     * The note is required, and that is not a formality. Send-back without one puts a
+     * colleague back to work with nothing to go on, which either wastes an attempt or gets the
+     * same result again; the whole difference between this and telling it to try again is that
+     * I said what was wrong.
+     *
+     * The run resumes the task's own Claude session, so the colleague opens the turn already
+     * able to see everything it did and my note reads as the next thing said rather than as a
+     * new brief. That is the difference between a continuation and a restart, and it is the
+     * reason send-back was worth building properly rather than as a state change.
+     */
+    #sendBack(task: Task, note: string | null, at: string): { task: Task; finished: Promise<Task> | null } {
+        // The lifecycle answer comes first. "This task is already done" is a more fundamental
+        // refusal than "you forgot a note", and reporting the note first would tell me to
+        // write feedback for a task that could never accept it.
+        if (!canTransition('owner', task.state, TASK_STATES.WORKING)) {
+            throw new TaskTransitionError(
+                task.id, task.state, TASK_STATES.WORKING,
+                refusalReason('owner', task.state, TASK_STATES.WORKING) ?? 'that transition is not allowed'
+            );
+        }
+
+        const feedback = (note ?? '').trim();
+        if (feedback === '') throw new Error('sending a task back needs a note saying what to change');
+
+        const target = this.#deps.resolveTarget(task.agentId);
+        if (!target) throw new Error('that colleague has no project to work in');
+
+        // The note is recorded before the run, so it survives however the attempt goes. A
+        // send-back whose run died and left no trace of what I asked for would be worse than
+        // no send-back at all.
+        const working = this.#write('owner', task, TASK_STATES.WORKING, {
+            sendBacks: [...task.sendBacks, { at, note: feedback }],
+            // Cleared for the new attempt: they describe the result being replaced, and
+            // leaving them would show the previous attempt's outcome beside the new work.
+            resultBranch: null, resultCommit: null, failedReason: null
+        });
+
+        return {
+            task: working,
+            finished: this.#run(working, target.cwd, {
+                sessionId: working.sessionId,
+                note: feedback,
+                priorSummary: working.resultSummary ?? ''
+            })
+        };
     }
 
     /**
@@ -351,6 +422,9 @@ export class TaskService {
     ): Task {
         const saved = result.saved;
         const patch: Partial<Task> = {
+            // Counted here rather than at the start, so it records attempts that actually ran
+            // and a send-back refused before its first turn does not inflate it.
+            attempts: task.attempts + 1,
             sessionId: outcome.sessionId,
             resultSummary: outcome.summary === '' ? null : outcome.summary,
             resultBranch: saved?.committed ? saved.branch : null,

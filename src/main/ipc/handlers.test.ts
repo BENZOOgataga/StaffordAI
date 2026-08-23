@@ -40,7 +40,7 @@ const TASK_OK: TaskWriteReply = {
         createdAt: '2026-08-22T10:00:00Z', startedAt: null, completedAt: null,
         updatedAt: '2026-08-22T10:00:00Z', resultSummary: null, resultBranch: null,
         resultCommit: null, failedReason: null, declaredOutputs: [], refusedOutputs: null,
-        sessionId: null
+        sessionId: null, sendBacks: [], attempts: 0
     },
     refused: null
 };

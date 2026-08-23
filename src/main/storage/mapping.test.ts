@@ -44,6 +44,7 @@ const TASK: Task = {
     state: 'assigned', resultBranch: null, resultCommit: null,
     resultSummary: null, sessionId: null, failedReason: null, updatedAt: null,
         baselineTree: null, declaredOutputs: [], refusedOutputs: null,
+        sendBacks: [], attempts: 0,
     createdAt: '2026-08-10T00:00:00Z', startedAt: null, completedAt: null
 };
 

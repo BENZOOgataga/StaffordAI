@@ -55,7 +55,13 @@ contextBridge.exposeInMainWorld('stafford', {
                     failedReason: null,
                     declaredOutputs: ['src/config/parse.ts', 'src/config/parse.test.ts', '.env.local'],
                     refusedOutputs: '.env.local (the name matches a secret file pattern, which is never committed)',
-                    sessionId: 's1'
+                    sessionId: 's1',
+                    // Sent back twice, so the review shows the history and the attempt line.
+                    sendBacks: [
+                        { at: '2026-08-22T09:02:00Z', note: 'It drops blank lines. Keep them, they are significant in this format.' },
+                        { at: '2026-08-22T09:04:00Z', note: 'Cover the legacy format too, there is a sample under fixtures now.' }
+                    ],
+                    attempts: 3
                 },
                 {
                     id: 't2', hireId: 'b', projectId: 'p1',
@@ -64,7 +70,8 @@ contextBridge.exposeInMainWorld('stafford', {
                     createdAt: '2026-08-22T09:10:00Z', startedAt: '2026-08-22T09:10:05Z',
                     completedAt: null, updatedAt: '2026-08-22T09:10:05Z',
                     resultSummary: null, resultBranch: null, resultCommit: null, failedReason: null,
-                    declaredOutputs: [], refusedOutputs: null, sessionId: 's2'
+                    declaredOutputs: [], refusedOutputs: null, sessionId: 's2',
+                    sendBacks: [], attempts: 1
                 },
                 {
                     id: 't3', hireId: 'b', projectId: 'p1',
@@ -74,7 +81,8 @@ contextBridge.exposeInMainWorld('stafford', {
                     completedAt: '2026-08-21T14:20:00Z', updatedAt: '2026-08-21T14:20:00Z',
                     resultSummary: 'The cursor compared with < where it needed <=. One line, plus a test.',
                     resultBranch: 'stafford/task/b/t3', resultCommit: '9de1f0a7b3c2',
-                    failedReason: null, declaredOutputs: [], refusedOutputs: null, sessionId: 's3'
+                    failedReason: null, declaredOutputs: [], refusedOutputs: null, sessionId: 's3',
+                    sendBacks: [], attempts: 1
                 }
             ]
         }),

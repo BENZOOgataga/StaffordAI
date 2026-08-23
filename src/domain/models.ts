@@ -147,6 +147,20 @@ export interface Task {
     declaredOutputs: string[];
     /** Named files that were refused, with the reason, for the review. Null when none were. */
     refusedOutputs: string | null;
+    /**
+     * Every send-back I have written on this task, oldest first. The sequence is the point:
+     * a review that shows the latest diff without the note that asked for it shows a change
+     * with no visible reason.
+     */
+    sendBacks: SendBack[];
+    /** How many times the colleague has run this task. One on a first attempt. */
+    attempts: number;
+}
+
+/** One rejection: when I sent the task back, and what I asked for. */
+export interface SendBack {
+    at: string;
+    note: string;
 }
 
 /**

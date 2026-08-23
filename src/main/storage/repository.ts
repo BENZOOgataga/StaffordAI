@@ -119,17 +119,18 @@ export class TaskRepository {
         this.#insert = db.prepare(
             'INSERT INTO tasks (id, agent_id, project_id, text, kind, origin, approvals, created_at, started_at, completed_at, ' +
             'state, result_branch, result_commit, result_summary, session_id, failed_reason, updated_at, ' +
-            'baseline_tree, declared_outputs, refused_outputs) ' +
+            'baseline_tree, declared_outputs, refused_outputs, send_backs, attempts) ' +
             'VALUES (@id, @agent_id, @project_id, @text, @kind, @origin, @approvals, @created_at, @started_at, @completed_at, ' +
             '@state, @result_branch, @result_commit, @result_summary, @session_id, @failed_reason, @updated_at, ' +
-            '@baseline_tree, @declared_outputs, @refused_outputs)');
+            '@baseline_tree, @declared_outputs, @refused_outputs, @send_backs, @attempts)');
         this.#update = db.prepare(
             'UPDATE tasks SET agent_id=@agent_id, project_id=@project_id, text=@text, kind=@kind, origin=@origin, ' +
             'approvals=@approvals, created_at=@created_at, started_at=@started_at, completed_at=@completed_at, ' +
             'state=@state, result_branch=@result_branch, result_commit=@result_commit, ' +
             'result_summary=@result_summary, session_id=@session_id, failed_reason=@failed_reason, ' +
             'updated_at=@updated_at, baseline_tree=@baseline_tree, declared_outputs=@declared_outputs, ' +
-            'refused_outputs=@refused_outputs WHERE id=@id');
+            'refused_outputs=@refused_outputs, send_backs=@send_backs, attempts=@attempts ' +
+            'WHERE id=@id');
         this.#get = db.prepare('SELECT * FROM tasks WHERE id = ?');
         this.#page = db.prepare('SELECT * FROM tasks ORDER BY created_at, id LIMIT ? OFFSET ?');
         this.#pageByProject = db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?');
