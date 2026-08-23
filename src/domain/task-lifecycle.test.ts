@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     TASK_STATES, TASK_STATE_VALUES, canTransition, refusalReason, isTerminal, isTaskState,
-    claimsComplete, stripSentinel, TASK_DONE_SENTINEL, DEFAULT_TASK_TURN_LIMIT,
+    claimsComplete, stripSentinel, TASK_DONE_SENTINEL, DEFAULT_TASK_TURN_LIMIT, IDLE_TURN_LIMIT,
     declaredOutputs, MAX_DECLARED_OUTPUTS
 } from './task-lifecycle.ts';
 
@@ -109,10 +109,20 @@ test('the summary I read has the sentinel stripped out', () => {
     assert.equal(stripSentinel('no sentinel here'), 'no sentinel here');
 });
 
-test('the turn bound is low, because an unbounded unattended task is the unsupervisable shape', () => {
+test('the turn bound is finite, because an unbounded unattended task is the unsupervisable shape', () => {
     assert.ok(DEFAULT_TASK_TURN_LIMIT >= 2, 'one turn is not a task');
-    assert.ok(DEFAULT_TASK_TURN_LIMIT <= 10,
-        'the cost of too low is a review I did not need; the cost of too high is grinding unwatched');
+    assert.ok(Number.isFinite(DEFAULT_TASK_TURN_LIMIT) && DEFAULT_TASK_TURN_LIMIT <= 100,
+        'there has to be a ceiling; a task that can run forever is the one shape I cannot supervise');
+});
+
+test('THE IDLE STOP IS WHAT KEEPS A HIGHER CEILING SAFE, so it must bite well before it', () => {
+    // The ceiling was raised from 6 to 20 so a real task can finish. That is only safe because
+    // a colleague that stalls is stopped after a couple of wasted turns rather than after the
+    // whole bound, which is why these two constants are asserted against each other rather
+    // than each being checked for a plausible-looking value on its own.
+    assert.ok(IDLE_TURN_LIMIT >= 1, 'a colleague must be allowed at least one quiet turn');
+    assert.ok(IDLE_TURN_LIMIT * 4 <= DEFAULT_TASK_TURN_LIMIT,
+        'if the idle stop is close to the ceiling it saves nothing, and the raise stops being safe');
 });
 
 // --- declared outputs, the wire format --------------------------------------

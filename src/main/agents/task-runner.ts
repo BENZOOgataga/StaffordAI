@@ -19,7 +19,7 @@
  */
 
 import {
-    TASK_DONE_SENTINEL, TASK_OUTPUTS_MARKER, DEFAULT_TASK_TURN_LIMIT,
+    TASK_DONE_SENTINEL, TASK_OUTPUTS_MARKER, DEFAULT_TASK_TURN_LIMIT, IDLE_TURN_LIMIT,
     claimsComplete, stripSentinel, declaredOutputs
 } from '../../domain/task-lifecycle.ts';
 import type { TurnResult } from './claude-runner.ts';
@@ -32,6 +32,8 @@ export type TaskStopReason =
     | 'awaiting-approval'
     /** The turn bound was spent without a sentinel. Not a failure, a review. */
     | 'turn-limit'
+    /** Several turns in a row did nothing at all. Not a failure either, a review. */
+    | 'no-progress'
     /** The runner could not run: a dead process, a spawn error, a timeout. */
     | 'runner-error';
 
@@ -76,8 +78,10 @@ export interface TaskRunDeps {
     readonly runTurn: RunTaskTurn;
     /** Set for a send-back: resume the task's session and open with my note. */
     readonly continuation?: TaskContinuation;
-    /** The bound. Injected so a test does not run six real turns. */
+    /** The bound. Injected so a test does not run twenty real turns. */
     readonly turnLimit?: number;
+    /** Consecutive do-nothing turns tolerated before stopping. Injected for tests. */
+    readonly idleLimit?: number;
     /** True while a permission ask is pending for this colleague, checked between turns. */
     readonly isAwaitingApproval?: () => boolean;
 }
@@ -217,9 +221,14 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
     let opening = true;
     let summary = '';
     let turns = 0;
+    // Consecutive turns that called no tool and claimed nothing. Reset by any turn that did
+    // something, so this counts a colleague that has stalled rather than one that paused once.
+    let idle = 0;
     // Accumulated across turns, since a colleague may create a file early and only say so
     // at the end, or name files as it goes. De-duplicated by the parser.
     let outputs: string[] = [];
+
+    const idleLimit = deps.idleLimit ?? IDLE_TURN_LIMIT;
 
     for (let i = 0; i < limit; i += 1) {
         const text = turnText(deps, instruction, opening, restarted);
@@ -264,6 +273,22 @@ export async function runTask(deps: TaskRunDeps, instruction: string): Promise<T
 
         if (claimsComplete(reply)) {
             return { reason: 'completed', turns, summary, sessionId, detail: null, outputs };
+        }
+
+        // Did this turn move anything? A tool call is the only evidence available here that
+        // something happened in the world; text alone is the colleague talking. Completion is
+        // handled above, so reaching this point with no tool call means the turn did nothing.
+        if (result.toolUses.length === 0) {
+            idle += 1;
+            if (idle >= idleLimit) {
+                return {
+                    reason: 'no-progress', turns, summary, sessionId,
+                    detail: 'stopped after ' + String(idle) + ' turns that did nothing',
+                    outputs
+                };
+            }
+        } else {
+            idle = 0;
         }
 
         opening = false;

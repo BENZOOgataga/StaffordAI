@@ -1444,6 +1444,78 @@ async function runTaskUiSmoke(): Promise<void> {
     out('waiting after: ' + String(after.filter((r) => r.state === 'needs-you').length) +
         ' (the tasks:changed event is what the screen re-reads on)');
 
+    out('=== 15: MULTI-TURN DEPTH: a task that needs more turns than the old bound of six ===');
+    // Deliberately shaped so one turn cannot finish it: several files, each depending on the
+    // last, with a verification step. Under the old cap of 6 this could not have completed.
+    const deepTask = await bridge<{ task: { id: string } | null }>(
+        'window.stafford.tasks.assign(' + JSON.stringify(hireId) + ', ' + JSON.stringify(
+            'Work through these steps one at a time, checking your work after each. ' +
+            '1) Create steps/one.txt containing the word one. ' +
+            '2) Create steps/two.txt containing the contents of one.txt plus the word two. ' +
+            '3) Create steps/three.txt containing the contents of two.txt plus the word three. ' +
+            '4) Create steps/four.txt containing the contents of three.txt plus the word four. ' +
+            '5) Create steps/five.txt containing the contents of four.txt plus the word five. ' +
+            '6) Read all five files back and append a summary line to README.md listing them. ' +
+            'Name every new file you create as a deliverable.') + ')');
+    const deepId = deepTask.task?.id ?? '';
+    await bridge('window.stafford.tasks.start(' + JSON.stringify(deepId) + ')');
+    for (let i = 0; i < 600; i += 1) {
+        if (repositories.tasks.get(deepId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const deep = repositories.tasks.get(deepId);
+    out('deep task: state=' + String(deep?.state) + ' attempts=' + String(deep?.attempts));
+    out('  summary: ' + String(deep?.resultSummary ?? '').replace(/\s+/g, ' ').slice(0, 160));
+    out('  declared: ' + JSON.stringify(deep?.declaredOutputs));
+    out('  refused: ' + String(deep?.refusedOutputs));
+    out('  branch: ' + String(deep?.resultBranch));
+    const deepBranch = deep?.resultBranch;
+    if (deepBranch) {
+        const files = await realCheckpointDeps(currentPlatform()).runGit(
+            ['diff', '--name-only', 'HEAD', deepBranch], { cwd, timeoutMs: 10_000 });
+        out('  result branch holds: ' + files.stdout.trim().split('\n').join(', '));
+    }
+    // The turn count is the point of this scenario, so it is read from the wire rather than
+    // inferred: each Stafford turn is one user message sent to the colleague.
+    out('  tool calls recorded for this colleague overall: ' +
+        String(repositories.activity.byHire(hireId, 500).length));
+
+    out('=== 15b: FORCING CONTINUATIONS, since Claude Code absorbs most tasks in one turn ===');
+    // The deep task above finished in a single Stafford turn: Claude Code ran eleven internal
+    // rounds inside it. So a task that genuinely spans Stafford turns has to be told to stop
+    // between steps, which is what this does. It is the only way to exercise the raised bound
+    // against a real colleague rather than against a stub.
+    const pacedTask = await bridge<{ task: { id: string } | null }>(
+        'window.stafford.tasks.assign(' + JSON.stringify(hireId) + ', ' + JSON.stringify(
+            'Create paced/a.txt, paced/b.txt, paced/c.txt, paced/d.txt, paced/e.txt, ' +
+            'paced/f.txt and paced/g.txt, each containing its own letter. ' +
+            'IMPORTANT: create exactly ONE file per message and then stop and wait. ' +
+            'Do not create more than one file in a single message. ' +
+            'Only when all seven exist, name them all as deliverables and finish.') + ')');
+    const pacedId = pacedTask.task?.id ?? '';
+    await bridge('window.stafford.tasks.start(' + JSON.stringify(pacedId) + ')');
+    for (let i = 0; i < 900; i += 1) {
+        if (repositories.tasks.get(pacedId)?.state !== 'working') break;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    const paced = repositories.tasks.get(pacedId);
+    out('paced task: state=' + String(paced?.state));
+    out('  declared: ' + JSON.stringify(paced?.declaredOutputs));
+    out('  refused: ' + String(paced?.refusedOutputs));
+    const pacedBranch = paced?.resultBranch;
+    if (pacedBranch) {
+        const files = await realCheckpointDeps(currentPlatform()).runGit(
+            ['diff', '--name-only', 'HEAD', pacedBranch], { cwd, timeoutMs: 10_000 });
+        out('  result branch holds: ' + files.stdout.trim().split('\n').join(', '));
+    } else {
+        out('  no result branch');
+    }
+
+    out('=== 16: the board at the end, so the final state is visible ===');
+    const final = await bridge<{ rows: Array<Record<string, unknown>> }>('window.stafford.tasks.board(40)');
+    out('board: ' + ['needs-you', 'working', 'assigned', 'done', 'failed']
+        .map((st) => st + '=' + String(final.rows.filter((r) => r['state'] === st).length)).join(' '));
+
     out('=== task ui smoke done ===');
 }
 
