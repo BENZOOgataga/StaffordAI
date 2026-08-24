@@ -488,7 +488,7 @@ function permissionRulesFor(projectId: string): PermissionRulesReply {
  * Benzoo a lowercased, symlink-resolved string he never typed. The attribution is the point
  * of this view, and it is exact.
  */
-function effectivePolicyFor(projectId: string, hireId: string): PermissionEffectiveReply {
+function effectivePolicyFor(projectId: string, hireId: string | null): PermissionEffectiveReply {
     if (!repositories) return { rules: [] };
     const project = repositories.projects.get(projectId);
     const repoRoot = project?.repos[0]?.path ?? '';
@@ -504,9 +504,13 @@ function effectivePolicyFor(projectId: string, hireId: string): PermissionEffect
         action: r.action, pathScope: r.pathScope, commandPattern: r.commandPattern, effect: r.effect
     });
 
+    // hireId null is the project level itself: the default profile plus the baseline, with no
+    // colleague overrides layered on. A hire id resolves that colleague's own policy.
+    const overrides = hireId === null ? [] : stored.filter((r) => r.hireId === hireId).map(toRule);
+
     const rows = effectivePolicy({
         baseline: [...profile, ...stored.filter((r) => r.hireId === null).map(toRule)],
-        overrides: stored.filter((r) => r.hireId === hireId).map(toRule),
+        overrides,
         profileKeys,
         defaults: defaultCategoryDefaults(project?.policy.allowWebFetch ?? false)
     });

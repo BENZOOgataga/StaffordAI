@@ -22,7 +22,7 @@ interface SessionOverrides {
     createProject?: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
     createHire?: (payload: { name: string; type: string; title: string; projectId: string }) => HireCreated;
     permissionRules?: (projectId: string) => PermissionRulesReply;
-    effectivePolicy?: (projectId: string, hireId: string) => PermissionEffectiveReply;
+    effectivePolicy?: (projectId: string, hireId: string | null) => PermissionEffectiveReply;
     addPermissionRule?: (payload: PermissionAdd) => PermissionWriteReply;
     updatePermissionRule?: (payload: PermissionUpdate) => PermissionWriteReply;
     removePermissionRule?: (id: string) => PermissionWriteReply;

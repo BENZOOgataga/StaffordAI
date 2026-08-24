@@ -140,7 +140,10 @@ export function isPermissionRulesRequest(value: unknown): value is PermissionRul
 }
 
 export function isPermissionEffectiveRequest(value: unknown): value is PermissionEffectiveRequest {
-    return isObject(value) && isBoundedString(value.projectId, 256) && isHireId(value.hireId);
+    if (!isObject(value) || !isBoundedString(value.projectId, 256)) return false;
+    // null resolves the project level (default profile plus baseline); a string resolves one
+    // colleague. Nothing else, so a stray value cannot name a policy that does not exist.
+    return value.hireId === null || isHireId(value.hireId);
 }
 
 export function isPermissionAdd(value: unknown): value is PermissionAdd {

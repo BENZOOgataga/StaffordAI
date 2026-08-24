@@ -2,7 +2,8 @@ import * as React from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 import { RulesPanel } from './rules-panel.tsx';
-import { useProjectRules } from './use-permissions.ts';
+import { DefaultProfileSection } from './default-profile-section.tsx';
+import { useProjectRules, useEffectivePolicy } from './use-permissions.ts';
 import type { UiLang } from './rule-labels.ts';
 import type { ProjectSummary } from '../../shared/ipc.ts';
 
@@ -25,6 +26,14 @@ export function PermissionsScreen({ lang, projects, projectId, onSelectProject, 
     onNavigate: (view: string) => void;
 }): React.JSX.Element {
     const { baseline, loaded, error } = useProjectRules(projectId);
+    // The project-level policy (null hire id): the default profile plus the baseline, no colleague
+    // overrides. The default-profile rows are shown in their own collapsed section, so the generated
+    // protections are visible and editable here even when no baseline rule has been written yet.
+    const projectPolicy = useEffectivePolicy(projectId, null);
+    const generated = React.useMemo(
+        () => projectPolicy.rules.filter((r) => r.source === 'default-profile'),
+        [projectPolicy.rules]
+    );
 
     return (
         <AppShell current="permissions" onNavigate={onNavigate}>
@@ -62,18 +71,33 @@ export function PermissionsScreen({ lang, projects, projectId, onSelectProject, 
                             </p>
                         </div>
                     ) : (
-                        <RulesPanel
-                            lang={lang}
-                            title={lang === 'fr' ? 'Règles de base du projet' : 'Project baseline rules'}
-                            hint={lang === 'fr'
-                                ? 'Ces règles s’appliquent à tous les collègues de ce projet. Les exceptions par collègue se règlent sur le collègue.'
-                                : 'These apply to every colleague on this project. Per-colleague exceptions are set on the colleague.'}
-                            rules={baseline}
-                            projectId={projectId}
-                            hireId={null}
-                            loaded={loaded}
-                            error={error}
-                        />
+                        <div className="flex max-w-5xl flex-col gap-6">
+                            <RulesPanel
+                                lang={lang}
+                                title={lang === 'fr'
+                                    ? 'Règles de base du projet (exceptions indépendantes du collègue)'
+                                    : 'Project baseline rules (colleague-independent overrides)'}
+                                hint={lang === 'fr'
+                                    ? 'Ces règles s’appliquent à tous les collègues de ce projet. Les exceptions par collègue se règlent sur le collègue.'
+                                    : 'These apply to every colleague on this project. Per-colleague exceptions are set on the colleague.'}
+                                rules={baseline}
+                                projectId={projectId}
+                                hireId={null}
+                                loaded={loaded}
+                                error={error}
+                            />
+
+                            {projectId && projectPolicy.loaded && !projectPolicy.error && generated.length > 0 ? (
+                                <DefaultProfileSection
+                                    lang={lang}
+                                    rules={generated}
+                                    projectId={projectId}
+                                    colleagueHireId={null}
+                                    stored={baseline}
+                                    allowScopeChoice={false}
+                                />
+                            ) : null}
+                        </div>
                     )}
                 </div>
             </section>

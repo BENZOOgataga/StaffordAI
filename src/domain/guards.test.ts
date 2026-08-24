@@ -1,8 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    isChannelPage, isChannelSince, isProjectCreate, isHireCreate
+    isChannelPage, isChannelSince, isProjectCreate, isHireCreate, isPermissionEffectiveRequest
 } from './guards.ts';
+
+test('permissions:effective takes a project and a hire id, or null for the project level', () => {
+    assert.equal(isPermissionEffectiveRequest({ projectId: 'p1', hireId: 'h1' }), true, 'a colleague');
+    assert.equal(isPermissionEffectiveRequest({ projectId: 'p1', hireId: null }), true, 'the project level');
+    assert.equal(isPermissionEffectiveRequest({ projectId: 'p1' }), false, 'hireId is required, even if null');
+    assert.equal(isPermissionEffectiveRequest({ projectId: '', hireId: null }), false, 'empty project');
+    assert.equal(isPermissionEffectiveRequest({ projectId: 'p1', hireId: 42 }), false, 'a hire id is a string or null');
+    assert.equal(isPermissionEffectiveRequest(null), false);
+});
 
 test('project:create needs a bounded name and a non-empty list of bounded paths', () => {
     assert.equal(isProjectCreate({ name: 'Stafford', repoPaths: ['C:/repo'] }), true);

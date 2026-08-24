@@ -379,10 +379,15 @@ export interface PermissionRulesReply {
     readonly overrides: readonly PermissionRuleView[];
 }
 
-/** A colleague's effective policy on a project. */
+/**
+ * An effective policy on a project. A hire id resolves one colleague's policy (baseline plus that
+ * colleague's overrides); null resolves the project level itself (the default profile plus the
+ * baseline, with no colleague overrides), which the project Permissions screen reads to show and
+ * edit the default profile.
+ */
 export interface PermissionEffectiveRequest {
     readonly projectId: string;
-    readonly hireId: string;
+    readonly hireId: string | null;
 }
 
 /** One row of a colleague's effective policy, with where it came from. */
