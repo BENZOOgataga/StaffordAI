@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { makePermissionGate } from './permission-gate.ts';
+import { protectedConfigPaths } from './protected-config-paths.ts';
 import type { AskRequest, AskOutcome } from './approval-registry.ts';
 import type { ProjectPolicy, PermissionRuleRecord } from '../../domain/models.ts';
 import type { PermissionDecision } from './claude-runner.ts';
@@ -424,4 +425,81 @@ test('phase 3: a colleague override added in the UI reaches that colleague and n
     assert.equal(await behavior(restricted('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'deny');
     assert.equal(await behavior(other('Write', { file_path: path.join(CWD, 'src', 'a.ts') })), 'allow',
         'an override names one colleague, so it must not leak onto another');
+});
+
+// --------------------------------------------------------------------------
+// Finding A (audit 2026-08-24): the gate protected only userData, while the config UI and the
+// edit warnings displayed a larger set (~/.claude, ~/.ssh, ~/.aws, ~/.gnupg, ~/.docker, ~/.kube,
+// ~/.config/gh). Read defaults to allow, so a colleague could read ~/.ssh/id_rsa and
+// ~/.claude/.credentials.json while the screen claimed those were protected. The fix wires the
+// same `protectedConfigPaths` set into the gate, so enforcement matches display.
+// --------------------------------------------------------------------------
+
+const HOME = path.resolve('/home/benzoo');
+const USERDATA_FOR_CONFIG = path.resolve('/userdata');
+
+/** A file inside each protected directory, the thing a colleague must not be able to read. */
+const CREDENTIAL_READS: readonly { dir: string; file: string }[] = [
+    { dir: path.join(HOME, '.claude'), file: '.credentials.json' },
+    { dir: path.join(HOME, '.ssh'), file: 'id_rsa' },
+    { dir: path.join(HOME, '.aws'), file: 'credentials' },
+    { dir: path.join(HOME, '.gnupg'), file: 'secring.gpg' },
+    { dir: path.join(HOME, '.docker'), file: 'config.json' },
+    { dir: path.join(HOME, '.kube'), file: 'config' },
+    { dir: path.join(HOME, '.config', 'gh'), file: 'hosts.yml' }
+];
+
+function gateWithProtected(protectedPaths: readonly string[]) {
+    return makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => [],
+        protectedPaths,
+        normalisePath: (v: string) => v,
+        realPath: (v: string) => v
+    })({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+}
+
+test('Finding A: protectedConfigPaths is userData plus the seven credential directories', () => {
+    assert.deepEqual(protectedConfigPaths(HOME, USERDATA_FOR_CONFIG), [
+        USERDATA_FOR_CONFIG,
+        path.join(HOME, '.claude'),
+        path.join(HOME, '.ssh'),
+        path.join(HOME, '.aws'),
+        path.join(HOME, '.gnupg'),
+        path.join(HOME, '.docker'),
+        path.join(HOME, '.kube'),
+        path.join(HOME, '.config', 'gh')
+    ]);
+});
+
+test('Finding A: every credential directory the UI shows as protected actually denies a read', async () => {
+    // Wired exactly as the gate now is in index.ts: the full protectedConfigPaths set.
+    const gate = gateWithProtected(protectedConfigPaths(HOME, USERDATA_FOR_CONFIG));
+    for (const { dir, file } of CREDENTIAL_READS) {
+        const target = path.join(dir, file);
+        assert.equal(await behavior(gate('Read', { file_path: target })), 'deny',
+            'a colleague must not read a credential the config screen claims is protected: ' + target);
+        assert.equal(await behavior(gate('Write', { file_path: target })), 'deny',
+            'nor write it: ' + target);
+    }
+    // userData stays protected, and an unrelated file under home is still readable, so the fix
+    // did not blanket-deny the home directory.
+    assert.equal(await behavior(gate('Read', { file_path: path.join(USERDATA_FOR_CONFIG, 'stafford.db') })), 'deny');
+    assert.equal(await behavior(gate('Read', { file_path: path.join(HOME, 'notes.txt') })), 'allow',
+        'only the named credential directories are protected, not the whole home directory');
+});
+
+test('Finding A: the exact gap is closed, userData-only allowed these reads, the full set denies them', async () => {
+    // This is the regression the fix closes, pinned as a before/after. The old wiring passed only
+    // userData; the credential reads fell through to the read-allow default. The new wiring denies
+    // them. If someone reverts the gate to userData-only, the "after" assertions below fail.
+    const oldGate = gateWithProtected([USERDATA_FOR_CONFIG]);
+    const newGate = gateWithProtected(protectedConfigPaths(HOME, USERDATA_FOR_CONFIG));
+    for (const { dir, file } of CREDENTIAL_READS) {
+        const target = path.join(dir, file);
+        assert.equal(await behavior(oldGate('Read', { file_path: target })), 'allow',
+            'documents the gap: userData-only protection left this credential readable: ' + target);
+        assert.equal(await behavior(newGate('Read', { file_path: target })), 'deny',
+            'the fix: the credential is now denied at the gate: ' + target);
+    }
 });
