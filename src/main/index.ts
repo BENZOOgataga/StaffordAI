@@ -13,7 +13,7 @@
  * Task 7a. No packaging, no update checker, no drain. Those are 7b and Task 8.
  */
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog, screen } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, session, dialog, screen, Notification } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -23,7 +23,7 @@ import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './wi
 import { applyAppMenu, hideMenuBar } from './window/app-menu.ts';
 import { registerWindowControls, wireMaximizeEvents } from './window/window-controls.ts';
 import { resolveWindowBounds, readWindowState, saveWindowState, WINDOW_DEFAULTS, type Rect } from './window/window-state.ts';
-import { installTray, type TrayHandle } from './tray.ts';
+import { installTray, needsYouSignal, type TrayHandle } from './tray.ts';
 import { TRAY_ICON_PNG } from './tray-icons.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
@@ -620,11 +620,36 @@ function trayCounts(): { review: number; paused: number } {
     return { review, paused };
 }
 
-/** Re-applies the tray's badge, tooltip and icon from the live count. Safe before the tray exists. */
-function refreshTray(): void {
+// The needs-you count last reflected, so a notification fires only when it rises, not on every
+// re-render. And the current notification, so a new total replaces it rather than stacking.
+let lastNeedsYouCount = 0;
+let activeNeedsYouNotification: Notification | null = null;
+
+/** Pops a count-only OS notification, closing any prior one so the total updates in place. */
+function showNeedsYouNotification(title: string, body: string): void {
+    // Let the OS gate it: a real Notification respects Do Not Disturb and focus modes on its own,
+    // so Stafford never tries to force through one.
+    if (!Notification.isSupported()) return;
+    try { activeNeedsYouNotification?.close(); } catch { /* already gone */ }
+    const n = new Notification({ title, body });
+    // Clicking it opens straight to the board, the same place the tray click lands when waiting.
+    n.on('click', () => openWindow('board'));
+    n.show();
+    activeNeedsYouNotification = n;
+}
+
+/**
+ * Re-applies the tray's badge, tooltip and icon from the live count, and pops a notification when
+ * the count rises. `notify` is false for the launch seed, so opening the app does not pop for work
+ * that was already waiting; only a rise during the session notifies. Safe before the tray exists.
+ */
+function refreshTray(opts?: { notify?: boolean }): void {
     if (!trayHandle) return;
     const { review, paused } = trayCounts();
     trayHandle.update(review, paused);
+    const signal = needsYouSignal(lastNeedsYouCount, review, paused);
+    if ((opts?.notify ?? true) && signal.fire) showNeedsYouNotification(signal.title, signal.body);
+    lastNeedsYouCount = signal.count;
 }
 
 function requireTasks(): TaskService {
@@ -1861,8 +1886,10 @@ app.whenReady().then(async () => {
             if (review + paused > 0) openWindow('board'); else openWindow();
         }
     });
-    // Reflect whatever is already waiting at launch (a needs-you task from a prior session).
-    refreshTray();
+    // Reflect whatever is already waiting at launch (a needs-you task from a prior session), but
+    // do not pop a notification for it: only a rise during the session notifies, not the backlog
+    // that was already there when the app came up.
+    refreshTray({ notify: false });
 });
 
 // No window at launch and none when the last window closes: the tray keeps the

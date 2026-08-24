@@ -81,6 +81,27 @@ export function trayPresentation(review: number, paused: number): TrayPresentati
     return { attention: true, count, tooltip: waitingSummary(review, paused) };
 }
 
+/** Whether an OS notification should fire now, and what it should say. */
+export interface NeedsYouSignal {
+    /** True only when the total rose above `prevCount`, so a repeat or a drop stays silent. */
+    readonly fire: boolean;
+    readonly count: number;
+    readonly title: string;
+    readonly body: string;
+}
+
+/**
+ * Decides whether to pop a needs-you notification, given the count last seen. It fires only when
+ * the total rises (nothing to something, or something to more), never on a drop or an unchanged
+ * re-render, so a poll that finds the same count does not spam. The body is the same board-header
+ * phrasing the tray tooltip uses, so it is count-only: no colleague name, message, or task text
+ * ever reaches an OS surface.
+ */
+export function needsYouSignal(prevCount: number, review: number, paused: number): NeedsYouSignal {
+    const count = Math.max(0, review) + Math.max(0, paused);
+    return { fire: count > prevCount && count > 0, count, title: 'Stafford', body: waitingSummary(review, paused) };
+}
+
 /**
  * The menu template. Data, so a test can assert the labels and that the actions
  * point where they should without constructing a real Menu.
