@@ -144,13 +144,13 @@ test('kill plans are specifications, not actions', () => {
 test('the owner-only ACL plan is a Windows icacls command and null on POSIX', () => {
     // A file: reset inheritance, grant only the owner, no container flags.
     assert.deepEqual(
-        win32.ownerOnlyAclPlan('C:\\cfg\\.credentials.json', { tree: false, account: 'MIN\\Morice_L' }),
-        { file: 'icacls', args: ['C:\\cfg\\.credentials.json', '/inheritance:r', '/grant:r', 'MIN\\Morice_L:F', '/C', '/Q'] }
+        win32.ownerOnlyAclPlan('C:\\cfg\\.credentials.json', { tree: false, account: 'CORP\\dev' }),
+        { file: 'icacls', args: ['C:\\cfg\\.credentials.json', '/inheritance:r', '/grant:r', 'CORP\\dev:F', '/C', '/Q'] }
     );
     // A directory: (OI)(CI) so children inherit, and /T to reapply to existing ones.
     assert.deepEqual(
-        win32.ownerOnlyAclPlan('C:\\cfg', { tree: true, account: 'MIN\\Morice_L' }),
-        { file: 'icacls', args: ['C:\\cfg', '/inheritance:r', '/grant:r', 'MIN\\Morice_L:(OI)(CI)F', '/C', '/Q', '/T'] }
+        win32.ownerOnlyAclPlan('C:\\cfg', { tree: true, account: 'CORP\\dev' }),
+        { file: 'icacls', args: ['C:\\cfg', '/inheritance:r', '/grant:r', 'CORP\\dev:(OI)(CI)F', '/C', '/Q', '/T'] }
     );
     // POSIX has real mode bits; the seed's chmod is the whole guarantee, no command.
     for (const platform of [darwin, linux]) {
