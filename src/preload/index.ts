@@ -225,6 +225,13 @@ const api = Object.freeze({
         isMaximized: (): Promise<boolean> => winInvoke('window:is-maximized') as Promise<boolean>,
         onMaximizeChange: (listener: (maximized: boolean) => void): (() => void) =>
             winOn('window:maximized-changed', (payload) => listener(Boolean(payload)))
+    }),
+
+    // The shell surface: main asking the renderer to switch views. Used by the tray, which
+    // routes a click to the board when something is waiting. One-way, read-only from here.
+    shell: Object.freeze({
+        onNavigate: (listener: (view: string) => void): (() => void) =>
+            on('shell:navigate', (payload) => listener(String(payload)))
     })
 });
 

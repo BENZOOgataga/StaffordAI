@@ -126,6 +126,12 @@ function main(): void {
         }
     }
 
+    // Main can ask the shell to switch views: the tray routes a click to the board when
+    // something is waiting, so tapping the tray while the badge is up lands on the waiting
+    // work. Only known views are honored, so a stray payload cannot break navigation.
+    const KNOWN_VIEWS = new Set(['home', 'roster', 'board', 'channel', 'permissions']);
+    window.stafford.shell.onNavigate((view) => { if (KNOWN_VIEWS.has(view)) showView(view); });
+
     // Home is the default view on launch: the overview a person wants first, rather than
     // dropping straight into the roster.
     showView('home');

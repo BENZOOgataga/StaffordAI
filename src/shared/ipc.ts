@@ -75,7 +75,10 @@ export const EVENT_CHANNELS = [
     // A permission rule was added, edited or removed, so any open config view re-reads.
     'permissions:changed',
     // A task was assigned, moved, or reviewed, so any open task view re-reads.
-    'tasks:changed'
+    'tasks:changed',
+    // Main asks the shell to switch to a view, e.g. a tray click routing to the board. The
+    // payload is the view name. One-way: main tells the shell where to go, nothing comes back.
+    'shell:navigate'
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];

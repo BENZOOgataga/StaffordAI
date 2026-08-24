@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('stafford', {
         conversation: async () => ({ rows: [] }), reply: async () => {}, onChanged: unsub
     },
     activity: { byHire: async () => ({ rows: [] }), onAppended: unsub },
+    shell: { onNavigate: unsub },
     checkpoints: { saved: async () => null, ack: async () => {} },
     // One pending ask, so a screenshot shows both kinds of waiting at once: the approvals
     // banner on the roster, and the same colleague's running task reading as paused.
