@@ -12,8 +12,7 @@
  * install script from the lockfile and fails if that set drifts from the
  * allowlist below. A new native dependency, or a version bump that adds a
  * postinstall, then cannot land without someone deciding, in review, whether
- * that script mattered and needs re-running explicitly the way the node-pty
- * spawn-helper repair is.
+ * that script mattered and needs re-running explicitly.
  *
  * Existence, not behaviour: it reads the committed lockfile and cannot pass
  * against the wrong subject.
@@ -31,9 +30,6 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
  * Each is here because its script was reviewed and is either unnecessary at
  * install (the module loads from a bundled prebuild) or re-run explicitly.
  *
- *   node-pty          loads from its bundled prebuild without its install
- *                     script; its darwin spawn-helper repair is run explicitly
- *                     in CI and via `npm run fix:native`.
  *   esbuild, fsevents native tooling deps that ship platform binaries; not
  *                     required to build from source here.
  *   electron-winstaller  Windows installer tooling, only used if packaging an
@@ -67,7 +63,7 @@ test('every dependency with an install script is on the reviewed allowlist', () 
         unexpected, [],
         'a dependency declares an install script that .npmrc ignore-scripts now silences: ' +
         unexpected.join(', ') + '. Decide in review whether that script matters. If it must run, ' +
-        'wire it as an explicit step the way scripts/fix-node-pty-permissions.cjs is, then add it ' +
+        'wire it as an explicit build step, then add it ' +
         'to ALLOWED_INSTALL_SCRIPTS with the reason.'
     );
 });
