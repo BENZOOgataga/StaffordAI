@@ -23,7 +23,7 @@ Yes. `claudeMdExcludes` (documented on the memory page) skips CLAUDE.md files by
 glob pattern, and can be set at any settings layer including the user layer, which is where the
 managed config dir's `settings.json` sits. Measured:
 
-- Managed `settings.json` = `{"claudeMdExcludes":["C:/Users/Morice_L/.claude/CLAUDE.md"]}`, with
+- Managed `settings.json` = `{"claudeMdExcludes":["C:/Users/you/.claude/CLAUDE.md"]}`, with
   `CLAUDE_CONFIG_DIR` pointing at that managed dir. Result: the session no longer loads
   `working-with-benzoo` (asked directly, it answered "wwb: no"), and a project-level `CLAUDE.md`
   instruction still applied (the token I planted, ZEBRA-9931, still appeared). So the user memory is
@@ -45,7 +45,7 @@ No, not by environment, and not worth the heavy version. Measured:
   But Claude Code does not resolve user memory through that: with `USERPROFILE` and `HOME` both
   redirected to a fake home that carried a forced-behavior instruction, the session ignored the fake
   home entirely (its instruction never fired) and still loaded `working-with-benzoo` from the real
-  `C:\Users\Morice_L\.claude\CLAUDE.md`. So Claude Code reads the real OS profile natively on Windows,
+  `C:\Users\you\.claude\CLAUDE.md`. So Claude Code reads the real OS profile natively on Windows,
   not from the env vars.
 - A genuinely different OS user (runas / a separate profile) would give a different `~/.claude`, but
   it is a rabbit hole: it needs a real second account, cross-user ACLs so the colleague can read and
