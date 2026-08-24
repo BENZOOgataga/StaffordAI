@@ -60,7 +60,10 @@ export function ApprovalsBanner({ cards }: { cards: readonly RosterCard[] }): Re
     const nameOf = (hireId: string): string => cards.find((c) => c.id === hireId)?.name ?? hireId;
     return (
         <Card className="border-status-waiting/40 gap-3 p-4">
-            <div className="flex items-center gap-2">
+            {/* role="alert" so a screen reader announces the banner when it appears, not only
+                when a sighted user sees it. It carries the summary line alone, not the whole
+                interactive form below, so the announcement is the event, not every control. */}
+            <div className="flex items-center gap-2" role="alert">
                 <ShieldAlert className="text-status-waiting size-4" />
                 <span className="text-sm font-medium">
                     {pending.length === 1 ? 'A colleague needs your approval' : pending.length + ' colleagues need your approval'}

@@ -31,14 +31,25 @@ function StatusDot({
     status,
     size,
     pulse = false,
+    label,
     ...props
-}: React.ComponentProps<'span'> & VariantProps<typeof statusDotVariants> & { pulse?: boolean }): React.JSX.Element {
+}: React.ComponentProps<'span'> & VariantProps<typeof statusDotVariants> & {
+    pulse?: boolean;
+    /**
+     * The state text this dot stands for, e.g. "Idle on test". When given, it is placed as
+     * screen-reader-only text inside the `role="status"` live region, so a state change is
+     * announced, not only shown by the color. Pass the same words already shown visually
+     * beside the dot. Omitted, the dot stays presentational as before.
+     */
+    label?: string;
+}): React.JSX.Element {
     return (
         <span data-slot="status-dot" role="status" className={cn('relative inline-flex', className)} {...props}>
             {pulse ? (
                 <span aria-hidden="true" className={cn(statusDotVariants({ status, size }), 'absolute inline-flex animate-ping opacity-75')} />
             ) : null}
-            <span className={cn(statusDotVariants({ status, size }), 'relative')} />
+            <span aria-hidden="true" className={cn(statusDotVariants({ status, size }), 'relative')} />
+            {label ? <span className="sr-only">{label}</span> : null}
         </span>
     );
 }
