@@ -11,7 +11,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
-    seedManagedConfig, MANAGED_DIR_MODE, MANAGED_FILE_MODE, type ManagedFs, type SeedManagedConfigDeps
+    seedManagedConfig, userMemoryExcludes, MANAGED_DIR_MODE, MANAGED_FILE_MODE,
+    type ManagedFs, type SeedManagedConfigDeps
 } from './managed-config.ts';
 
 interface Entry { data: string; mode: number; mtime: number; }
@@ -175,6 +176,33 @@ test('settings.json is plugin-free: no plugins or marketplaces', () => {
     for (const banned of ['enabledPlugins', 'extraKnownMarketplaces']) {
         assert.equal(banned in settings, false, banned + ' must be absent');
     }
+});
+
+test('the managed settings blank the user-scope memory with forward-slash excludes', () => {
+    const fs = fakeFs();
+    seedManagedConfig(deps(fs), CWD);
+    const settings = JSON.parse(fs.readText(MANAGED + '/settings.json')) as Record<string, unknown>;
+    // HOME is /home/user here; both the user CLAUDE.md and the whole user rules dir are excluded.
+    assert.deepEqual(settings.claudeMdExcludes, ['/home/user/.claude/CLAUDE.md', '/home/user/.claude/rules/**']);
+});
+
+test('userMemoryExcludes converts a Windows home to forward slashes and globs the rules dir', () => {
+    assert.deepEqual(
+        userMemoryExcludes('C:\\Users\\dev'),
+        ['C:/Users/dev/.claude/CLAUDE.md', 'C:/Users/dev/.claude/rules/**'],
+        'backslashes become forward slashes, since a backslash is a glob escape'
+    );
+    // No backslash survives into the pattern.
+    for (const p of userMemoryExcludes('C:\\Users\\dev')) assert.equal(p.includes('\\'), false);
+});
+
+test('the memory excludes are added alongside existing settings, never instead of them', () => {
+    const fs = fakeFs();
+    const staffordSettings = { hooks: { SessionStart: [{ hooks: [] }] } };
+    seedManagedConfig({ ...deps(fs), settings: staffordSettings }, CWD);
+    const settings = JSON.parse(fs.readText(MANAGED + '/settings.json')) as Record<string, unknown>;
+    assert.deepEqual(settings.hooks, staffordSettings.hooks, 'existing settings survive');
+    assert.deepEqual(settings.claudeMdExcludes, ['/home/user/.claude/CLAUDE.md', '/home/user/.claude/rules/**']);
 });
 
 test('Stafford hooks are written into the managed settings, scoped to the colleague session', () => {
