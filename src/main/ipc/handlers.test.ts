@@ -20,7 +20,7 @@ interface SessionOverrides {
     ackCheckpoints?: (drainId: string) => void;
     channelReply?: (hireId: string, text: string) => Promise<void>;
     createProject?: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
-    createHire?: (payload: { name: string; type: string; title: string; projectId: string }) => HireCreated;
+    createHire?: (payload: { type: string; title: string; projectId: string }) => HireCreated;
     permissionRules?: (projectId: string) => PermissionRulesReply;
     effectivePolicy?: (projectId: string, hireId: string | null) => PermissionEffectiveReply;
     addPermissionRule?: (payload: PermissionAdd) => PermissionWriteReply;
@@ -59,7 +59,7 @@ function deps(
         createProject: over.createProject
             ?? ((payload) => ({ id: 'proj-new', name: payload.name })),
         createHire: over.createHire
-            ?? ((payload) => ({ id: 'hire-new', name: payload.name, title: payload.title, projectId: payload.projectId })),
+            ?? ((payload) => ({ id: 'hire-new', name: 'Marion', title: payload.title, projectId: payload.projectId })),
         rosterSnapshot: () => roster,
         channelPage: over.channelPage ?? (() => []),
         channelSince: over.channelSince ?? (() => []),
@@ -132,13 +132,14 @@ test('project:create refuses a malformed payload before reaching createProject',
 test('hire:create is guarded and routes a valid payload to createHire', () => {
     let seen: unknown = null;
     const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
-        createHire: (payload) => { seen = payload; return { id: 'h9', name: payload.name, title: payload.title, projectId: payload.projectId }; }
+        // The name is not on the payload; the service draws it and returns it.
+        createHire: (payload) => { seen = payload; return { id: 'h9', name: 'Marion', title: payload.title, projectId: payload.projectId }; }
     }));
     const result = handlers['hire:create'](
-        { name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: 'p1' }
+        { type: 'lead-developer', title: 'Lead developer', projectId: 'p1' }
     ) as HireCreated;
     assert.deepEqual(result, { id: 'h9', name: 'Marion', title: 'Lead developer', projectId: 'p1' });
-    assert.deepEqual(seen, { name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: 'p1' });
+    assert.deepEqual(seen, { type: 'lead-developer', title: 'Lead developer', projectId: 'p1' });
 });
 
 test('hire:create refuses a malformed payload before reaching createHire', () => {
@@ -146,7 +147,7 @@ test('hire:create refuses a malformed payload before reaching createHire', () =>
     const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
         createHire: () => { called = true; return { id: 'x', name: 'x', title: 'x', projectId: 'x' }; }
     }));
-    assert.throws(() => handlers['hire:create']({ name: 'Marion', type: 'lead-developer' }), /hire:create requires/);
+    assert.throws(() => handlers['hire:create']({ type: 'lead-developer' }), /hire:create requires/);
     assert.equal(called, false, 'a malformed payload never reaches the create logic');
 });
 

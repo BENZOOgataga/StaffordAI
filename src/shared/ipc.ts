@@ -159,7 +159,6 @@ export interface ProjectCreated {
  * project's id. The hire binds to that project so its cold-spawn cwd resolves.
  */
 export interface HireCreate {
-    readonly name: string;
     readonly type: string;
     readonly title: string;
     readonly projectId: string;

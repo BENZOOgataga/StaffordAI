@@ -94,8 +94,8 @@ export function isProjectCreate(value: unknown): value is ProjectCreate {
 /** Creating a hire: bounded name, type, title, and an owning project id. */
 export function isHireCreate(value: unknown): value is HireCreate {
     if (!isObject(value)) return false;
-    return isBoundedString(value.name, 256)
-        && isBoundedString(value.type, 256)
+    // No name: a hire's name is drawn from the pool in main, never sent by the renderer.
+    return isBoundedString(value.type, 256)
         && isBoundedString(value.title, 256)
         && isBoundedString(value.projectId, 256);
 }
