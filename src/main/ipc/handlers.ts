@@ -52,7 +52,7 @@ export interface HandlerDeps {
      * invoke.
      */
     readonly createHire: (
-        payload: { name: string; type: string; title: string; projectId: string }
+        payload: { type: string; title: string; projectId: string }
     ) => HireCreated;
     /**
      * The roster as cards, read-only and bounded (one per hire). A function, so
@@ -153,10 +153,10 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         // type or a missing project.
         'hire:create': (payload: unknown): HireCreated => {
             if (!isHireCreate(payload)) {
-                throw new Error('hire:create requires {name,type,title,projectId}');
+                throw new Error('hire:create requires {type,title,projectId}');
             }
             return deps.createHire({
-                name: payload.name, type: payload.type, title: payload.title, projectId: payload.projectId
+                type: payload.type, title: payload.title, projectId: payload.projectId
             });
         },
 

@@ -82,8 +82,8 @@ const api = Object.freeze({
     // Hiring a colleague into a project. Returns the created hire's id and safe
     // fields; the hire binds to the project so its cold-spawn cwd resolves.
     hire: Object.freeze({
-        create: (name: string, type: string, title: string, projectId: string): Promise<HireCreated> =>
-            invoke('hire:create', { name, type, title, projectId }) as Promise<HireCreated>
+        create: (type: string, title: string, projectId: string): Promise<HireCreated> =>
+            invoke('hire:create', { type, title, projectId }) as Promise<HireCreated>
     }),
 
     // The roster. Read-only cards, and a change signal the renderer answers by

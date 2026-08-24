@@ -27,7 +27,6 @@ export interface CreateProjectInput {
 }
 
 export interface CreateHireInput {
-    readonly name: string;
     readonly type: string;
     readonly title: string;
     readonly projectId: string;
@@ -52,6 +51,12 @@ export interface CreateDeps {
     readonly insertProject: (project: Project) => void;
     readonly getProject: (id: string) => Project | null;
     readonly insertHire: (hire: HiredAgent) => void;
+    /**
+     * Draws the name for a new hire from the pool and records it as used, so a name is
+     * drawn without replacement and never recycled. Called only after every other check
+     * passes, so a rejected hire never burns a name. Throws when the pool is exhausted.
+     */
+    readonly assignName: () => string;
     readonly uuid: () => string;
     readonly now: () => string;
     /** No implicit single user, for the eventual hosted plane. */
@@ -107,8 +112,6 @@ export function createProject(deps: CreateDeps, input: CreateProjectInput): Proj
 }
 
 export function createHire(deps: CreateDeps, input: CreateHireInput): HireView {
-    const name = input.name?.trim();
-    if (!name) throw new Error('a hire needs a name');
     const title = input.title?.trim();
     if (!title) throw new Error('a hire needs a title');
 
@@ -118,6 +121,10 @@ export function createHire(deps: CreateDeps, input: CreateHireInput): HireView {
     if (!deps.getProject(input.projectId)) {
         throw new Error('no such project: ' + String(input.projectId));
     }
+
+    // The name is drawn from the pool, not chosen. Drawn last, after every other check
+    // passes, so a rejected hire never burns a pooled name.
+    const name = deps.assignName();
 
     // Bind to the owning project so resolveTarget resolves the cold-spawn cwd to
     // that project's first repo path, which createProject validated is real.

@@ -25,13 +25,16 @@ test('project:create needs a bounded name and a non-empty list of bounded paths'
     assert.equal(isProjectCreate(null), false);
 });
 
-test('hire:create needs bounded name, type, title, and project id', () => {
-    assert.equal(isHireCreate({ name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: 'p1' }), true);
+test('hire:create needs bounded type, title, and project id, and no name (it is drawn in main)', () => {
+    assert.equal(isHireCreate({ type: 'lead-developer', title: 'Lead developer', projectId: 'p1' }), true);
 
-    assert.equal(isHireCreate({ name: '', type: 'lead-developer', title: 't', projectId: 'p1' }), false, 'empty name');
-    assert.equal(isHireCreate({ name: 'M', type: '', title: 't', projectId: 'p1' }), false, 'empty type');
-    assert.equal(isHireCreate({ name: 'M', type: 'lead-developer', title: 't' }), false, 'no project id');
-    assert.equal(isHireCreate({ name: 'M', type: 'lead-developer', title: 't', projectId: 42 }), false, 'project id not a string');
+    // A name on the payload is simply ignored, not required: main draws it, the renderer
+    // never sends one. So a valid payload with an extra name still passes, and a missing
+    // name is not a failure.
+    assert.equal(isHireCreate({ name: 'Marion', type: 'lead-developer', title: 't', projectId: 'p1' }), true, 'an extra name is ignored, not rejected');
+    assert.equal(isHireCreate({ type: '', title: 't', projectId: 'p1' }), false, 'empty type');
+    assert.equal(isHireCreate({ type: 'lead-developer', title: 't' }), false, 'no project id');
+    assert.equal(isHireCreate({ type: 'lead-developer', title: 't', projectId: 42 }), false, 'project id not a string');
     assert.equal(isHireCreate(null), false);
 });
 

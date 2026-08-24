@@ -79,6 +79,8 @@ export interface FormCopy {
     readonly create: string;
     readonly cancel: string;
     readonly hireNeedsProject: string;
+    /** Tells the person the name is assigned, since the hire form no longer asks for one. */
+    readonly hireNameNote: string;
 }
 
 const EN: FormCopy = {
@@ -97,7 +99,8 @@ const EN: FormCopy = {
     hintEmpty: 'The full path to the project folder on this machine.',
     create: 'Add project',
     cancel: 'Cancel',
-    hireNeedsProject: 'Add a project first, so your colleague has somewhere to work.'
+    hireNeedsProject: 'Add a project first, so your colleague has somewhere to work.',
+    hireNameNote: 'Your colleague gets a name automatically. You pick the role and the project.'
 };
 
 const FR: FormCopy = {
@@ -116,7 +119,8 @@ const FR: FormCopy = {
     hintEmpty: 'Le chemin complet vers le dossier du projet sur cette machine.',
     create: 'Ajouter le projet',
     cancel: 'Annuler',
-    hireNeedsProject: 'Ajoutez d\'abord un projet, pour que votre collègue ait un endroit où travailler.'
+    hireNeedsProject: 'Ajoutez d\'abord un projet, pour que votre collègue ait un endroit où travailler.',
+    hireNameNote: 'Votre collègue reçoit un nom automatiquement. Vous choisissez le rôle et le projet.'
 };
 
 export function formCopy(lang: Lang): FormCopy {

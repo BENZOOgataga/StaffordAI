@@ -30,6 +30,7 @@ import { openDatabase, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
+import { drawName, NAME_POOL } from './create/name-pool.ts';
 import { seedManagedConfig, type ManagedFs } from './agents/managed-config.ts';
 import { copyCredentialOwnerLocked } from './agents/credential-lock.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
@@ -200,6 +201,15 @@ function createDeps(repositories: Repositories): CreateDeps {
         insertProject: (project) => repositories.projects.insert(project),
         getProject: (id) => repositories.projects.get(id),
         insertHire: (hire) => repositories.hires.insert(hire),
+        // Draw a name the pool has not used, then record it, so the next draw excludes it.
+        // The picker is random over the still-available names. Recording before the hire
+        // insert means a rare insert failure burns a name rather than risking a later
+        // duplicate, which the never-recycle rule cares about more than pool thrift.
+        assignName: () => {
+            const name = drawName(NAME_POOL, repositories.usedNames.all(), (count) => Math.floor(Math.random() * count));
+            repositories.usedNames.record(name, new Date().toISOString());
+            return name;
+        },
         uuid: () => randomUUID(),
         now: () => new Date().toISOString(),
         ownerId: 'owner',

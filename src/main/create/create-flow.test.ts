@@ -19,19 +19,24 @@ import type { Project, HiredAgent } from '../../domain/models.ts';
 function harness() {
     const projects = new Map<string, Project>();
     const hires: HiredAgent[] = [];
+    // Every name the flow drew, so a test can prove the name comes from the draw and that a
+    // rejected hire never drew one.
+    const drawn: string[] = [];
     let n = 0;
+    let nameN = 0;
     const deps: CreateDeps = {
         // The real filesystem check, so the directory validation is genuine.
         dirExists: (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
         insertProject: (project) => { projects.set(project.id, project); },
         getProject: (id) => projects.get(id) ?? null,
         insertHire: (hire) => { hires.push(hire); },
+        assignName: () => { const nm = 'Drawn-' + (++nameN); drawn.push(nm); return nm; },
         uuid: () => 'id-' + (++n),
         now: () => '2026-08-13T00:00:00.000Z',
         ownerId: 'owner',
         labelFor: (p) => path.basename(p) || p
     };
-    return { deps, projects, hires };
+    return { deps, projects, hires, drawn };
 }
 
 /**
@@ -51,11 +56,12 @@ test('a hire created into a project at a real path resolves its cold-spawn cwd t
         const { deps, projects, hires } = harness();
         const project = createProject(deps, { name: 'Stafford', repoPaths: [dir] });
         const hire = createHire(deps, {
-            name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: project.id
+            type: 'lead-developer', title: 'Lead developer', projectId: project.id
         });
 
         const stored = hires.find((h) => h.id === hire.id);
         assert.ok(stored, 'the hire was written');
+        assert.equal(stored?.name, 'Drawn-1', 'the name comes from the draw, not from the renderer');
         assert.equal(stored?.activeProjectId, project.id, 'the hire is bound to the project');
         const cwd = resolveCwd(projects, stored!);
         assert.equal(cwd, dir, 'the cold-spawn cwd resolves to the real directory, not /x and not undefined');
@@ -117,17 +123,18 @@ test('a created project carries a fresh id, the conservative default policy, and
 test('hire:create into a nonexistent project, or with an unknown type, is rejected with no row written', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-create-'));
     try {
-        const { deps, hires } = harness();
+        const { deps, hires, drawn } = harness();
         const project = createProject(deps, { name: 'Stafford', repoPaths: [dir] });
         assert.throws(
-            () => createHire(deps, { name: 'X', type: 'lead-developer', title: 'Lead developer', projectId: 'nope' }),
+            () => createHire(deps, { type: 'lead-developer', title: 'Lead developer', projectId: 'nope' }),
             /no such project/
         );
         assert.throws(
-            () => createHire(deps, { name: 'X', type: 'not-a-role', title: 'X', projectId: project.id }),
+            () => createHire(deps, { type: 'not-a-role', title: 'X', projectId: project.id }),
             /unknown definition type/
         );
         assert.equal(hires.length, 0, 'no hire was written for a bad input');
+        assert.equal(drawn.length, 0, 'a rejected hire never drew a name, so none is burned');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -138,8 +145,9 @@ test('a created hire takes the definition seniority and starts idle with no sess
     try {
         const { deps, hires } = harness();
         const project = createProject(deps, { name: 'Stafford', repoPaths: [dir] });
-        createHire(deps, { name: 'Marion', type: 'lead-developer', title: 'Lead developer', projectId: project.id });
+        createHire(deps, { type: 'lead-developer', title: 'Lead developer', projectId: project.id });
         const stored = hires[0];
+        assert.equal(stored?.name, 'Drawn-1', 'the name is drawn, not passed in');
         assert.equal(stored?.seniority, 1, 'seniority comes from the definition, not the renderer');
         assert.equal(stored?.state, 'idle', 'a fresh hire is idle');
         assert.deepEqual(stored?.sessions, {}, 'no session yet');

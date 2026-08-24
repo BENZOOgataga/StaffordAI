@@ -439,8 +439,36 @@ export class PermissionRuleRepository {
     }
 }
 
+/**
+ * The append-only ledger of names ever drawn for a hire. Record and read-all only.
+ *
+ * A hire's name is drawn from the pool without replacement; this is the permanent
+ * record that makes the draw never recycle. There is no update or delete method, and
+ * none that would work: migration 0010's triggers raise on UPDATE and DELETE, so the
+ * database refuses them even by raw statement. `record` throws on a duplicate (the
+ * PRIMARY KEY), which is the safety net if a draw ever offered a used name.
+ */
+export class UsedNameRepository {
+    readonly #record: Statement;
+    readonly #all: Statement;
+
+    constructor(db: StorageDatabase) {
+        this.#record = db.prepare('INSERT INTO used_names (name, used_at) VALUES (@name, @used_at)');
+        this.#all = db.prepare('SELECT name FROM used_names');
+    }
+
+    /** Records a name as used, permanently. Throws if it was already recorded. */
+    record(name: string, at: string): void { this.#record.run({ name, used_at: at }); }
+
+    /** Every name ever used, as a set, for the draw to exclude. Bounded by the pool size. */
+    all(): Set<string> {
+        return new Set((this.#all.all() as { name: string }[]).map((r) => r.name));
+    }
+}
+
 /** Every repository, built once over one open database. */
 export interface Repositories {
+    readonly usedNames: UsedNameRepository;
     readonly hires: HireRepository;
     readonly projects: ProjectRepository;
     readonly tasks: TaskRepository;
@@ -453,6 +481,7 @@ export interface Repositories {
 
 export function createRepositories(db: StorageDatabase): Repositories {
     return {
+        usedNames: new UsedNameRepository(db),
         hires: new HireRepository(db),
         projects: new ProjectRepository(db),
         tasks: new TaskRepository(db),

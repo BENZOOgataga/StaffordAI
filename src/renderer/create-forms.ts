@@ -30,8 +30,8 @@ const projectError = document.getElementById('project-error') as HTMLElement;
 const projectCreate = document.getElementById('project-create') as HTMLButtonElement;
 const projectCancel = document.getElementById('project-cancel') as HTMLButtonElement;
 
-// Hire form elements.
-const hireName = document.getElementById('hire-name') as HTMLInputElement;
+// Hire form elements. The name is not one of them: it is drawn from the pool in main,
+// so the form asks only for the role and the project.
 const hireRole = document.getElementById('hire-role') as HTMLSelectElement;
 const hireProject = document.getElementById('hire-project') as HTMLSelectElement;
 const hireError = document.getElementById('hire-error') as HTMLElement;
@@ -103,7 +103,6 @@ async function loadProjectsIntoHire(): Promise<boolean> {
 
 export async function openHireForm(): Promise<void> {
     clearError(hireError);
-    hireName.value = '';
     const hireable = await loadProjectsIntoHire();
     if (!hireable) {
         // No project to belong to. Guide to add-a-project-first rather than open a
@@ -112,20 +111,21 @@ export async function openHireForm(): Promise<void> {
         showError(projectError, copy.hireNeedsProject);
         return;
     }
-    openSheet(hireSheet, hireName);
+    // The role select is the first field now that the name is gone.
+    openSheet(hireSheet, hireRole);
 }
 
 async function submitHire(): Promise<void> {
     clearError(hireError);
-    const name = hireName.value.trim();
     const type = hireRole.value;
     const projectId = hireProject.value;
-    if (name.length === 0 || projectId.length === 0) {
-        showError(hireError, copy.nameLabel);
+    if (type.length === 0 || projectId.length === 0) {
+        showError(hireError, copy.roleLabel);
         return;
     }
     try {
-        await window.stafford.hire.create(name, type, titleForType(type), projectId);
+        // No name is sent: main draws it from the pool and returns the created hire.
+        await window.stafford.hire.create(type, titleForType(type), projectId);
         closeSheet(hireSheet);
         onCreated();
     } catch (err) {
@@ -179,7 +179,7 @@ function localizeLabels(): void {
     set('project-create', copy.create);
     set('project-cancel', copy.cancel);
     set('hire-sheet-title', copy.hireTitle);
-    set('hire-name-label', copy.nameLabel);
+    set('hire-name-note', copy.hireNameNote);
     set('hire-role-label', copy.roleLabel);
     set('hire-project-label', copy.projectLabel);
     set('hire-submit', copy.hire);
