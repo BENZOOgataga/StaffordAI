@@ -6,8 +6,8 @@ time.
 ## Posture
 
 Issues are welcome and genuinely useful, especially platform and environment bugs. Stafford talks to real
-`claude` processes inside a pseudo-terminal, so a bug that only shows up on your OS, your Node version, or your
-Claude Code install is exactly the kind I cannot always reproduce myself. File it.
+`claude` processes headless over the stream-json protocol, so a bug that only shows up on your OS, your Node
+version, or your Claude Code install is exactly the kind I cannot always reproduce myself. File it.
 
 Pull requests are welcome too, but I review them and merge at my discretion, and I do not auto-merge external
 PRs. Because this is a personal project with a direction I hold in my head, a PR may sit for a while, or be
@@ -27,16 +27,14 @@ npm ci
 ```
 
 One thing to know: `.npmrc` sets `ignore-scripts`, so `npm ci` does not run install scripts. That is
-deliberate, it keeps native modules from compiling from source without a toolchain. Two steps the disabled
+deliberate, it keeps native modules from compiling from source without a toolchain. One step the disabled
 postinstall would have done, you run yourself:
 
 ```
-node scripts/fix-node-pty-permissions.cjs
 npm run electron:install
 ```
 
-The first repairs the node-pty spawn-helper on macOS (a no-op on Windows). The second downloads the Electron
-binary, which Electron no longer fetches on install. After that:
+That downloads the Electron binary, which Electron no longer fetches on install. After that:
 
 ```
 npm run dev        # run the app in development

@@ -10,7 +10,7 @@ Read these, in order:
 
 1. This file, top to bottom. It is the pick-up-anywhere doc.
 2. `docs/owed-review.md`, newest top block first. What is built, what is next, what is deferred, what is owed.
-3. `docs/plans/PERMISSION-SYSTEM.md`. The permission model. Phases 1 and 2 are shipped, phase 3 is next.
+3. `docs/plans/PERMISSION-SYSTEM.md`. The permission model. Phases 1, 2, and 3 are all shipped.
 4. `docs/plans/design-spec.md`. The decided layout and visual direction the shipped UI is built to.
 5. `docs/KNOWN-ISSUES.md`. The screenshot and environment leaks to check before anything public, and the
    third-party plugin noise that is not ours.
@@ -33,22 +33,31 @@ The one vanilla surface left is the create-project and hire modals, which still 
 Replacing those with the shadcn Select needs the modals migrated to React first, which is the next UI cleanup and
 is deferred, not lost.
 
-The permission system is live. Phases 1 and 2 are shipped on main. A colleague's tool calls are checked at
+The permission system is live, all three phases shipped on main. A colleague's tool calls are checked at
 `can_use_tool` against project baseline rules plus per-colleague overrides. Allow proceeds, deny is refused
 cleanly, and ask pauses the colleague's turn on a pending approval that I answer in the app, approve or deny,
 with the turn continuing or stopping on my answer. On shutdown every pending ask is denied so nothing hangs.
-The model, the invariant, and the phasing are in `docs/plans/PERMISSION-SYSTEM.md`.
+Phase 3 added the config UI: I edit project baselines and per-colleague overrides inside Stafford, over IPC,
+written to the store, and the generated default profile is shown collapsed and editable on both the project
+screen and each colleague's tab. The default profile denies Stafford's own userData and my real host credential
+directories (`~/.claude`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.docker`, `~/.kube`, `~/.config/gh`, the git
+credential files, and the Azure and gcloud stores), so a colleague cannot read them. The model, the invariant,
+and the phasing are in `docs/plans/PERMISSION-SYSTEM.md`.
+
+The tasks feature is shipped too, phases 1 and 2 on main. I assign a task to a colleague, it runs bounded (a
+turn cap and a stall detector, either landing the task in needs-you rather than auto-failing), its work lands on
+its own `stafford/task/<hire>/<task-id>` branch, and it reaches done only when it emits the completion sentinel
+and I approve the review. Send-back resumes the same session with a note. A read-only board answers "what needs
+me" across colleagues. This was the feature the whole permission arc was the foundation for.
 
 ## What is next
 
 In order, roughly:
 
-1. Permission phase 3, the config UI. Let me edit project baselines and colleague overrides inside Stafford, on
-   theme, over IPC, written to the store and the audit log. Design is in `docs/plans/PERMISSION-SYSTEM.md`. Not
-   yet built.
-2. The tasks feature, colleague task dispatch. This is the feature the whole permission arc was the foundation
-   for. It comes after permissions are complete enough to trust a colleague acting on a task.
-3. The create and hire modals to React, then the native `<select>` swapped for the shadcn Select.
+1. The create and hire modals to React, then the native `<select>` swapped for the shadcn Select. This is the
+   one vanilla surface left, described above.
+2. Whatever the next product step is after tasks. The permission and tasks arcs that filled this list are done,
+   so the next feature is an open choice rather than a queued one.
 
 ## What is owed, verification I have not done
 
@@ -60,6 +69,20 @@ this on a packaged build before trusting the ask path against real risk. It is r
 
 macOS still owes a real-run verification of the headless runner path when it is picked up. The old pty-path
 blockers are moot because that path is deleted, but the runner has never run on a real Mac spawn.
+
+## Parked and cosmetic
+
+Small things I know about and have chosen not to fix yet. None blocks anything.
+
+- The tray icon is blank on both platforms. The tray is built from an empty image, so its tooltip and context
+  menu work but there is no glyph. Genuinely parked, cosmetic only.
+- The macOS z-order click-test and the macOS DevTools and menu accelerators both look fixed in code. The dock
+  and activation policy now follows the window rather than pinning the app as a permanent accessory, which was
+  the shared cause. I have not confirmed either on a real Mac, so treat them as fixed-pending-hardware and
+  verify on the next Mac run rather than assuming.
+
+(An earlier revision of this list mentioned a stray Ask badge in a colleague permissions nav rail. That was
+wrong: there is no such nav rail and no stray badge in the code. Removed rather than carried.)
 
 ## Standing workflow rules
 

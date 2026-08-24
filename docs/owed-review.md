@@ -3,9 +3,36 @@
 A single accounting of everything parked, taken from the plan and the tree rather than memory, so the
 next build is chosen against the whole board. Read-only: this decides nothing and builds nothing.
 
-## Update, 2026-08-21, UI overhaul done, permissions phases 1 and 2 shipped
+## Update, 2026-08-24, permission phase 3 and the tasks feature both shipped
 
 Read this block first. It is the newest.
+
+Two arcs landed since the block below, and the "what is next" list under it is now history.
+
+Permission phase 3 is shipped: the config UI to edit rules inside Stafford, over IPC, written to the store. The
+generated default profile is shown collapsed and editable on both the project screen and each colleague's tab,
+with a this-agent versus all-colleagues scope choice on the colleague view and a confirm before loosening any
+deny on a secret path. A 2026-08-24 audit then found the enforcement gate protected only Stafford's userData
+while the config screen displayed a wider set as protected, so a colleague could still read `~/.claude`,
+`~/.ssh`, and the rest. That is fixed: the gate now enforces the same shared `protectedConfigPaths` set the
+display reads from, extended to cover the git credential files and the Azure and gcloud stores as well.
+
+The tasks feature is shipped, phases 1 and 2. I assign a task to a colleague, it runs bounded by a turn cap and
+a stall detector that land it in needs-you rather than auto-failing, its work lands on its own
+`stafford/task/<hire>/<task-id>` branch, and it reaches done only through the completion sentinel plus my review
+approval. Send-back resumes the same session with a note. A read-only board answers "what needs me" across
+colleagues. This was the feature the permission arc was the foundation for.
+
+What is next: the create and hire modals to React, then the native `<select>` swapped for the shadcn Select,
+which is the one vanilla surface left. Beyond that the next feature is an open choice, since the permission and
+tasks arcs that filled the older lists are done.
+
+The owed verifications below still stand: the in-app ASK click-through on a real destructive command on a
+packaged build, and a real-run of the headless runner on a Mac spawn.
+
+## Update, 2026-08-21, UI overhaul done, permissions phases 1 and 2 shipped
+
+Read this block after the one above; the block above is newer.
 
 Two arcs landed since the block below. The UI overhaul is complete and the app is de-webified: three React
 islands in a shared shell, hidden menu bar with accelerators kept, a custom frameless title bar on Windows with
