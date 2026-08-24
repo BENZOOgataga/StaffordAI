@@ -42,6 +42,7 @@ import { hireStoreOver, type HireStore } from './storage/hire-store.ts';
 import { assembleRoster } from './roster/snapshot.ts';
 import { ClaudeRunnerManager } from './agents/runner-manager.ts';
 import { makePermissionGate, type PermissionGate } from './agents/permission-gate.ts';
+import { protectedConfigPaths } from './agents/protected-config-paths.ts';
 import { effectivePolicy, ruleKey, widensProtectedAccess } from '../domain/effective-policy.ts';
 import { defaultBaselineRules, defaultCategoryDefaults } from '../domain/permission-profile.ts';
 import type { PermissionRule, PermissionAction, PermissionEffect } from '../domain/permissions.ts';
@@ -436,31 +437,13 @@ function notifyPermissionsChanged(): void {
 // the database file directly with a tool, is denied by the gate because userData is a
 // protected path. So "only I set permissions" is a property of the wiring, not a convention.
 
-/** The paths a colleague must never reach, and the ones an edit gets warned about. */
-function protectedConfigPaths(): string[] {
-    const home = os.homedir();
-    return [
-        // Stafford's own store: the permission rules, the database, and the managed
-        // credential. This is the invariant that a colleague never reaches its own policy.
-        app.getPath('userData'),
-
-        // My real credential directories, which were not covered and should have been.
-        // Read defaults to allow, so until now a colleague could read the actual Claude
-        // credential at ~/.claude/.credentials.json on Windows and Linux, which is the very
-        // token the managed config goes to such lengths to isolate. Isolating a session
-        // from my config while leaving my config readable was a gap, not a design.
-        //
-        // The rest are here for the same reason rather than out of thoroughness: each is a
-        // directory whose entire contents are credentials, so denying it costs a colleague
-        // nothing it needed for the work.
-        path.join(home, '.claude'),
-        path.join(home, '.ssh'),
-        path.join(home, '.aws'),
-        path.join(home, '.gnupg'),
-        path.join(home, '.docker'),
-        path.join(home, '.kube'),
-        path.join(home, '.config', 'gh')
-    ];
+/**
+ * The paths a colleague must never reach, and the ones an edit gets warned about. Bound to the
+ * host home and Stafford's userData here; the set itself lives in one shared module so the gate,
+ * the display, and the warnings cannot drift apart on what is protected.
+ */
+function hostProtectedPaths(): string[] {
+    return protectedConfigPaths(os.homedir(), app.getPath('userData'));
 }
 
 function ruleToView(r: PermissionRuleRecord): PermissionRuleView {
@@ -497,7 +480,7 @@ function effectivePolicyFor(projectId: string, hireId: string | null): Permissio
     const profile = defaultBaselineRules({
         repoRoot,
         writePaths: project?.policy.writePaths ?? null,
-        protectedPaths: protectedConfigPaths()
+        protectedPaths: hostProtectedPaths()
     });
     const profileKeys = new Set(profile.map(ruleKey));
     const toRule = (r: PermissionRuleRecord): PermissionRule => ({
@@ -526,7 +509,7 @@ function effectivePolicyFor(projectId: string, hireId: string | null): Permissio
  * careless click. Returning it rather than throwing keeps the decision his.
  */
 function widenWarning(rule: { action: PermissionAction; pathScope: string | null; effect: PermissionEffect }): string | null {
-    if (!widensProtectedAccess(rule, protectedConfigPaths())) return null;
+    if (!widensProtectedAccess(rule, hostProtectedPaths())) return null;
     return 'This rule widens access toward Stafford\'s own configuration directory, which holds the ' +
         'permission rules, the database and the managed credential. A colleague that can read it can ' +
         'read its own policy; one that can write it can change what it is allowed to do.';
@@ -575,7 +558,7 @@ function removePermissionRule(id: string): PermissionWriteReply {
     // Removing a rule that was DENYING a protected path is the dangerous direction, which is
     // the mirror of the add case: the warning fires on what the removal leaves behind.
     const warning = ok && existing.effect === 'deny' && widensProtectedAccess(
-        { action: existing.action, pathScope: existing.pathScope, effect: 'allow' }, protectedConfigPaths()
+        { action: existing.action, pathScope: existing.pathScope, effect: 'allow' }, hostProtectedPaths()
     )
         ? 'That rule was denying access to Stafford\'s own configuration directory. Removing it ' +
           'leaves the protection to the default profile alone.'
@@ -761,13 +744,16 @@ function buildDelivery(store: HireStore): void {
 
     // The permission gate: every tool call a colleague makes is resolved against the
     // project's rules and the colleague's overrides at can_use_tool, allow or deny in
-    // phase 1 (an ask resolves as deny for now). The protected path is Stafford's own
+    // phase 1 (an ask resolves as deny for now). The protected paths are Stafford's own
     // user-data directory, which holds the permission store, the database, and the managed
-    // credential, so a colleague can never read or write its own permission config.
+    // credential, plus Benzoo's real credential directories (~/.ssh, ~/.aws, ~/.claude and
+    // the rest). The gate now enforces the same set the config display and the edit warnings
+    // show; when it enforced only userData, a colleague could still read ~/.claude/.credentials.json
+    // while the UI claimed it was protected.
     permissionGate = makePermissionGate({
         getPolicy: (projectId) => repositories?.projects.get(projectId)?.policy ?? null,
         getStoredRules: (projectId) => repositories?.permissionRules.forProject(projectId) ?? [],
-        protectedPaths: [app.getPath('userData')],
+        protectedPaths: hostProtectedPaths(),
         // This platform's case rule for path comparison. Without it the deny rules above
         // are case sensitive while macOS and Windows filesystems are not, so a colleague
         // reaches the protected directory by varying the case of its path.
