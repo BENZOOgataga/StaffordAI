@@ -53,6 +53,31 @@
  * POSIX permission assertions run on any platform the test forces.
  */
 
+/**
+ * The claudeMdExcludes globs that blank a colleague's user-scope memory: Benzoo's personal
+ * `~/.claude/CLAUDE.md` and everything under `~/.claude/rules/`.
+ *
+ * Forward slashes only, even on Windows: claudeMdExcludes matches with glob syntax, where a
+ * backslash is an escape, so a native Windows path silently matches nothing. The rules pattern
+ * is `.../rules/**` so it excludes the files inside the directory, not just the directory entry.
+ * Derived from the real home at seed time, so the absolute paths are correct on this machine.
+ *
+ * Project memory is deliberately not touched: only the user home paths are excluded, so the
+ * repo's own CLAUDE.md still loads.
+ */
+export function userMemoryExcludes(realHome: string): string[] {
+    const home = realHome.replace(/\\/g, '/').replace(/\/+$/, '');
+    return [home + '/.claude/CLAUDE.md', home + '/.claude/rules/**'];
+}
+
+/** Merges the user-memory excludes into the settings written to the managed dir, keeping any existing ones. */
+export function withUserMemoryExcludes(
+    settings: Record<string, unknown>, realHome: string
+): Record<string, unknown> {
+    const existing = Array.isArray(settings.claudeMdExcludes) ? (settings.claudeMdExcludes as unknown[]) : [];
+    return { ...settings, claudeMdExcludes: [...existing, ...userMemoryExcludes(realHome)] };
+}
+
 /** The one directory mode: owner-only (rwx------). */
 export const MANAGED_DIR_MODE = 0o700;
 /** The one file mode for anything carrying a secret: owner read/write only. */
@@ -207,7 +232,15 @@ export function seedManagedConfig(deps: SeedManagedConfigDeps, cwd: string): See
     // 4. Settings: no plugins, no marketplaces, no bypass, and Stafford's own hooks
     //    scoped to this managed dir so only a colleague session reads them. The user's
     //    plugin settings never reach here. Defaults to an empty object.
-    fs.writeText(fs.join(managedDir, 'settings.json'), JSON.stringify(deps.settings ?? {}), MANAGED_FILE_MODE);
+    //
+    //    Plus claudeMdExcludes, which blanks the user-scope memory. Claude Code loads the
+    //    user CLAUDE.md from the real home regardless of CLAUDE_CONFIG_DIR, so a colleague
+    //    would otherwise inherit Benzoo's personal `~/.claude/CLAUDE.md` (and rules), which
+    //    tell it to load a skill it cannot reach. Excluding the whole user memory here means
+    //    a colleague starts with a blank user slate; project memory (the repo's own CLAUDE.md)
+    //    is untouched and still loads.
+    const settings = withUserMemoryExcludes(deps.settings ?? {}, realHome);
+    fs.writeText(fs.join(managedDir, 'settings.json'), JSON.stringify(settings), MANAGED_FILE_MODE);
 
     return {
         credentialCopied,
