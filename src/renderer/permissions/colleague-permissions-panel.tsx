@@ -103,7 +103,7 @@ export function ColleaguePermissionsPanel({ lang, projectId, hireId }: {
                         lang={lang}
                         rules={generated}
                         projectId={projectId}
-                        hireId={hireId}
+                        colleagueHireId={hireId}
                         stored={storedForEdit}
                     />
                 ) : null}

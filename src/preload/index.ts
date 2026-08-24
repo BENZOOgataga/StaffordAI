@@ -161,8 +161,8 @@ const api = Object.freeze({
         /** A project's stored rules, split into the baseline and the colleague overrides. */
         rules: (projectId: string): Promise<PermissionRulesReply> =>
             invoke('permissions:rules', { projectId }) as Promise<PermissionRulesReply>,
-        /** One colleague's resolved policy, each row tagged with where it came from. */
-        effective: (projectId: string, hireId: string): Promise<PermissionEffectiveReply> =>
+        /** A resolved policy, each row tagged with where it came from. null hireId is the project level. */
+        effective: (projectId: string, hireId: string | null): Promise<PermissionEffectiveReply> =>
             invoke('permissions:effective', { projectId, hireId }) as Promise<PermissionEffectiveReply>,
         /** hireId null adds a project baseline rule; a hire id adds that colleague's override. */
         add: (payload: PermissionAdd): Promise<PermissionWriteReply> =>

@@ -31,13 +31,23 @@ function keyOf(rule: EffectiveRuleView): string {
     return rule.action + ' ' + (rule.pathScope ?? '') + ' ' + (rule.commandPattern ?? '');
 }
 
-export function DefaultProfileSection({ lang, rules, projectId, hireId, stored }: {
+export function DefaultProfileSection({ lang, rules, projectId, colleagueHireId, stored, allowScopeChoice = true }: {
     lang: UiLang;
     rules: readonly EffectiveRuleView[];
     projectId: string;
-    hireId: string;
-    /** This project's stored baseline rules plus this colleague's overrides, for add-versus-update. */
+    /**
+     * The colleague this section edits for, or null on the project screen. An agent-scope edit
+     * writes to this id; every other case writes the baseline.
+     */
+    colleagueHireId: string | null;
+    /** This project's stored baseline rules plus, on the colleague view, that colleague's overrides. */
     stored: readonly PermissionRuleView[];
+    /**
+     * Whether to offer the this-agent / all-colleagues choice. True on a colleague's tab, where both
+     * levels exist. False on the project screen, which is already the global level, so an edit there
+     * always writes the baseline (hire id null) and there is no choice to make.
+     */
+    allowScopeChoice?: boolean;
 }): React.JSX.Element {
     const copy = defaultProfileCopy(lang, rules.length);
     const [open, setOpen] = React.useState(false);
@@ -65,7 +75,8 @@ export function DefaultProfileSection({ lang, rules, projectId, hireId, stored }
         setBusy(true);
         setFailure(null);
         try {
-            const target = targetHireId(scope, hireId);
+            // On the project screen there is no scope choice: an edit always writes the baseline.
+            const target = allowScopeChoice && colleagueHireId ? targetHireId(scope, colleagueHireId) : null;
             const existingId = findStoredRuleId(stored, {
                 action: rule.action, pathScope: rule.pathScope, hireId: target
             });
@@ -169,27 +180,29 @@ export function DefaultProfileSection({ lang, rules, projectId, hireId, stored }
                                                     </select>
                                                 </label>
 
-                                                <div className="flex flex-col gap-1 text-sm">
-                                                    <span className="text-muted-foreground">{copy.scopeLabel}</span>
-                                                    <div className="flex gap-2">
-                                                        <Button
-                                                            type="button" size="sm"
-                                                            variant={scope === 'agent' ? 'default' : 'secondary'}
-                                                            aria-pressed={scope === 'agent'}
-                                                            onClick={() => { setConfirming(false); setScope('agent'); }}
-                                                        >
-                                                            {copy.scopeAgent}
-                                                        </Button>
-                                                        <Button
-                                                            type="button" size="sm"
-                                                            variant={scope === 'all' ? 'default' : 'secondary'}
-                                                            aria-pressed={scope === 'all'}
-                                                            onClick={() => { setConfirming(false); setScope('all'); }}
-                                                        >
-                                                            {copy.scopeAll}
-                                                        </Button>
+                                                {allowScopeChoice ? (
+                                                    <div className="flex flex-col gap-1 text-sm">
+                                                        <span className="text-muted-foreground">{copy.scopeLabel}</span>
+                                                        <div className="flex gap-2">
+                                                            <Button
+                                                                type="button" size="sm"
+                                                                variant={scope === 'agent' ? 'default' : 'secondary'}
+                                                                aria-pressed={scope === 'agent'}
+                                                                onClick={() => { setConfirming(false); setScope('agent'); }}
+                                                            >
+                                                                {copy.scopeAgent}
+                                                            </Button>
+                                                            <Button
+                                                                type="button" size="sm"
+                                                                variant={scope === 'all' ? 'default' : 'secondary'}
+                                                                aria-pressed={scope === 'all'}
+                                                                onClick={() => { setConfirming(false); setScope('all'); }}
+                                                            >
+                                                                {copy.scopeAll}
+                                                            </Button>
+                                                        </div>
                                                     </div>
-                                                </div>
+                                                ) : null}
                                             </div>
 
                                             {confirming ? (

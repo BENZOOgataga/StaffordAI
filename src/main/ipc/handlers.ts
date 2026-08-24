@@ -63,7 +63,7 @@ export interface HandlerDeps {
     /** A project's stored rules, split into baseline and colleague overrides. */
     readonly permissionRules: (projectId: string) => PermissionRulesReply;
     /** A colleague's resolved policy on a project, each row tagged with where it came from. */
-    readonly effectivePolicy: (projectId: string, hireId: string) => PermissionEffectiveReply;
+    readonly effectivePolicy: (projectId: string, hireId: string | null) => PermissionEffectiveReply;
     /**
      * The three writes. They return a reply rather than throwing on a widening edit, because
      * a warning is advisory: it is Benzoo protecting himself from a careless click, not a

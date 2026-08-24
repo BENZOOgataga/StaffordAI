@@ -61,7 +61,9 @@ export function useEffectivePolicy(projectId: string | null, hireId: string | nu
     const [state, setState] = useState<EffectiveState>({ rules: [], loaded: false, error: null });
 
     const read = useCallback((): void => {
-        if (!projectId || !hireId) { setState({ rules: [], loaded: true, error: null }); return; }
+        // A null hireId is valid: it reads the project-level policy (default profile plus baseline).
+        // Only a missing project has nothing to resolve.
+        if (!projectId) { setState({ rules: [], loaded: true, error: null }); return; }
         void (async () => {
             try {
                 const reply = await window.stafford.permissions.effective(projectId, hireId) as PermissionEffectiveReply;
