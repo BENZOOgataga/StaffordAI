@@ -71,11 +71,11 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
                     <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)} className="flex min-h-0 flex-1 flex-col gap-0">
                         <div className="px-4 pt-3 pb-1">
                             <TabsList className="w-full">
-                                <TabsTrigger value="conversation">{tabLabels(lang).conversation}</TabsTrigger>
-                                <TabsTrigger value="tasks">{tabLabels(lang).tasks}</TabsTrigger>
-                                <TabsTrigger value="activity">{tabLabels(lang).activity}</TabsTrigger>
-                                <TabsTrigger value="transcript">{tabLabels(lang).transcript}</TabsTrigger>
-                                <TabsTrigger value="permissions">{tabLabels(lang).permissions}</TabsTrigger>
+                                <TabsTrigger value="conversation" data-tab="conversation">{tabLabels(lang).conversation}</TabsTrigger>
+                                <TabsTrigger value="tasks" data-tab="tasks">{tabLabels(lang).tasks}</TabsTrigger>
+                                <TabsTrigger value="activity" data-tab="activity">{tabLabels(lang).activity}</TabsTrigger>
+                                <TabsTrigger value="transcript" data-tab="transcript">{tabLabels(lang).transcript}</TabsTrigger>
+                                <TabsTrigger value="permissions" data-tab="permissions">{tabLabels(lang).permissions}</TabsTrigger>
                             </TabsList>
                         </div>
 

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { RulesPanel } from './rules-panel.tsx';
 import { EffectiveRuleRow } from './rule-row.tsx';
+import { DefaultProfileSection } from './default-profile-section.tsx';
 import { useProjectRules, useEffectivePolicy } from './use-permissions.ts';
 import type { UiLang } from './rule-labels.ts';
 import type { PermissionRuleView } from '../../shared/ipc.ts';
@@ -26,13 +27,29 @@ export function ColleaguePermissionsPanel({ lang, projectId, hireId }: {
     hireId: string | null;
 }): React.JSX.Element {
     const effective = useEffectivePolicy(projectId, hireId);
-    const { overrides, loaded, error } = useProjectRules(projectId);
+    const { baseline, overrides, loaded, error } = useProjectRules(projectId);
 
     // Only this colleague's own overrides are editable here. The reply carries every
     // colleague's, since it is a project read.
     const mine: readonly PermissionRuleView[] = React.useMemo(
         () => overrides.filter((r) => r.hireId === hireId),
         [overrides, hireId]
+    );
+
+    // The default profile is split out of the effective list into its own collapsed section, so the
+    // rules I authored are not buried under a dozen built-in denies. Editing a default row writes a
+    // baseline or an override through this project's baseline and this colleague's overrides.
+    const authored = React.useMemo(
+        () => effective.rules.filter((r) => r.source !== 'default-profile'),
+        [effective.rules]
+    );
+    const generated = React.useMemo(
+        () => effective.rules.filter((r) => r.source === 'default-profile'),
+        [effective.rules]
+    );
+    const storedForEdit: readonly PermissionRuleView[] = React.useMemo(
+        () => [...baseline, ...mine],
+        [baseline, mine]
     );
 
     if (!projectId || !hireId) {
@@ -70,10 +87,26 @@ export function ColleaguePermissionsPanel({ lang, projectId, hireId }: {
                         <li className="text-muted-foreground px-4 py-6 text-center text-sm">
                             {lang === 'fr' ? 'Aucune règle ne s’applique.' : 'No rules apply.'}
                         </li>
-                    ) : effective.rules.map((rule, i) => (
+                    ) : authored.length === 0 ? (
+                        <li className="text-muted-foreground px-4 py-6 text-center text-sm">
+                            {lang === 'fr'
+                                ? 'Seul le profil par défaut s’applique, voir ci-dessous.'
+                                : 'Only the default profile applies, see below.'}
+                        </li>
+                    ) : authored.map((rule, i) => (
                         <EffectiveRuleRow key={rule.action + (rule.pathScope ?? rule.commandPattern ?? '') + String(i)} lang={lang} rule={rule} />
                     ))}
                 </ul>
+
+                {effective.loaded && !effective.error && generated.length > 0 ? (
+                    <DefaultProfileSection
+                        lang={lang}
+                        rules={generated}
+                        projectId={projectId}
+                        hireId={hireId}
+                        stored={storedForEdit}
+                    />
+                ) : null}
             </section>
 
             <RulesPanel

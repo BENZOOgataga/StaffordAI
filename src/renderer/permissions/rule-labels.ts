@@ -75,3 +75,42 @@ export function attributionNote(lang: UiLang, rule: EffectiveRuleView): string |
 export function isReadOnly(rule: EffectiveRuleView): boolean {
     return rule.source === 'default-profile';
 }
+
+/**
+ * The copy for the collapsed default-profile section and its inline edit.
+ *
+ * Kept here with the rest of the rule wording so the two languages stay side by side and a longer
+ * French label is caught by the same reading, not by a browser. The count is folded into the title
+ * because the whole reason the section is collapsed is that it is long, so the number is the first
+ * thing that has to read.
+ */
+export function defaultProfileCopy(lang: UiLang, count: number): {
+    title: string; hint: string; expand: string; collapse: string;
+    scopeLabel: string; scopeAgent: string; scopeAll: string;
+    save: string; cancel: string; apply: string; keep: string;
+    lockedNote: string; confirmLoosen: string;
+} {
+    const fr = lang === 'fr';
+    const rules = fr
+        ? (count === 1 ? '1 règle' : count + ' règles')
+        : (count === 1 ? '1 rule' : count + ' rules');
+    return {
+        title: (fr ? 'Profil par défaut, ' : 'Default profile, ') + rules,
+        hint: fr
+            ? 'Les protections intégrées de Stafford. Repliées car vous les changez rarement. Dépliez pour en modifier une.'
+            : 'Stafford’s built-in protections. Collapsed because you rarely change them. Expand to edit one.',
+        expand: fr ? 'Déplier' : 'Expand',
+        collapse: fr ? 'Replier' : 'Collapse',
+        scopeLabel: fr ? 'Portée' : 'Scope',
+        scopeAgent: fr ? 'Ce collègue uniquement' : 'This agent only',
+        scopeAll: fr ? 'Tous les collègues' : 'All colleagues',
+        save: fr ? 'Enregistrer' : 'Save',
+        cancel: fr ? 'Annuler' : 'Cancel',
+        apply: fr ? 'Appliquer quand même' : 'Apply anyway',
+        keep: fr ? 'Garder la protection' : 'Keep the protection',
+        lockedNote: fr ? 'Défini par le profil par défaut' : 'Set by the default profile',
+        confirmLoosen: fr
+            ? 'Cela retire une protection sur un fichier sensible. Appliquer quand même ?'
+            : 'This removes a protection on a secret file. Apply anyway?'
+    };
+}
