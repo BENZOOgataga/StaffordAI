@@ -190,12 +190,25 @@ contextBridge.exposeInMainWorld('stafford', {
         }),
         effective: async () => ({
             rules: [
+                // Authored rows: the ones that stay visible in the effective list.
                 { action: 'read', pathScope: '/proj/src/secrets', commandPattern: null, effect: 'deny', source: 'baseline', overridesBaseline: false, replacedEffect: null },
                 { action: 'write', pathScope: '/proj/src', commandPattern: null, effect: 'deny', source: 'override', overridesBaseline: true, replacedEffect: 'allow' },
                 { action: 'write', pathScope: '/proj/docs', commandPattern: null, effect: 'allow', source: 'override', overridesBaseline: false, replacedEffect: null },
+                { action: 'fetch', pathScope: null, commandPattern: null, effect: 'ask', source: 'baseline', overridesBaseline: false, replacedEffect: null },
+                // The generated default profile: collapsed into its own section. The protected-dir
+                // denies, the secret-file family, and a read-only destructive-command ask.
+                { action: 'read', pathScope: '/userdata', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
                 { action: 'write', pathScope: '/userdata', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
-                { action: 'shell', pathScope: null, commandPattern: 'git\\s+push\\s+--force', effect: 'ask', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
-                { action: 'fetch', pathScope: null, commandPattern: null, effect: 'ask', source: 'baseline', overridesBaseline: false, replacedEffect: null }
+                { action: 'read', pathScope: '/proj/**/.env', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'read', pathScope: '/proj/**/.env.*', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'read', pathScope: '/proj/**/*.pem', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'read', pathScope: '/proj/**/*.key', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'read', pathScope: '/proj/**/id_rsa', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'read', pathScope: '/proj/**/credentials.json', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'write', pathScope: '/proj/**/.env', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'write', pathScope: '/proj/**/*.pem', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'write', pathScope: '/proj/**/*.key', commandPattern: null, effect: 'deny', source: 'default-profile', overridesBaseline: false, replacedEffect: null },
+                { action: 'shell', pathScope: null, commandPattern: 'git\\s+push\\s+--force', effect: 'ask', source: 'default-profile', overridesBaseline: false, replacedEffect: null }
             ]
         }),
         add: async () => ({ ok: true, warning: null }),
