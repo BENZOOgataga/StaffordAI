@@ -2,6 +2,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import '../styles/dashboard.css';
 import { BoardScreen } from './board-screen.tsx';
 import { rosterStore } from '../roster/roster-store.ts';
+import { openHireForm } from '../create-forms.ts';
 import type { Lang } from '../channel-view.ts';
 
 let root: Root | null = null;
@@ -26,6 +27,7 @@ export function mountBoard(host: HTMLElement, lang: Lang, onNavigate: (view: str
                 rosterStore.selectFor(hireId, 'tasks');
                 onNavigate('roster');
             }}
+            onHire={() => { void openHireForm(); }}
         />
     );
 }

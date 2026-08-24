@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { ClipboardList, ShieldAlert, GitBranch, ChevronRight } from 'lucide-react';
+import { ClipboardList, ShieldAlert, GitBranch, ChevronRight, Users } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { StatusDot } from '@/components/ui/status-dot';
 import { useBoard } from './use-board.ts';
 import {
     boardCopy, buildBoard, waitingCounts, cardTitle, cardNote,
-    type BoardCard, type BoardColumn, type ColumnId
+    type BoardCard, type BoardColumn, type BoardCopy, type ColumnId
 } from './board-model.ts';
 import type { Lang } from '../channel-view.ts';
 
@@ -24,17 +25,28 @@ import type { Lang } from '../channel-view.ts';
  * rule the whole feature rests on is that a task reaches done exactly one way, through a
  * review I actually did.
  */
-export function BoardScreen({ lang, current, onNavigate, onOpenTask }: {
+export function BoardScreen({ lang, current, onNavigate, onOpenTask, onHire }: {
     lang: Lang;
     current: string;
     onNavigate: (view: string) => void;
     /** Takes me to the colleague whose task this is, where the review surface lives. */
     onOpenTask: (hireId: string) => void;
+    /** Opens the hire flow, for the empty board with no colleagues. */
+    onHire: () => void;
 }): React.JSX.Element {
     const { rows, names, awaiting, closedTruncated, loaded, error } = useBoard();
     const copy = boardCopy(lang);
     const columns = buildBoard({ rows, names, awaiting, closedTruncated, copy });
     const waiting = waitingCounts(rows, awaiting);
+
+    // Three empty shapes, told apart so the board points at the real next action instead of
+    // repeating a generic label per column. Gated on `loaded` so nothing flashes before the
+    // first read lands. A missing column is never dropped in the populated case (an empty
+    // "waiting for you" is itself the answer), so the whole-board empty state only replaces
+    // the columns when there is genuinely nothing to arrange.
+    const noColleagues = loaded && names.size === 0;
+    const noTasks = loaded && names.size > 0 && rows.length === 0;
+    const firstColleagueId = names.size > 0 ? [...names.keys()][0] ?? null : null;
 
     return (
         <AppShell current={current} onNavigate={onNavigate}>
@@ -58,24 +70,63 @@ export function BoardScreen({ lang, current, onNavigate, onOpenTask }: {
                 {error ? <p className="text-status-error/90 px-5 py-3 text-sm">{error}</p> : null}
 
                 <div className="min-h-0 flex-1 overflow-auto p-3">
-                    {/* Columns wrap rather than scrolling sideways, because a column pushed off
-                        a narrow window is a waiting task I cannot see, which is the one thing
-                        this screen must never do. The translated labels are longer, so a layout
-                        that only just fits in English is already broken in French. */}
-                    <div className="flex flex-wrap items-start gap-3">
-                        {columns.map((column) => (
-                            <BoardColumnView
-                                key={column.id}
-                                column={column}
-                                emptyLabel={copy.empty}
-                                onOpenTask={onOpenTask}
-                                loaded={loaded}
-                            />
-                        ))}
-                    </div>
+                    {noColleagues || noTasks ? (
+                        <BoardEmptyState
+                            copy={copy}
+                            kind={noColleagues ? 'no-colleagues' : 'no-tasks'}
+                            onHire={onHire}
+                            onAssign={() => { if (firstColleagueId) onOpenTask(firstColleagueId); }}
+                        />
+                    ) : (
+                        /* Columns wrap rather than scrolling sideways, because a column pushed off
+                           a narrow window is a waiting task I cannot see, which is the one thing
+                           this screen must never do. The translated labels are longer, so a layout
+                           that only just fits in English is already broken in French. */
+                        <div className="flex flex-wrap items-start gap-3">
+                            {columns.map((column) => (
+                                <BoardColumnView
+                                    key={column.id}
+                                    column={column}
+                                    emptyLabel={copy.empty}
+                                    onOpenTask={onOpenTask}
+                                    loaded={loaded}
+                                />
+                            ))}
+                        </div>
+                    )}
                 </div>
             </section>
         </AppShell>
+    );
+}
+
+/**
+ * The whole-board empty state, shown instead of five empty columns. It tells the two empty
+ * shapes apart and points each at its real next action: hire a colleague when there are none,
+ * or assign a task when there are colleagues but no tasks. The action is a real button, not
+ * just text, wired to the same flows the roster and the detail Tasks tab already use.
+ */
+function BoardEmptyState({ copy, kind, onHire, onAssign }: {
+    copy: BoardCopy;
+    kind: 'no-colleagues' | 'no-tasks';
+    onHire: () => void;
+    onAssign: () => void;
+}): React.JSX.Element {
+    const noColleagues = kind === 'no-colleagues';
+    const Icon = noColleagues ? Users : ClipboardList;
+    return (
+        <div className="flex min-h-full items-center justify-center p-6">
+            <Card className="max-w-md items-center gap-3 p-8 text-center">
+                <span className="bg-muted text-muted-foreground flex size-10 items-center justify-center rounded-full">
+                    <Icon className="size-5" aria-hidden="true" />
+                </span>
+                <p className="text-base font-medium">{noColleagues ? copy.noColleaguesTitle : copy.noTasksTitle}</p>
+                <p className="text-muted-foreground text-sm">{noColleagues ? copy.noColleaguesBody : copy.noTasksBody}</p>
+                <Button size="sm" className="mt-1" onClick={noColleagues ? onHire : onAssign}>
+                    {noColleagues ? copy.hireAction : copy.assignAction}
+                </Button>
+            </Card>
+        </div>
     );
 }
 
@@ -105,7 +156,7 @@ function BoardColumnView({ column, emptyLabel, onOpenTask, loaded }: {
                     <TaskCardView key={card.task.id} card={card} onOpenTask={onOpenTask} />
                 ))}
                 {loaded && column.cards.length === 0 ? (
-                    <p className="text-muted-foreground px-1 py-2 text-xs">{emptyLabel}</p>
+                    <p className="text-muted-foreground/60 px-1 py-2 text-xs">{emptyLabel}</p>
                 ) : null}
                 {column.truncatedNote ? (
                     <p className="text-muted-foreground px-1 text-xs">{column.truncatedNote}</p>

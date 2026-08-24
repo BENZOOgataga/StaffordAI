@@ -45,11 +45,20 @@ export interface BoardCopy {
     readonly assigned: string;
     readonly done: string;
     readonly failed: string;
+    /** The quiet per-column indicator for a single empty column in a populated board. */
     readonly empty: string;
     readonly nothingWaiting: string;
     readonly older: string;
     readonly title: string;
     readonly subtitle: string;
+    /** The whole-board empty state when the project has no colleagues at all. */
+    readonly noColleaguesTitle: string;
+    readonly noColleaguesBody: string;
+    readonly hireAction: string;
+    /** The whole-board empty state when there are colleagues but no tasks yet. */
+    readonly noTasksTitle: string;
+    readonly noTasksBody: string;
+    readonly assignAction: string;
     /**
      * The headline. It breaks the two kinds of waiting apart rather than adding them, because
      * a single total sat above a "Waiting for you" column holding fewer cards reads as a
@@ -62,9 +71,15 @@ export interface BoardCopy {
 const EN: BoardCopy = {
     needsYou: 'Waiting for you', working: 'Working', assigned: 'Assigned',
     done: 'Approved', failed: 'Failed',
-    empty: 'Nothing here', nothingWaiting: 'Nothing is waiting on you.',
+    empty: 'None', nothingWaiting: 'Nothing is waiting on you.',
     older: 'Older ones are not shown',
     title: 'Tasks', subtitle: 'Every colleague, by state.',
+    noColleaguesTitle: 'No colleagues yet',
+    noColleaguesBody: 'Hire a colleague, then you can give them tasks and track them here by state.',
+    hireAction: 'Hire a colleague',
+    noTasksTitle: 'No tasks yet',
+    noTasksBody: 'Assign a task to a colleague and it shows up here, arranged by state.',
+    assignAction: 'Assign a task',
     waitingSummary: (review, paused) => {
         const parts: string[] = [];
         if (review > 0) parts.push(review === 1 ? '1 waiting for review' : String(review) + ' waiting for review');
@@ -76,9 +91,15 @@ const EN: BoardCopy = {
 const FR: BoardCopy = {
     needsYou: 'En attente de vous', working: 'En cours', assigned: 'Assignées',
     done: 'Approuvées', failed: 'Échouées',
-    empty: 'Rien ici', nothingWaiting: 'Rien ne vous attend.',
+    empty: 'Aucune', nothingWaiting: 'Rien ne vous attend.',
     older: 'Les plus anciennes ne sont pas affichées',
     title: 'Tâches', subtitle: 'Tous les collègues, par état.',
+    noColleaguesTitle: "Aucun collègue pour l'instant",
+    noColleaguesBody: 'Recrutez un collègue, puis confiez-lui des tâches à suivre ici par état.',
+    hireAction: 'Recruter un collègue',
+    noTasksTitle: "Aucune tâche pour l'instant",
+    noTasksBody: 'Assignez une tâche à un collègue et elle apparaît ici, classée par état.',
+    assignAction: 'Assigner une tâche',
     waitingSummary: (review, paused) => {
         const parts: string[] = [];
         if (review > 0) parts.push(review === 1 ? '1 en attente de revue' : String(review) + ' en attente de revue');
