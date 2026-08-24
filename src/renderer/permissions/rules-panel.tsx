@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, TriangleAlert } from 'lucide-react';
+import { Plus, TriangleAlert, Undo2 } from 'lucide-react';
 import { RuleEditor, EMPTY_DRAFT, type RuleDraft } from './rule-editor.tsx';
 import { EditableRuleRow } from './rule-row.tsx';
 import { permissionWrites } from './use-permissions.ts';
@@ -37,8 +37,21 @@ export function RulesPanel({ lang, title, hint, rules, projectId, hireId, loaded
     const [busy, setBusy] = React.useState(false);
     const [warning, setWarning] = React.useState<string | null>(null);
     const [failure, setFailure] = React.useState<string | null>(null);
+    // The last removed rule, kept so removal can be undone. Removal is immediate (no confirm),
+    // and this is the recoverable half: an Undo restores the rule rather than a modal blocking
+    // every delete. It matters most on a colleague's deny rules, where a mis-clicked removal
+    // silently widens what that colleague may do.
+    const [removed, setRemoved] = React.useState<PermissionRuleView | null>(null);
 
     const closeEditor = (): void => { setAdding(false); setEditingId(null); setDraft(EMPTY_DRAFT); };
+
+    // The Undo offer is transient: it clears itself after a while so a stale "rule removed"
+    // does not linger and invite an accidental restore long after the fact.
+    React.useEffect(() => {
+        if (!removed) return;
+        const timer = setTimeout(() => setRemoved(null), 8000);
+        return () => clearTimeout(timer);
+    }, [removed]);
 
     const run = async (write: () => Promise<PermissionWriteReply>): Promise<void> => {
         setBusy(true);
@@ -74,6 +87,39 @@ export function RulesPanel({ lang, title, hint, rules, projectId, hireId, loaded
         setAdding(false);
         setEditingId(rule.id);
         setDraft({ action: rule.action, pathScope: rule.pathScope ?? '', effect: rule.effect });
+    };
+
+    // Remove immediately, then offer Undo. A failed remove says so and offers nothing to undo.
+    const removeRule = (rule: PermissionRuleView): void => {
+        setBusy(true);
+        setFailure(null);
+        void (async () => {
+            try {
+                const reply = await permissionWrites.remove(rule.id);
+                if (!reply.ok) {
+                    setFailure(lang === 'fr' ? 'La règle n’a pas pu être supprimée.' : 'That rule could not be removed.');
+                    return;
+                }
+                setWarning(reply.warning);
+                setRemoved(rule);
+            } catch (e) {
+                setFailure(e instanceof Error ? e.message : String(e));
+            } finally {
+                setBusy(false);
+            }
+        })();
+    };
+
+    // Restore the removed rule by adding it back with the same action, scope and effect. UI
+    // rules carry no command pattern, so this is a faithful restore. A new id is fine: what a
+    // rule does is its action, scope and effect, not its id.
+    const undoRemove = (): void => {
+        const rule = removed;
+        if (!rule || !projectId) return;
+        setRemoved(null);
+        void run(() => permissionWrites.add({
+            projectId, hireId, action: rule.action, pathScope: rule.pathScope, effect: rule.effect
+        }));
     };
 
     // Capped rather than full bleed. A rule is action, scope, effect, and on a wide window an
@@ -113,6 +159,18 @@ export function RulesPanel({ lang, title, hint, rules, projectId, hireId, loaded
             {failure ? <p role="alert" className="text-destructive text-sm">{failure}</p> : null}
             {error ? <p role="alert" className="text-destructive text-sm">{error}</p> : null}
 
+            {removed ? (
+                <div
+                    role="status"
+                    className="border-border bg-muted/40 flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm"
+                >
+                    <span className="min-w-0">{lang === 'fr' ? 'Règle supprimée.' : 'Rule removed.'}</span>
+                    <Button size="sm" variant="secondary" disabled={busy} onClick={undoRemove}>
+                        <Undo2 aria-hidden="true" /> {lang === 'fr' ? 'Annuler' : 'Undo'}
+                    </Button>
+                </div>
+            ) : null}
+
             {adding || editingId ? (
                 <RuleEditor
                     lang={lang}
@@ -145,7 +203,7 @@ export function RulesPanel({ lang, title, hint, rules, projectId, hireId, loaded
                         rule={rule}
                         busy={busy}
                         onEdit={() => startEdit(rule)}
-                        onRemove={() => { void run(() => permissionWrites.remove(rule.id)); }}
+                        onRemove={() => removeRule(rule)}
                     />
                 ))}
             </ul>

@@ -34,6 +34,7 @@ const realFs: ManagedFs = {
     mkdirp: (p, mode) => fs.mkdirSync(p, { recursive: true, mode }),
     copyFile: (from, to, mode) => { fs.copyFileSync(from, to); try { fs.chmodSync(to, mode); } catch { /* windows */ } },
     chmod: (p, mode) => { try { fs.chmodSync(p, mode); } catch { /* windows */ } },
+    mtimeMs: (p) => { try { return fs.statSync(p).mtimeMs; } catch { return null; } },
     join: (...parts) => path.join(...parts)
 };
 

@@ -68,6 +68,8 @@ export interface ManagedFs {
     /** Copies bytes from `from` to `to`, then sets `to` to `mode`. Never reads into a log. */
     copyFile(from: string, to: string, mode: number): void;
     chmod(path: string, mode: number): void;
+    /** Last-modified time in ms, or null if the path is absent. For the credential freshness check. */
+    mtimeMs(path: string): number | null;
     join(...parts: string[]): string;
 }
 
@@ -141,9 +143,19 @@ export function seedManagedConfig(deps: SeedManagedConfigDeps, cwd: string): See
     let credentialCopied = false;
     let credentialFromOsStore = false;
     if (fs.exists(realCredential)) {
-        fs.copyFile(realCredential, managedCredential, MANAGED_FILE_MODE);
-        // Belt and braces: force the mode even if copyFile preserved the source's.
-        fs.chmod(managedCredential, MANAGED_FILE_MODE);
+        // Copy only when the managed credential is missing or older than the source. After the
+        // first seed in a session the managed copy is present and fresh, so neither the copy nor
+        // its owner-only lock (which fails closed on Windows) runs again. That repeat work, and
+        // its repeat failure risk on turns after the first, is what this avoids. A first seed, or
+        // a source credential that has since refreshed, still copies and locks exactly as before.
+        const managedTime = fs.mtimeMs(managedCredential);
+        const sourceTime = fs.mtimeMs(realCredential);
+        const fresh = managedTime !== null && (sourceTime === null || managedTime >= sourceTime);
+        if (!fresh) {
+            fs.copyFile(realCredential, managedCredential, MANAGED_FILE_MODE);
+            // Belt and braces: force the mode even if copyFile preserved the source's.
+            fs.chmod(managedCredential, MANAGED_FILE_MODE);
+        }
         credentialCopied = true;
     } else if (deps.readOsCredential) {
         // macOS. Nothing here inspects, parses or logs the value; it is read and written.
