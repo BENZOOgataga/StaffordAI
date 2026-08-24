@@ -82,7 +82,7 @@ export function ChannelScreen({ rows, cards, lang, current, onNavigate, onLoadOl
                             items={items}
                             now={now}
                             lang={lang}
-                            onReply={(target, text) => { void window.stafford.channel.reply(target, text); }}
+                            onReply={(target, text) => window.stafford.channel.reply(target, text)}
                         />
                     )}
                 </div>

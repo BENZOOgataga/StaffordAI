@@ -31,6 +31,7 @@ import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import { seedManagedConfig, type ManagedFs } from './agents/managed-config.ts';
+import { copyCredentialOwnerLocked } from './agents/credential-lock.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { runDrain, type DrainableAgent, type CheckpointResult } from './agents/drain.ts';
 import { checkpointRepo } from './agents/checkpoint-executor.ts';
@@ -149,20 +150,33 @@ function writeConfigAtomic(target: string, data: string): void {
  * The platform decides: Windows returns an `icacls` plan because node's `chmod`
  * cannot set an ACL there and a userData path can inherit a group-readable ACE;
  * POSIX returns null because the seed's `chmod` to 0600/0700 is already the whole
- * guarantee. Best-effort by design: a failure warns rather than blocking the spawn,
- * and no message carries the path or the file's contents.
+ * guarantee.
+ *
+ * Returns true when the path is locked (or needs no lock on POSIX), false when a lock
+ * was needed but could not be applied. The caller decides what a false means: for the
+ * managed dir and the account file it stays best-effort and the false is ignored, but
+ * for the copied credential the caller fails closed and deletes the file, since on
+ * Windows this ACL is that file's only protection.
  */
-function restrictToOwner(target: string, opts: { tree: boolean }): void {
+function restrictToOwner(target: string, opts: { tree: boolean }): boolean {
     const username = process.env.USERNAME;
-    if (!username) return;
-    const account = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + username;
+    const account = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + (username ?? '');
     const plan = currentPlatform().ownerOnlyAclPlan(target, { tree: opts.tree, account });
-    if (!plan) return;
+    if (!plan) return true; // POSIX: chmod is the whole guarantee, there is nothing to lock.
+    if (!username) {
+        process.stderr.write('[managed-config] no username available to lock a managed config path to\n');
+        return false;
+    }
     try {
         const r = spawnSync(plan.file, [...plan.args], { windowsHide: true });
-        if (r.status !== 0) process.stderr.write('[managed-config] could not lock ACL on a managed config path\n');
+        if (r.status !== 0) {
+            process.stderr.write('[managed-config] could not lock ACL on a managed config path\n');
+            return false;
+        }
+        return true;
     } catch {
-        process.stderr.write('[managed-config] ACL tool unavailable; managed config relies on the inherited ACL\n');
+        process.stderr.write('[managed-config] ACL tool unavailable for a managed config path\n');
+        return false;
     }
 }
 
@@ -732,11 +746,19 @@ function buildDelivery(store: HireStore): void {
             if (!existed) restrictToOwner(p, { tree: true });
         },
         copyFile: (from, to, mode) => {
-            fs.copyFileSync(from, to);
-            try { fs.chmodSync(to, mode); } catch {}
-            // The credential is the secret; lock it owner-only every copy on Windows,
-            // regardless of any ACL a prior copy left behind.
-            restrictToOwner(to, { tree: false });
+            // The credential is the secret. On Windows the owner-only ACL is its only
+            // protection, so this fails closed: if the lock cannot be applied, the file is
+            // deleted and this throws, aborting the seed rather than leaving an unprotected
+            // credential on disk for a colleague to start against.
+            copyCredentialOwnerLocked(
+                {
+                    copy: (a, b) => fs.copyFileSync(a, b),
+                    chmod: (p, m) => fs.chmodSync(p, m),
+                    lock: (p) => restrictToOwner(p, { tree: false }),
+                    remove: (p) => { try { fs.rmSync(p, { force: true }); } catch { /* already gone */ } }
+                },
+                from, to, mode
+            );
         },
         chmod: (p, mode) => { try { fs.chmodSync(p, mode); } catch {} },
         join: (...parts) => path.join(...parts)
@@ -796,15 +818,24 @@ function buildDelivery(store: HireStore): void {
         // hook-free now: the runner derives state from the stream, so no Stafford hooks
         // are registered into the managed config any more (the hook stack was removed).
         seedManagedConfig: (cwd) => {
-            const result = seedManagedConfig(
-                { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
-                    settings: {},
-                    readOsCredential: readOsCredential,
-                    warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
-                cwd
-            );
-            smoke('managed config seeded (runner), credential carried: ' + result.credentialCopied +
-                ', from OS store: ' + result.credentialFromOsStore);
+            try {
+                const result = seedManagedConfig(
+                    { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
+                        settings: {},
+                        readOsCredential: readOsCredential,
+                        warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
+                    cwd
+                );
+                smoke('managed config seeded (runner), credential carried: ' + result.credentialCopied +
+                    ', from OS store: ' + result.credentialFromOsStore);
+            } catch (error) {
+                // A seed that could not lock the credential deleted it and threw. Say so
+                // clearly, then rethrow so the turn aborts rather than starting a colleague
+                // against a session whose credential could not be protected.
+                process.stderr.write('[managed-config] seed aborted: ' +
+                    (error instanceof Error ? error.message : String(error)) + '\n');
+                throw error;
+            }
         },
         // Reap a finished turn's whole process tree from its own child pid down, so a
         // tool grandchild in its own group is not orphaned. killTree walks only that pid;
