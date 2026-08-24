@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
-    ClaudeRunner, autoApproveTool, HEADLESS_ARGS, PERMISSION_PROMPT_TOOL, COLLEAGUE_MEMORY_NOTE,
+    ClaudeRunner, autoApproveTool, HEADLESS_ARGS, PERMISSION_PROMPT_TOOL,
     type RunnerChild, type SpawnFn, type WireDirection
 } from './claude-runner.ts';
 import { makePermissionGate } from './permission-gate.ts';
@@ -374,14 +374,6 @@ test('turn 1 does not resume: no --resume flag', async () => {
     assert.equal(fake.args().includes('--resume'), false);
     // The fixed headless flags are all present.
     for (const flag of HEADLESS_ARGS) assert.ok(fake.args().includes(flag), `missing ${flag}`);
-
-    // The memory note is appended as a system prompt, so a colleague does not try to load the
-    // inherited working-with-benzoo instruction it cannot reach.
-    const noteIndex = fake.args().indexOf('--append-system-prompt');
-    assert.ok(noteIndex >= 0, 'the colleague memory note is appended');
-    assert.equal(fake.args()[noteIndex + 1], COLLEAGUE_MEMORY_NOTE, 'the note follows the flag');
-    assert.match(COLLEAGUE_MEMORY_NOTE, /working-with-benzoo/, 'the note names the unreachable skill it neutralizes');
-    assert.match(COLLEAGUE_MEMORY_NOTE, /do not (mention|flag)/i, 'the note tells the colleague not to surface it');
 });
 
 test('#61 isolation: CLAUDE_CONFIG_DIR is passed through to the child, stdio is piped', async () => {
