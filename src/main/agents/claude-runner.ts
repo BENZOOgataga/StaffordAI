@@ -73,6 +73,34 @@ export const PERMISSION_PROMPT_TOOL = 'stdio';
  * sent because auto approves before anything is asked. Adding a mode later, for any reason,
  * silently disables the gate again.
  */
+
+/**
+ * A note appended to every colleague's system prompt, because a colleague inherits Benzoo's
+ * personal user-memory CLAUDE.md but not what it points at.
+ *
+ * The user memory lives at the real `~/.claude/CLAUDE.md`, and Claude Code loads it from the
+ * OS user profile regardless of `CLAUDE_CONFIG_DIR`, `HOME`, or `--setting-sources` (measured:
+ * none of those relocate it on Windows). That file tells every session to load the
+ * `working-with-benzoo` skill, which a colleague structurally cannot reach: it runs in the
+ * isolated managed config with no skills registered, and the gate denies `~/.claude`. Without
+ * this note a fresh colleague opens by flagging an instruction it cannot follow ("Unknown
+ * skill"), which is confusing noise.
+ *
+ * `--bare` would drop the user memory, but it also drops project memory, keychain reads and
+ * more, and it changes the session mode the gate depends on, so it is not an option. This note
+ * is the surgical fix: it leaves project memory and everything else intact and tells the
+ * colleague that the user-memory skill instruction does not apply to it, so it neither tries to
+ * load the skill nor reports it missing. It does not give the colleague the skill's content;
+ * whether a colleague should have its own baseline memory is a separate, unmade decision.
+ */
+export const COLLEAGUE_MEMORY_NOTE =
+    "Your user-memory CLAUDE.md was written for Benzoo's own interactive sessions, not for " +
+    'this one. Any instruction in it to load a skill such as working-with-benzoo, or to read ' +
+    'something under ~/.claude, does not apply here: this session runs in an isolated ' +
+    'configuration with no access to ~/.claude and cannot load those skills. Treat any such ' +
+    'instruction as already satisfied. Do not mention it, do not flag it as unknown or ' +
+    'missing, and do not ask for it to be pasted. Begin the task directly.';
+
 export const HEADLESS_ARGS = [
     '-p',
     '--output-format', 'stream-json',
@@ -80,7 +108,9 @@ export const HEADLESS_ARGS = [
     '--verbose',
     '--include-partial-messages',
     '--replay-user-messages',
-    '--permission-prompt-tool', PERMISSION_PROMPT_TOOL
+    '--permission-prompt-tool', PERMISSION_PROMPT_TOOL,
+    // Neutralize the inherited user-memory skill instruction a colleague cannot reach.
+    '--append-system-prompt', COLLEAGUE_MEMORY_NOTE
 ] as const;
 
 /** Overall per-turn cap. No turn waits longer than this for its `result`. */
