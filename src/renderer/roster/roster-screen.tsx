@@ -36,7 +36,7 @@ function ColleagueRow({ row, onSelect }: { row: RosterRow; onSelect: (card: Rost
             }}
             className="cursor-pointer items-start gap-3 px-4 py-3"
         >
-            <StatusDot status={status} pulse={status === 'working'} size="lg" className="mt-1" />
+            <StatusDot status={status} pulse={status === 'working'} size="lg" className="mt-1" label={stateText} />
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex min-w-0 items-center gap-2">
                     <span className="truncate font-medium">{card.name}</span>
@@ -49,7 +49,9 @@ function ColleagueRow({ row, onSelect }: { row: RosterRow; onSelect: (card: Rost
                     ) : null}
                     <span className="text-muted-foreground truncate text-sm">{card.role}</span>
                 </span>
-                <span className="text-muted-foreground truncate text-sm">{stateText}</span>
+                {/* aria-hidden: the same words are announced by the status dot's live region
+                    above, so hiding the visual copy from the reader avoids saying it twice. */}
+                <span className="text-muted-foreground truncate text-sm" aria-hidden="true">{stateText}</span>
                 {card.task ? <span className="text-muted-foreground truncate text-sm">{card.task}</span> : null}
                 {card.contextLost ? (
                     <span className="text-status-error/80 text-xs">Started clean, earlier context lost</span>

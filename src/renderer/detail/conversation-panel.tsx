@@ -3,6 +3,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { buildThread } from './conversation-model.ts';
 import { ConversationThread } from './conversation-thread.tsx';
 import { type Lang } from '../channel-view.ts';
+import { runSend } from './send-message.ts';
 import type { ChannelMessageRow } from '../../shared/ipc.ts';
 
 /**
@@ -25,6 +26,8 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang }: {
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const stick = React.useRef(true);
     const [text, setText] = React.useState('');
+    const [error, setError] = React.useState<string | null>(null);
+    const [sending, setSending] = React.useState(false);
     const now = Date.now();
     const items = buildThread(rows, nameOf, self, lang);
 
@@ -45,11 +48,16 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang }: {
         if (el) el.scrollTop = el.scrollHeight;
     }, [hireId]);
 
-    const send = (): void => {
-        if (text.trim().length === 0) return;
-        const outgoing = text;
-        setText('');
-        void window.stafford.channel.reply(hireId, outgoing);
+    // Clear the input only after the send confirms. If it fails, the text stays and an
+    // inline error shows below, so a failed send never silently eats what was typed.
+    const send = async (): Promise<void> => {
+        if (sending) return;
+        setSending(true);
+        setError(null);
+        const decision = await runSend(text, (t) => window.stafford.channel.reply(hireId, t), lang);
+        if (decision.cleared) setText('');
+        setError(decision.error);
+        setSending(false);
     };
 
     return (
@@ -67,13 +75,17 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang }: {
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
                     }}
                     rows={2}
                     placeholder="Type a message. Enter sends, Shift-Enter adds a line."
                     className="max-h-40 resize-none"
                 />
-                <p className="text-muted-foreground text-xs">Enter sends. Shift-Enter adds a line.</p>
+                {error ? (
+                    <p role="alert" className="text-status-error text-xs">{error}</p>
+                ) : (
+                    <p className="text-muted-foreground text-xs">Enter sends. Shift-Enter adds a line.</p>
+                )}
             </div>
         </div>
     );

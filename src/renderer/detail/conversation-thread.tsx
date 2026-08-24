@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { Textarea } from '@/components/ui/textarea';
 import { referenceLabel, type Lang } from '../channel-view.ts';
 import { activityTime } from '../activity-view.ts';
+import { runSend } from './send-message.ts';
 import type { ThreadItem } from './conversation-model.ts';
 
 /**
@@ -19,15 +20,22 @@ import type { ThreadItem } from './conversation-model.ts';
 function InlineReply({ target, lang, onReply }: {
     target: string;
     lang: Lang;
-    onReply: (target: string, text: string) => void;
+    onReply: (target: string, text: string) => Promise<void>;
 }): React.JSX.Element {
     const [open, setOpen] = React.useState(false);
     const [text, setText] = React.useState('');
-    const send = (): void => {
-        if (text.trim().length === 0) return;
-        onReply(target, text);
-        setText('');
-        setOpen(false);
+    const [error, setError] = React.useState<string | null>(null);
+    const [sending, setSending] = React.useState(false);
+    // Close and clear only on a confirmed send. On failure the reply stays open with the
+    // text intact and an inline error, so a failed reply never drops what was typed.
+    const send = async (): Promise<void> => {
+        if (sending) return;
+        setSending(true);
+        setError(null);
+        const decision = await runSend(text, (t) => onReply(target, t), lang);
+        if (decision.cleared) { setText(''); setOpen(false); }
+        setError(decision.error);
+        setSending(false);
     };
     if (!open) {
         return (
@@ -38,18 +46,21 @@ function InlineReply({ target, lang, onReply }: {
         );
     }
     return (
-        <Textarea
-            autoFocus
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-                if (e.key === 'Escape') { setText(''); setOpen(false); }
-            }}
-            rows={2}
-            placeholder={lang === 'fr' ? 'Répondre. Entrée envoie, Maj-Entrée ajoute une ligne.' : 'Reply. Enter sends, Shift-Enter adds a line.'}
-            className="mt-1 max-w-md resize-none"
-        />
+        <div className="mt-1 flex max-w-md flex-col gap-1">
+            <Textarea
+                autoFocus
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
+                    if (e.key === 'Escape') { setText(''); setError(null); setOpen(false); }
+                }}
+                rows={2}
+                placeholder={lang === 'fr' ? 'Répondre. Entrée envoie, Maj-Entrée ajoute une ligne.' : 'Reply. Enter sends, Shift-Enter adds a line.'}
+                className="resize-none"
+            />
+            {error ? <span role="alert" className="text-status-error px-1 text-xs">{error}</span> : null}
+        </div>
     );
 }
 
@@ -57,7 +68,7 @@ export function ConversationThread({ items, now, lang, onReply }: {
     items: readonly ThreadItem[];
     now: number;
     lang: Lang;
-    onReply?: (target: string, text: string) => void;
+    onReply?: (target: string, text: string) => Promise<void>;
 }): React.JSX.Element {
     return (
         <div className="flex flex-col gap-3">
