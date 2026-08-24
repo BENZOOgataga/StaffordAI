@@ -438,15 +438,21 @@ test('phase 3: a colleague override added in the UI reaches that colleague and n
 const HOME = path.resolve('/home/benzoo');
 const USERDATA_FOR_CONFIG = path.resolve('/userdata');
 
-/** A file inside each protected directory, the thing a colleague must not be able to read. */
-const CREDENTIAL_READS: readonly { dir: string; file: string }[] = [
-    { dir: path.join(HOME, '.claude'), file: '.credentials.json' },
-    { dir: path.join(HOME, '.ssh'), file: 'id_rsa' },
-    { dir: path.join(HOME, '.aws'), file: 'credentials' },
-    { dir: path.join(HOME, '.gnupg'), file: 'secring.gpg' },
-    { dir: path.join(HOME, '.docker'), file: 'config.json' },
-    { dir: path.join(HOME, '.kube'), file: 'config' },
-    { dir: path.join(HOME, '.config', 'gh'), file: 'hosts.yml' }
+/** A concrete credential file the colleague must not be able to read, one per protected entry. */
+const CREDENTIAL_READS: readonly string[] = [
+    path.join(HOME, '.claude', '.credentials.json'),
+    path.join(HOME, '.ssh', 'id_rsa'),
+    path.join(HOME, '.aws', 'credentials'),
+    path.join(HOME, '.gnupg', 'secring.gpg'),
+    path.join(HOME, '.docker', 'config.json'),
+    path.join(HOME, '.kube', 'config'),
+    path.join(HOME, '.config', 'gh', 'hosts.yml'),
+    path.join(HOME, '.gitconfig'),
+    path.join(HOME, '.git-credentials'),
+    path.join(HOME, '.azure', 'accessTokens.json'),
+    path.join(HOME, '.config', 'gcloud', 'credentials.db'),
+    path.join(HOME, 'AppData', 'Roaming', 'gcloud', 'credentials.db'),
+    path.join(HOME, '.gcloud', 'credentials.db')
 ];
 
 function gateWithProtected(protectedPaths: readonly string[]) {
@@ -459,7 +465,7 @@ function gateWithProtected(protectedPaths: readonly string[]) {
     })({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
 }
 
-test('Finding A: protectedConfigPaths is userData plus the seven credential directories', () => {
+test('Finding A: protectedConfigPaths is userData plus the credential directories, locked in order', () => {
     assert.deepEqual(protectedConfigPaths(HOME, USERDATA_FOR_CONFIG), [
         USERDATA_FOR_CONFIG,
         path.join(HOME, '.claude'),
@@ -468,15 +474,20 @@ test('Finding A: protectedConfigPaths is userData plus the seven credential dire
         path.join(HOME, '.gnupg'),
         path.join(HOME, '.docker'),
         path.join(HOME, '.kube'),
-        path.join(HOME, '.config', 'gh')
+        path.join(HOME, '.config', 'gh'),
+        path.join(HOME, '.gitconfig'),
+        path.join(HOME, '.git-credentials'),
+        path.join(HOME, '.azure'),
+        path.join(HOME, '.config', 'gcloud'),
+        path.join(HOME, 'AppData', 'Roaming', 'gcloud'),
+        path.join(HOME, '.gcloud')
     ]);
 });
 
 test('Finding A: every credential directory the UI shows as protected actually denies a read', async () => {
     // Wired exactly as the gate now is in index.ts: the full protectedConfigPaths set.
     const gate = gateWithProtected(protectedConfigPaths(HOME, USERDATA_FOR_CONFIG));
-    for (const { dir, file } of CREDENTIAL_READS) {
-        const target = path.join(dir, file);
+    for (const target of CREDENTIAL_READS) {
         assert.equal(await behavior(gate('Read', { file_path: target })), 'deny',
             'a colleague must not read a credential the config screen claims is protected: ' + target);
         assert.equal(await behavior(gate('Write', { file_path: target })), 'deny',
@@ -495,8 +506,7 @@ test('Finding A: the exact gap is closed, userData-only allowed these reads, the
     // them. If someone reverts the gate to userData-only, the "after" assertions below fail.
     const oldGate = gateWithProtected([USERDATA_FOR_CONFIG]);
     const newGate = gateWithProtected(protectedConfigPaths(HOME, USERDATA_FOR_CONFIG));
-    for (const { dir, file } of CREDENTIAL_READS) {
-        const target = path.join(dir, file);
+    for (const target of CREDENTIAL_READS) {
         assert.equal(await behavior(oldGate('Read', { file_path: target })), 'allow',
             'documents the gap: userData-only protection left this credential readable: ' + target);
         assert.equal(await behavior(newGate('Read', { file_path: target })), 'deny',

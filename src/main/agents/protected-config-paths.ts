@@ -34,6 +34,23 @@ export function protectedConfigPaths(homedir: string, userData: string): string[
         path.join(homedir, '.gnupg'),
         path.join(homedir, '.docker'),
         path.join(homedir, '.kube'),
-        path.join(homedir, '.config', 'gh')
+        path.join(homedir, '.config', 'gh'),
+
+        // Git credentials in the clear. .git-credentials is the store helper's plaintext file,
+        // and .gitconfig can carry tokens in a credential helper or an insteadOf URL. Denying
+        // these blocks only a colleague's explicit Read or Write of the files; git run through
+        // Bash reads its own config itself and is unaffected.
+        path.join(homedir, '.gitconfig'),
+        path.join(homedir, '.git-credentials'),
+
+        // Cloud provider credential stores. Azure keeps tokens under .azure on every platform.
+        // gcloud's real location differs: ~/.config/gcloud on Linux and macOS, %APPDATA%\gcloud
+        // (i.e. ~/AppData/Roaming/gcloud) on Windows, plus a legacy bare ~/.gcloud. All are listed
+        // so the deny holds on whichever machine this runs on; the ones that do not exist on a
+        // given platform simply never match.
+        path.join(homedir, '.azure'),
+        path.join(homedir, '.config', 'gcloud'),
+        path.join(homedir, 'AppData', 'Roaming', 'gcloud'),
+        path.join(homedir, '.gcloud')
     ];
 }
