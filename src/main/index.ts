@@ -23,7 +23,8 @@ import { WEB_PREFERENCES, applySessionSecurity, applyWindowSecurity } from './wi
 import { applyAppMenu, hideMenuBar } from './window/app-menu.ts';
 import { registerWindowControls, wireMaximizeEvents } from './window/window-controls.ts';
 import { resolveWindowBounds, readWindowState, saveWindowState, WINDOW_DEFAULTS, type Rect } from './window/window-state.ts';
-import { installTray } from './tray.ts';
+import { installTray, type TrayHandle } from './tray.ts';
+import { TRAY_ICON_PNG } from './tray-icons.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
 import { openDatabase, type OpenResult } from './storage/database.ts';
@@ -226,7 +227,7 @@ function createDeps(repositories: Repositories): CreateDeps {
 const SMOKE = process.env.STAFFORD_SMOKE === '1';
 function smoke(line: string): void { if (SMOKE) process.stderr.write('[smoke] ' + line + '\n'); }
 
-let tray: Tray | null = null;
+let trayHandle: TrayHandle | null = null;
 let window: BrowserWindow | null = null;
 
 function rendererEntry(): string {
@@ -320,7 +321,7 @@ function presentAsOrdinaryApp(ordinary: boolean): void {
     else app.dock.hide();
 }
 
-function openWindow(): void {
+function openWindow(view?: string): void {
     // Ordinary first, then show. Raising a window while the process is still an accessory is
     // what produced a window that came forward and then refused to go behind anything.
     presentAsOrdinaryApp(true);
@@ -328,6 +329,8 @@ function openWindow(): void {
     if (window && !window.isDestroyed()) {
         window.show();
         window.focus();
+        // The renderer is already mounted and subscribed, so a navigate lands immediately.
+        if (view) window.webContents.send('shell:navigate', view);
         return;
     }
 
@@ -403,6 +406,13 @@ function openWindow(): void {
         presentAsOrdinaryApp(false);
     });
 
+    // A fresh window: wait until the renderer has loaded and subscribed before sending the
+    // navigate, so a tray-click-to-board on a cold window is not lost to a race.
+    if (view) {
+        win.webContents.once('did-finish-load', () => {
+            if (!win.isDestroyed()) win.webContents.send('shell:navigate', view);
+        });
+    }
     void win.loadURL(entry);
     window = win;
 }
@@ -597,6 +607,24 @@ function notifyChannelChanged(): void {
 
 function notifyTasksChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('tasks:changed');
+    refreshTray();
+}
+
+/**
+ * What needs the person right now, for the tray: tasks waiting on a review, and turns paused
+ * on a permission ask. The same two things the board header and the approvals banner count.
+ */
+function trayCounts(): { review: number; paused: number } {
+    const review = repositories ? repositories.tasks.open().filter((t) => t.state === 'needs-you').length : 0;
+    const paused = approvalRegistry ? approvalRegistry.list().length : 0;
+    return { review, paused };
+}
+
+/** Re-applies the tray's badge, tooltip and icon from the live count. Safe before the tray exists. */
+function refreshTray(): void {
+    if (!trayHandle) return;
+    const { review, paused } = trayCounts();
+    trayHandle.update(review, paused);
 }
 
 function requireTasks(): TaskService {
@@ -1593,7 +1621,12 @@ app.whenReady().then(async () => {
         approvalRegistry = new ApprovalRegistry({
             now: () => new Date().toISOString(),
             uuid: () => randomUUID(),
-            onChange: () => { if (window && !window.isDestroyed()) window.webContents.send('approvals:changed'); },
+            onChange: () => {
+                if (window && !window.isDestroyed()) window.webContents.send('approvals:changed');
+                // A pending ask appearing or clearing changes what needs the person, so the
+                // tray badge and tooltip track it even with no window open.
+                refreshTray();
+            },
             onPending: (hireId, pending) => {
                 store.setState(hireId, pending ? 'waiting_for_you' : 'working');
                 notifyRosterChanged();
@@ -1802,13 +1835,34 @@ app.whenReady().then(async () => {
     // window takes part in normal activation and yields z-order when I click another app.
     presentAsOrdinaryApp(false);
 
-    tray = installTray({
-        createTray: () => new Tray(nativeImage.createEmpty()),
+    // The real tray icon, built from the embedded PNGs. macOS uses the black mark as a
+    // template image (the OS inverts it for the menu bar); Windows uses the white mark, since
+    // its taskbar is dark by default.
+    const trayIsMac = Boolean(app.dock);
+    const trayImage = (black: keyof typeof TRAY_ICON_PNG, white: keyof typeof TRAY_ICON_PNG): Electron.NativeImage => {
+        const img = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_PNG[trayIsMac ? black : white], 'base64'));
+        if (trayIsMac) img.setTemplateImage(true);
+        return img;
+    };
+    const baseIcon = trayImage('baseBlack', 'baseWhite');
+    const alertIcon = trayImage('alertBlack', 'alertWhite');
+
+    trayHandle = installTray({
+        createTray: () => new Tray(baseIcon),
         buildMenu: (template) => Menu.buildFromTemplate(template),
-        openWindow,
-        quit
+        openWindow: () => openWindow(),
+        quit,
+        icons: { base: baseIcon, alert: alertIcon },
+        isMac: trayIsMac,
+        // A click on the tray goes to the board when something is waiting, so a tap while the
+        // badge is up lands on the waiting work rather than on whatever was last open.
+        onIconClick: () => {
+            const { review, paused } = trayCounts();
+            if (review + paused > 0) openWindow('board'); else openWindow();
+        }
     });
-    void tray;
+    // Reflect whatever is already waiting at launch (a needs-you task from a prior session).
+    refreshTray();
 });
 
 // No window at launch and none when the last window closes: the tray keeps the
