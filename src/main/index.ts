@@ -771,6 +771,7 @@ function buildDelivery(store: HireStore): void {
             );
         },
         chmod: (p, mode) => { try { fs.chmodSync(p, mode); } catch {} },
+        mtimeMs: (p) => { try { return fs.statSync(p).mtimeMs; } catch { return null; } },
         join: (...parts) => path.join(...parts)
     };
 

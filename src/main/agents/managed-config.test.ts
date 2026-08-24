@@ -14,35 +14,49 @@ import {
     seedManagedConfig, MANAGED_DIR_MODE, MANAGED_FILE_MODE, type ManagedFs, type SeedManagedConfigDeps
 } from './managed-config.ts';
 
-interface Entry { data: string; mode: number; }
+interface Entry { data: string; mode: number; mtime: number; }
 
 /**
- * A recording in-memory ManagedFs. Tracks file contents and the mode each path was
- * last set to, so the POSIX permission conditions are asserted on any platform.
+ * A recording in-memory ManagedFs. Tracks file contents, the mode each path was last
+ * set to, and a monotonic mtime so the credential freshness check is exercisable. Every
+ * write bumps a shared clock, so a file written later reads as newer, and `touch` lets a
+ * test make the source credential newer than the managed copy.
  */
 function fakeFs(seed: Record<string, string> = {}): ManagedFs & {
     files: Map<string, Entry>;
     modeOf: (p: string) => number | undefined;
+    copyCount: () => number;
+    touch: (p: string) => void;
 } {
     const files = new Map<string, Entry>();
-    for (const [p, data] of Object.entries(seed)) files.set(p, { data, mode: 0o600 });
-    const fs: ManagedFs & { files: Map<string, Entry>; modeOf: (p: string) => number | undefined } = {
+    let clock = 0;
+    let copies = 0;
+    const stamp = (): number => ++clock;
+    for (const [p, data] of Object.entries(seed)) files.set(p, { data, mode: 0o600, mtime: stamp() });
+    const fs: ManagedFs & {
+        files: Map<string, Entry>; modeOf: (p: string) => number | undefined;
+        copyCount: () => number; touch: (p: string) => void;
+    } = {
         files,
         modeOf: (p) => files.get(p)?.mode,
+        copyCount: () => copies,
+        touch: (p) => { const e = files.get(p); if (e) e.mtime = stamp(); },
         exists: (p) => files.has(p),
         readText: (p) => {
             const e = files.get(p);
             if (!e) throw new Error('ENOENT ' + p);
             return e.data;
         },
-        writeText: (p, data, mode) => { files.set(p, { data, mode }); },
-        mkdirp: (p, mode) => { files.set(p, { data: '<dir>', mode }); },
+        writeText: (p, data, mode) => { files.set(p, { data, mode, mtime: stamp() }); },
+        mkdirp: (p, mode) => { if (!files.has(p)) files.set(p, { data: '<dir>', mode, mtime: stamp() }); },
         copyFile: (from, to, mode) => {
             const src = files.get(from);
             if (!src) throw new Error('ENOENT ' + from);
-            files.set(to, { data: src.data, mode });
+            copies++;
+            files.set(to, { data: src.data, mode, mtime: stamp() });
         },
         chmod: (p, mode) => { const e = files.get(p); if (e) e.mode = mode; },
+        mtimeMs: (p) => files.get(p)?.mtime ?? null,
         join: (...parts) => path.posix.join(...parts)
     };
     return fs;
@@ -77,6 +91,41 @@ test('copied credential is owner-only (0600) and never broadened', () => {
     assert.equal(fs.modeOf(MANAGED + '/.credentials.json'), 0o600);
     // group/other read bits are clear.
     assert.equal((fs.modeOf(MANAGED + '/.credentials.json')! & 0o077), 0);
+});
+
+test('the credential is copied once per session, not re-copied on later turns', () => {
+    const fs = fakeFs({ [REAL_CRED]: 'TOKEN-BYTES' });
+    seedManagedConfig(deps(fs), CWD);
+    assert.equal(fs.copyCount(), 1, 'the first seed copies the credential');
+    // Later turns in the same session: the managed copy is present and fresh, so neither the
+    // copy nor its owner-only lock runs again.
+    seedManagedConfig(deps(fs), CWD);
+    seedManagedConfig(deps(fs), CWD);
+    assert.equal(fs.copyCount(), 1, 'later turns do not re-copy or re-lock the credential');
+    // Still reported as carried, and still owner-only.
+    const result = seedManagedConfig(deps(fs), CWD);
+    assert.equal(result.credentialCopied, true, 'the credential is still carried on a later turn');
+    assert.equal(fs.modeOf(MANAGED + '/.credentials.json'), MANAGED_FILE_MODE);
+});
+
+test('a source credential newer than the managed copy is copied again', () => {
+    const fs = fakeFs({ [REAL_CRED]: 'TOKEN-BYTES' });
+    seedManagedConfig(deps(fs), CWD);
+    assert.equal(fs.copyCount(), 1);
+    // The user re-authenticated, so the source credential is now newer than the managed copy.
+    fs.touch(REAL_CRED);
+    seedManagedConfig(deps(fs), CWD);
+    assert.equal(fs.copyCount(), 2, 'a refreshed source credential is re-copied');
+});
+
+test('a missing managed credential is copied again even mid-session', () => {
+    const fs = fakeFs({ [REAL_CRED]: 'TOKEN-BYTES' });
+    seedManagedConfig(deps(fs), CWD);
+    assert.equal(fs.copyCount(), 1);
+    // Something removed the managed copy: it must be restored, not skipped as fresh.
+    fs.files.delete(MANAGED + '/.credentials.json');
+    seedManagedConfig(deps(fs), CWD);
+    assert.equal(fs.copyCount(), 2, 'a missing managed credential is re-copied');
 });
 
 test('no credential file present (macOS Keychain) does not throw and reports not copied', () => {

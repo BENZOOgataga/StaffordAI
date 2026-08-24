@@ -63,6 +63,44 @@ export function TaskReview({ task, lang }: { task: TaskRow; lang: Lang }): React
                 <p className="text-muted-foreground text-xs">{attemptLine(task)}</p>
             ) : null}
 
+            {/* The decision, at the top so it is reachable the moment the review opens, without
+                scrolling past the summary and the diff first. The evidence stays in reading order
+                below: what I asked for, what it says it did, what actually changed. A sticky
+                footer was the other option, but the surrounding List sets overflow-hidden, which
+                traps sticky, so top placement is the reliable one. */}
+            <div className="flex flex-col gap-2">
+                <Input
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder={copy.notePlaceholder}
+                    aria-label="Note for this decision"
+                    className="h-9"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" disabled={busy} onClick={() => decide('approve')}>
+                        <Check aria-hidden="true" /> {copy.approve}
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy || trimmed === ''}
+                        onClick={() => decide('send-back')}
+                        title={trimmed === '' ? 'Write what should change first' : undefined}
+                    >
+                        <Undo2 aria-hidden="true" /> {copy.sendBack}
+                    </Button>
+                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => decide('fail')}>
+                        <X aria-hidden="true" /> {copy.fail}
+                    </Button>
+                </div>
+                <span className="text-muted-foreground text-xs">
+                    {copy.onlyYouClose} Sending it back sets it working again on your note.
+                </span>
+                {refused ? <p className="text-status-error/90 text-sm">{refused}</p> : null}
+            </div>
+
+            <Separator />
+
             <Section label="What I asked for">
                 <p className="text-sm whitespace-pre-wrap break-words">{task.text}</p>
             </Section>
@@ -160,39 +198,6 @@ export function TaskReview({ task, lang }: { task: TaskRow; lang: Lang }): React
                     </ul>
                 </Section>
             ) : null}
-
-            <Separator />
-
-            <div className="flex flex-col gap-2">
-                <Input
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder={copy.notePlaceholder}
-                    aria-label="Note for this decision"
-                    className="h-9"
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" disabled={busy} onClick={() => decide('approve')}>
-                        <Check aria-hidden="true" /> {copy.approve}
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={busy || trimmed === ''}
-                        onClick={() => decide('send-back')}
-                        title={trimmed === '' ? 'Write what should change first' : undefined}
-                    >
-                        <Undo2 aria-hidden="true" /> {copy.sendBack}
-                    </Button>
-                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => decide('fail')}>
-                        <X aria-hidden="true" /> {copy.fail}
-                    </Button>
-                </div>
-                <span className="text-muted-foreground text-xs">
-                    {copy.onlyYouClose} Sending it back sets it working again on your note.
-                </span>
-                {refused ? <p className="text-status-error/90 text-sm">{refused}</p> : null}
-            </div>
         </div>
     );
 }
