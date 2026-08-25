@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { afterPersistedRows, afterDone } from './live-stream.ts';
 import type { ChannelMessageRow, ActivityRow, LiveBlock } from '../../shared/ipc.ts';
 
 const LIMIT = 200;
-
-/** A block carries real output: a tool call, or text that is not empty. An empty text run does not. */
-function hasLiveContent(block: LiveBlock): boolean {
-    return block.kind === 'tool' || block.text !== '';
-}
 
 export interface DetailData {
     readonly convRows: readonly ChannelMessageRow[];
@@ -55,9 +51,10 @@ export function useDetailData(hireId: string | null): DetailData {
             const page = await window.stafford.channel.conversation(hireId, LIMIT);
             if (!active) return;
             setConvRows(page.rows);
-            // The persisted rows now hold whatever just streamed, so drop the provisional bubble in
-            // the same render, which avoids both a duplicate (bubble plus row) and a gap (neither).
-            setStreaming(null);
+            // Drop a provisional content bubble now that its persisted row covers it, but keep a bare
+            // working indicator: the person's own message triggers this re-read during the gap before
+            // the colleague replies, and clearing here is what blanked the indicator mid-gap.
+            setStreaming(afterPersistedRows);
         };
         const loadActivity = async (): Promise<void> => {
             const reply = await window.stafford.activity.byHire(hireId, LIMIT);
@@ -86,7 +83,7 @@ export function useDetailData(hireId: string | null): DetailData {
         const offStream = window.stafford.channel.onStreamDelta((delta) => {
             if (delta.hireId !== hireId) return;
             if (delta.done) {
-                setStreaming((prev) => (prev && prev.some(hasLiveContent) ? prev : null));
+                setStreaming(afterDone);
                 return;
             }
             setStreaming(delta.blocks);
