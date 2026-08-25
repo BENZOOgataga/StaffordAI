@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { referenceLabel, type Lang } from '../channel-view.ts';
 import { activityTime } from '../activity-view.ts';
 import { runSend } from './send-message.ts';
+import { Markdown } from './markdown.tsx';
 import type { ThreadItem } from './conversation-model.ts';
 
 /**
@@ -89,10 +90,12 @@ export function ConversationThread({ items, now, lang, onReply }: {
                         {item.messages.map((m) => (
                             <div key={m.id}
                                 className={cn(
-                                    'max-w-[78%] rounded-lg px-3 py-1.5 text-sm break-words whitespace-pre-wrap',
-                                    item.side === 'you' ? 'bg-secondary text-secondary-foreground' : 'bg-card border border-border'
+                                    'max-w-[78%] rounded-lg px-3 py-1.5 text-sm break-words',
+                                    item.side === 'you' ? 'bg-secondary text-secondary-foreground whitespace-pre-wrap' : 'bg-card border border-border'
                                 )}>
-                                {m.body}
+                                {/* The colleague's replies are markdown; the person's own messages stay
+                                    plain, so what they typed is never reinterpreted as formatting. */}
+                                {item.side === 'them' ? <Markdown text={m.body} /> : m.body}
                                 {m.reference ? (
                                     <span className="text-muted-foreground mt-1 block text-xs">{referenceLabel(m.reference)}</span>
                                 ) : null}

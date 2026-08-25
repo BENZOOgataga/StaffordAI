@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { buildThread } from './conversation-model.ts';
 import { ConversationThread } from './conversation-thread.tsx';
+import { Markdown } from './markdown.tsx';
 import { type Lang } from '../channel-view.ts';
 import { runSend } from './send-message.ts';
 import type { ChannelMessageRow } from '../../shared/ipc.ts';
@@ -18,8 +19,10 @@ function StreamingBubble({ sender, text }: { sender: string; text: string }): Re
             <div className="text-muted-foreground flex items-center gap-2 px-1 text-xs">
                 <span className="font-medium">{sender}</span>
             </div>
-            <div className="bg-card border-border max-w-[78%] rounded-lg border px-3 py-1.5 text-sm break-words whitespace-pre-wrap">
-                {text}
+            <div className="bg-card border-border max-w-[78%] rounded-lg border px-3 py-1.5 text-sm break-words">
+                {/* Same markdown renderer as a settled reply, so the text formats live as it streams
+                    and there is no reformat when the persisted bubble replaces this one. */}
+                <Markdown text={text} />
                 <span className="bg-muted-foreground/60 ml-0.5 inline-block h-3.5 w-1.5 translate-y-0.5 animate-pulse rounded-[1px] align-middle" />
             </div>
         </div>

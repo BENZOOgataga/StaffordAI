@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { highlightLine, langForPath } from './highlight.ts';
+import { highlightLine, langForPath, langForName } from './highlight.ts';
 
 test('langForPath maps code and json extensions, and null for the rest', () => {
     assert.equal(langForPath('src/parse.ts'), 'ts');
@@ -9,6 +9,18 @@ test('langForPath maps code and json extensions, and null for the rest', () => {
     assert.equal(langForPath('config.json'), 'json');
     assert.equal(langForPath('README.md'), null);
     assert.equal(langForPath('logo.png'), null);
+});
+
+test('langForName maps a code fence info string to a highlighter language, null for the uncovered', () => {
+    for (const n of ['ts', 'tsx', 'typescript', 'js', 'jsx', 'javascript', 'TS', ' ts ']) {
+        assert.equal(langForName(n), 'ts', n + ' highlights as the ts family');
+    }
+    assert.equal(langForName('json'), 'json');
+    assert.equal(langForName('jsonc'), 'json');
+    // A language this highlighter does not cover renders as plain monospace, not wrongly coloured.
+    assert.equal(langForName('python'), null);
+    assert.equal(langForName('bash'), null);
+    assert.equal(langForName(''), null);
 });
 
 test('a plain language renders the whole line as one span', () => {

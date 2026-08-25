@@ -19,6 +19,18 @@ export function langForPath(path: string): 'ts' | 'json' | null {
     return null;
 }
 
+/**
+ * The language for a fenced code block's info string (the `ts` in ```ts), or null for one this
+ * highlighter does not cover, which then renders as plain monospace. Same two families as
+ * langForPath, matched by the names markdown fences actually carry.
+ */
+export function langForName(name: string): 'ts' | 'json' | null {
+    const n = name.trim().toLowerCase();
+    if (['ts', 'tsx', 'typescript', 'js', 'jsx', 'javascript', 'mjs', 'cjs'].includes(n)) return 'ts';
+    if (['json', 'jsonc'].includes(n)) return 'json';
+    return null;
+}
+
 const KEYWORDS = new Set([
     'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
     'break', 'continue', 'new', 'delete', 'class', 'extends', 'implements', 'interface', 'type', 'enum',
