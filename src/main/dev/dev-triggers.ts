@@ -17,7 +17,8 @@
  */
 
 import type {
-    RosterSnapshot, RosterCard, TaskBoardReply, TaskRow, TasksReply, PendingApprovals
+    RosterSnapshot, RosterCard, TaskBoardReply, TaskRow, TasksReply, PendingApprovals,
+    TaskDiffReply, TaskDiffFile, TaskDiffLine
 } from '../../shared/ipc.ts';
 
 /** The presentation-only overlay a trigger installs. Null means no dev state is active. */
@@ -29,13 +30,16 @@ export interface DevFakeState {
     /** One colleague's tasks, for the detail Tasks tab. */
     readonly byHire: TasksReply;
     readonly approvals: PendingApprovals;
+    /** The canned diff for the review surface, so the diff viewer renders without a real branch. */
+    readonly diff: TaskDiffReply;
     /** The tray/notification count: tasks awaiting review, and turns paused on an ask. */
     readonly trayCount: { readonly review: number; readonly paused: number };
 }
 
 /** The states a trigger can fake. `clear` removes the overlay. */
 export const DEV_STATES = [
-    'needs-you', 'approval', 'not-reporting', 'board-empty', 'board-no-tasks', 'board-populated', 'clear'
+    'needs-you', 'approval', 'not-reporting', 'board-empty', 'board-no-tasks', 'board-populated',
+    'review-diff', 'clear'
 ] as const;
 export type DevState = (typeof DEV_STATES)[number];
 
@@ -66,6 +70,98 @@ function task(id: string, hireId: string, state: string, over: Partial<TaskRow> 
     };
 }
 
+const EMPTY_DIFF: TaskDiffReply = { files: [], error: null };
+
+// Compact constructors for canned diff lines.
+const c = (text: string): TaskDiffLine => ({ kind: 'context', text });
+const add = (text: string): TaskDiffLine => ({ kind: 'add', text });
+const del = (text: string): TaskDiffLine => ({ kind: 'del', text });
+
+/**
+ * A canned, entirely fake diff that exercises the viewer's real cases: three files, a .ts file with
+ * two hunks and a long unchanged run to collapse, a .tsx file, and a plain .md file, with a mix of
+ * additions and removals. Invented content, no real repo paths, no secrets.
+ */
+function fakeReviewDiff(): TaskDiffReply {
+    const parser: TaskDiffFile = {
+        path: 'src/parser/tokenize.ts', added: 4, removed: 3, binary: false,
+        hunks: [
+            {
+                header: '@@ -1,18 +1,19 @@ export function tokenize',
+                lines: [
+                    c("import { Token } from './types';"),
+                    c(''),
+                    c('export function tokenize(input: string): Token[] {'),
+                    del('  const out = [];'),
+                    add('  const out: Token[] = [];'),
+                    c('  let i = 0;'),
+                    c(''),
+                    c('  // Skip leading whitespace and count the columns as we go, so a later'),
+                    c('  // error can point at the exact character rather than the whole line.'),
+                    c('  let column = 0;'),
+                    c('  while (i < input.length && input[i] === " ") {'),
+                    c('    column += 1;'),
+                    c('    i += 1;'),
+                    c('  }'),
+                    c(''),
+                    c('  while (i < input.length) {'),
+                    c('    const ch = input[i];'),
+                    del("    out.push({ kind: 'op', text: ch });"),
+                    add("    out.push({ kind: 'operator', value: ch, column });"),
+                    c('    i += 1;'),
+                    c('  }'),
+                    c('  return out;'),
+                    c('}')
+                ]
+            },
+            {
+                header: '@@ -40,7 +41,8 @@ function classify',
+                lines: [
+                    c('function classify(ch: string): Kind {'),
+                    c('  if (ch >= "0" && ch <= "9") return "number";'),
+                    del('  if (ch === "+" || ch === "-") return "op";'),
+                    add('  if (ch === "+" || ch === "-" || ch === "*") return "operator";'),
+                    c('  return "text";'),
+                    c('}')
+                ]
+            }
+        ]
+    };
+    const toolbar: TaskDiffFile = {
+        path: 'src/ui/Toolbar.tsx', added: 2, removed: 1, binary: false,
+        hunks: [
+            {
+                header: '@@ -12,9 +12,10 @@ export function Toolbar',
+                lines: [
+                    c('  return ('),
+                    c('    <div className="toolbar">'),
+                    del('      <button onClick={onSave}>Save</button>'),
+                    add('      <button onClick={onSave} disabled={busy}>Save</button>'),
+                    add('      <button onClick={onRun}>Run</button>'),
+                    c('    </div>'),
+                    c('  );'),
+                    c('}')
+                ]
+            }
+        ]
+    };
+    const notes: TaskDiffFile = {
+        path: 'docs/notes.md', added: 1, removed: 0, binary: false,
+        hunks: [
+            {
+                header: '@@ -3,3 +3,4 @@',
+                lines: [
+                    c('## Tokenizer'),
+                    c(''),
+                    add('The tokenizer now records a column on every token.'),
+                    c('It reads left to right in one pass.')
+                ]
+            }
+        ]
+    };
+    return { files: [parser, toolbar, notes], error: null };
+}
+
 /**
  * Builds the fake overlay for a state, or null for `clear` (and for an unknown state, so a bad
  * trigger reverts to real rather than rendering nothing). `n` sizes the needs-you state.
@@ -85,6 +181,7 @@ export function buildDevFake(state: string, n = 1): DevFakeState | null {
                 board: { rows, closedTruncated: false },
                 byHire: { rows },
                 approvals: { pending: [] },
+                diff: EMPTY_DIFF,
                 trayCount: { review: count, paused: 0 }
             };
         }
@@ -96,6 +193,7 @@ export function buildDevFake(state: string, n = 1): DevFakeState | null {
                 board: { rows: [t], closedTruncated: false },
                 byHire: { rows: [t] },
                 approvals: { pending: [{ id: 'dev-ap', hireId: 'dev-a', action: 'write', path: '/demo/src/Widget.tsx', command: null, at: AT }] },
+                diff: EMPTY_DIFF,
                 trayCount: { review: 0, paused: 1 }
             };
         }
@@ -104,19 +202,20 @@ export function buildDevFake(state: string, n = 1): DevFakeState | null {
                 label: 'not reporting',
                 roster: { cards: [card('dev-a', 'Iris', 'not_reporting')] },
                 board: empty, byHire: { rows: [] }, approvals: { pending: [] },
+                diff: EMPTY_DIFF,
                 trayCount: { review: 0, paused: 0 }
             };
         case 'board-empty':
             return {
                 label: 'board: no colleagues',
                 roster: { cards: [] }, board: empty, byHire: { rows: [] },
-                approvals: { pending: [] }, trayCount: { review: 0, paused: 0 }
+                approvals: { pending: [] }, diff: EMPTY_DIFF, trayCount: { review: 0, paused: 0 }
             };
         case 'board-no-tasks':
             return {
                 label: 'board: colleagues, no tasks',
                 roster: { cards: [one, two] }, board: empty, byHire: { rows: [] },
-                approvals: { pending: [] }, trayCount: { review: 0, paused: 0 }
+                approvals: { pending: [] }, diff: EMPTY_DIFF, trayCount: { review: 0, paused: 0 }
             };
         case 'board-populated': {
             const rows = [
@@ -133,7 +232,27 @@ export function buildDevFake(state: string, n = 1): DevFakeState | null {
                 board: { rows, closedTruncated: false },
                 byHire: { rows: rows.filter((r) => r.hireId === 'dev-a') },
                 approvals: { pending: [] },
+                diff: EMPTY_DIFF,
                 trayCount: { review: 2, paused: 0 }
+            };
+        }
+        case 'review-diff': {
+            // A needs-you task whose review surface shows the canned diff. resultBranch and
+            // resultCommit are set so the review renders its "what actually changed" section, whose
+            // diff comes from the overlay rather than a real git branch.
+            const reviewTask = task('rd', 'dev-a', 'needs-you', {
+                text: 'Add a column field to every token and thread it through the parser.',
+                resultBranch: 'stafford/task/dev-a/rd', resultCommit: 'democ0mm1t',
+                resultSummary: 'Threaded a column through the tokenizer and updated the classifier and the toolbar.'
+            });
+            return {
+                label: 'review with diff',
+                roster: { cards: [{ ...one }] },
+                board: { rows: [reviewTask], closedTruncated: false },
+                byHire: { rows: [reviewTask] },
+                approvals: { pending: [] },
+                diff: fakeReviewDiff(),
+                trayCount: { review: 1, paused: 0 }
             };
         }
         case 'clear':

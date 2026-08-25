@@ -58,6 +58,20 @@ test('the three board cases: empty has no colleagues, no-tasks has colleagues bu
     assert.ok((populated?.board.rows.length ?? 0) > 0);
 });
 
+test('review-diff fakes a multi-file diff with hunks and a long collapsible context run', () => {
+    const f = buildDevFake('review-diff');
+    assert.ok((f?.diff.files.length ?? 0) >= 3, 'multiple changed files');
+    const ts = f?.diff.files.find((x) => x.path.endsWith('.ts'));
+    assert.ok(ts && ts.hunks.length >= 2, 'the .ts file has several hunks (for syntax highlighting + multi-hunk)');
+    const contextInFirstHunk = ts!.hunks[0]!.lines.filter((l) => l.kind === 'context').length;
+    assert.ok(contextInFirstHunk >= 8, 'a long unchanged stretch exists to collapse');
+    assert.ok(ts!.hunks[0]!.lines.some((l) => l.kind === 'add') && ts!.hunks[0]!.lines.some((l) => l.kind === 'del'), 'a mix of add and del');
+    // The colleague task is needs-you with a result branch, so the review surface renders.
+    assert.equal(f?.byHire.rows[0]?.state, 'needs-you');
+    assert.ok(f?.byHire.rows[0]?.resultBranch, 'the task has a result branch so the review shows the diff section');
+    // review-diff rides the same channels: no new channel to gate. (See the gate test above.)
+});
+
 test('clear and any unknown state produce no overlay, so a bad trigger reverts to real data', () => {
     assert.equal(buildDevFake('clear'), null);
     assert.equal(buildDevFake('not-a-state'), null);
