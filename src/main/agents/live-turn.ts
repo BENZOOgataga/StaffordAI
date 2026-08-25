@@ -15,21 +15,28 @@
  */
 
 import type { ClaudeStreamEvent } from './claude-runner.ts';
-import type { LiveBlock, LiveToolStatus } from '../../shared/ipc.ts';
+import type { LiveBlock, LiveToolStatus, TaskDiffFile, TaskDiffLine } from '../../shared/ipc.ts';
 
 interface TextBlockM { kind: 'text'; text: string }
-interface ToolBlockM { kind: 'tool'; id: string; name: string; target: string | null; status: LiveToolStatus; partial: string; output?: string }
+interface ToolBlockM {
+    kind: 'tool'; id: string; name: string; target: string | null; status: LiveToolStatus;
+    partial: string; output?: string; edit?: TaskDiffFile;
+}
 type BlockM = TextBlockM | ToolBlockM;
 
-/** The shell tools whose output the Conversation renders. Matched by name, the identity the stream
- * gives, never guessed from the output shape. */
-const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'Shell']);
+/** The command-running tools whose output the Conversation renders. Matched by name, the identity the
+ * stream gives, never guessed from the output shape. (PowerShell is not a shell in the bash sense, so
+ * "command tools" names the set more honestly than "shell tools" did.) */
+const COMMAND_TOOLS = new Set(['Bash', 'PowerShell', 'Shell']);
+
+/** The file-editing tools whose result carries a diff to render. */
+const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
 /**
- * The cap on a single shell command's captured output, in characters. A pathological multi-megabyte
- * stdout is truncated to this before it crosses the bridge, so neither the IPC payload nor the
- * renderer is blown up by one runaway command. 20000 characters is a few hundred lines, well past
- * what a person reads inline, and the tail is dropped with a marker so the truncation is honest.
+ * The cap on a single tool's captured output, in characters. A pathological multi-megabyte stdout,
+ * or a huge created file's content, is truncated to this before it crosses the bridge, so neither the
+ * IPC payload nor the renderer is blown up. 20000 characters is a few hundred lines, well past what a
+ * person reads inline, and the tail is dropped with a marker so the truncation is honest.
  */
 const MAX_TOOL_OUTPUT_CHARS = 20000;
 
@@ -45,7 +52,8 @@ export class LiveTurnBuilder {
                 ? { kind: 'text', text: b.text }
                 : {
                     kind: 'tool', id: b.id, name: b.name, target: b.target, status: b.status,
-                    ...(b.output !== undefined ? { output: b.output } : {})
+                    ...(b.output !== undefined ? { output: b.output } : {}),
+                    ...(b.edit !== undefined ? { edit: b.edit } : {})
                 }
         );
     }
@@ -53,7 +61,9 @@ export class LiveTurnBuilder {
     /** Folds one event in. Returns true when the snapshot changed, so a push is worth sending. */
     apply(event: ClaudeStreamEvent): boolean {
         if (event.type === 'stream_event') return this.#applyStream(event.raw.event);
-        if (event.type === 'user') return this.#applyToolResults(event.raw.message);
+        // A user event carries the tool_result under message.content and, as a sibling of message,
+        // the structured tool_use_result that holds an edit's patch. Both are handed to the handler.
+        if (event.type === 'user') return this.#applyToolResults(event.raw.message, event.raw.tool_use_result);
         // assistant/result/system and anything else: the deltas already built the structure.
         return false;
     }
@@ -137,8 +147,11 @@ export class LiveTurnBuilder {
         return false;
     }
 
-    /** A `user` event carries tool_result blocks; each resolves its tool by id to ok or error. */
-    #applyToolResults(message: unknown): boolean {
+    /**
+     * A `user` event carries tool_result blocks (under message.content) that resolve each tool by id
+     * to ok or error, and, as a sibling, the structured tool_use_result that holds an edit's patch.
+     */
+    #applyToolResults(message: unknown, toolUseResult: unknown): boolean {
         if (!isRecord(message)) return false;
         const content = message.content;
         if (!Array.isArray(content)) return false;
@@ -148,21 +161,95 @@ export class LiveTurnBuilder {
             const id = typeof part.tool_use_id === 'string' ? part.tool_use_id : '';
             if (id === '') continue;
             const status: LiveToolStatus = part.is_error === true ? 'error' : 'ok';
-            // A shell result's output is rendered even on failure, where stderr is the useful part.
+            // A command result's output is rendered even on failure, where stderr is the useful part.
             const output = capOutput(resultText(part.content));
             for (const block of this.#blocks) {
                 if (block.kind !== 'tool' || block.id !== id) continue;
                 if (block.status !== status) { block.status = status; changed = true; }
-                // Only a shell tool carries its output; a read or an edit never does. Even an empty
+                // Only a command tool carries its output; a read or an edit never does. Even an empty
                 // string is set, so the island can say the command ran and produced nothing.
-                if (SHELL_TOOLS.has(block.name) && block.output === undefined && output !== null) {
+                if (COMMAND_TOOLS.has(block.name) && block.output === undefined && output !== null) {
                     block.output = output;
                     changed = true;
+                }
+                // A successful edit carries its diff, converted from the structured result. A failed
+                // edit, a binary one, or a missing/malformed patch leaves it absent, which the tab
+                // degrades to the one-line "edited path".
+                if (EDIT_TOOLS.has(block.name) && block.edit === undefined && status !== 'error') {
+                    const edit = editDiff(toolUseResult, block.target);
+                    if (edit !== null) { block.edit = edit; changed = true; }
                 }
             }
         }
         return changed;
     }
+}
+
+/**
+ * The diff for an edit, from the stream's structured tool_use_result, or null when there is none to
+ * show (not an object, no path, a binary edit, or a malformed patch). Two shapes: a real edit carries
+ * a `structuredPatch` (hunks), which maps straight to the viewer's file; a created file carries an
+ * empty patch and the whole new `content`, which becomes an all-additions diff, capped.
+ */
+function editDiff(toolUseResult: unknown, fallbackPath: string | null): TaskDiffFile | null {
+    if (!isRecord(toolUseResult)) return null;
+    const path = typeof toolUseResult.filePath === 'string' ? toolUseResult.filePath : (fallbackPath ?? '');
+    if (path === '') return null;
+
+    const patch = toolUseResult.structuredPatch;
+    if (Array.isArray(patch) && patch.length > 0) return fileFromStructuredPatch(path, patch);
+
+    // An empty patch with content is a created file: render it as an all-additions diff, capped.
+    if (Array.isArray(patch) && patch.length === 0 && typeof toolUseResult.content === 'string') {
+        return fileFromCreatedContent(path, toolUseResult.content);
+    }
+    // No usable patch (binary, or a shape we do not model): degrade to the one-liner.
+    return null;
+}
+
+/** Maps a jsdiff-style structuredPatch straight into the review viewer's file shape. */
+function fileFromStructuredPatch(path: string, patch: readonly unknown[]): TaskDiffFile {
+    const hunks: { header: string; lines: TaskDiffLine[] }[] = [];
+    let added = 0;
+    let removed = 0;
+    for (const raw of patch) {
+        if (!isRecord(raw)) continue;
+        const oldStart = numberOf(raw.oldStart) ?? 0;
+        const oldLines = numberOf(raw.oldLines) ?? 0;
+        const newStart = numberOf(raw.newStart) ?? 0;
+        const newLines = numberOf(raw.newLines) ?? 0;
+        const header = '@@ -' + oldStart + ',' + oldLines + ' +' + newStart + ',' + newLines + ' @@';
+        const lines: TaskDiffLine[] = [];
+        const rawLines = Array.isArray(raw.lines) ? raw.lines : [];
+        for (const l of rawLines) {
+            if (typeof l !== 'string') continue;
+            const marker = l.charAt(0);
+            const text = l.slice(1);
+            if (marker === '+') { lines.push({ kind: 'add', text }); added++; }
+            else if (marker === '-') { lines.push({ kind: 'del', text }); removed++; }
+            else lines.push({ kind: 'context', text });
+        }
+        hunks.push({ header, lines });
+    }
+    return { path, added, removed, hunks, binary: false };
+}
+
+/**
+ * A created file as an all-additions diff synthesised from its content, capped. Chosen over a plain
+ * "created path, N lines" row because it shows the actual code that was written, reads exactly like
+ * `git diff` of a new file, and reuses the same viewer as every other edit, so a create and a modify
+ * look consistent. Bounded by the same cap as command output, so a huge new file cannot blow up the
+ * bridge or the viewer.
+ */
+function fileFromCreatedContent(path: string, content: string): TaskDiffFile {
+    const capped = content.length > MAX_TOOL_OUTPUT_CHARS;
+    const body = capped ? content.slice(0, MAX_TOOL_OUTPUT_CHARS) : content;
+    const rawLines = body.replace(/\n$/, '').split('\n');
+    const lines: TaskDiffLine[] = rawLines.map((text) => ({ kind: 'add' as const, text }));
+    if (capped) lines.push({ kind: 'context', text: '... new file truncated' });
+    const added = rawLines.length;
+    const header = '@@ -0,0 +1,' + added + ' @@';
+    return { path, added, removed: 0, hunks: [{ header, lines }], binary: false };
 }
 
 /** The text of a tool_result's content: the string as-is, or the text parts of a block array. */

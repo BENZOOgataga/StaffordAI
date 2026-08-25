@@ -69,7 +69,7 @@ test('a file read never carries output: a read is an access, not output to show'
     assert.equal(toolOut(b), undefined, 'a read shows only its path, never the file body');
 });
 
-test('an edit carries no output either this phase: its diff is phase 4', () => {
+test('an edit carries no command output, only its diff', () => {
     const b = new LiveTurnBuilder();
     b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a.ts' } } }));
     b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'edited' }] } }));
@@ -98,6 +98,97 @@ test('a pathological output is capped, so a runaway command cannot blow up the p
     const out = toolOut(b) ?? '';
     assert.ok(out.length < 21000, 'the output is bounded well under the raw size');
     assert.match(out, /output truncated \(\d+ more characters\)/, 'the truncation is marked honestly');
+});
+
+// --- file edits as diffs (phase 4) ------------------------------------------
+
+interface EditFile { path: string; added: number; removed: number; binary: boolean; hunks: { header: string; lines: { kind: string; text: string }[] }[] }
+const toolEdit = (b: LiveTurnBuilder): EditFile | undefined =>
+    (b.snapshot()[0] as { edit?: EditFile }).edit;
+
+test('an Edit with a structuredPatch becomes a diff: hunk header, +/- lines, and counts', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'src/x.ts' } } }));
+    b.apply(ev('user', {
+        message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'ok' }] },
+        tool_use_result: {
+            filePath: 'src/x.ts',
+            structuredPatch: [{
+                oldStart: 1, oldLines: 2, newStart: 1, newLines: 3,
+                lines: [' const a = 1;', '-const b = 2;', '+const b = 3;', '+const c = 4;']
+            }]
+        }
+    }));
+    const edit = toolEdit(b);
+    assert.ok(edit, 'the edit carries a diff');
+    assert.equal(edit!.path, 'src/x.ts');
+    assert.equal(edit!.binary, false);
+    assert.equal(edit!.added, 2, 'two + lines');
+    assert.equal(edit!.removed, 1, 'one - line');
+    assert.equal(edit!.hunks[0]!.header, '@@ -1,2 +1,3 @@', 'header built from the patch offsets');
+    assert.deepEqual(edit!.hunks[0]!.lines.map((l) => l.kind), ['context', 'del', 'add', 'add']);
+    assert.equal(edit!.hunks[0]!.lines[1]!.text, 'const b = 2;', 'the marker is stripped from the text');
+});
+
+test('a Write that creates a file becomes an all-additions diff synthesised from its content', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Write', input: { file_path: 'new.ts' } } }));
+    b.apply(ev('user', {
+        message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'created' }] },
+        tool_use_result: { type: 'create', filePath: 'new.ts', structuredPatch: [], content: 'line one\nline two\n' }
+    }));
+    const edit = toolEdit(b);
+    assert.ok(edit);
+    assert.equal(edit!.added, 2, 'both new lines are additions');
+    assert.equal(edit!.removed, 0);
+    assert.deepEqual(edit!.hunks[0]!.lines.map((l) => l.kind), ['add', 'add']);
+    assert.equal(edit!.hunks[0]!.header, '@@ -0,0 +1,2 @@', 'a create starts from nothing');
+});
+
+test('a failed edit carries no diff, so it degrades to the one-line island', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'x.ts' } } }));
+    b.apply(ev('user', {
+        message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: true, content: 'no match' }] },
+        tool_use_result: { filePath: 'x.ts', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['+x'] }] }
+    }));
+    assert.equal(toolEdit(b), undefined, 'a failed edit shows no diff');
+    assert.equal((b.snapshot()[0] as { status: string }).status, 'error');
+});
+
+test('a malformed or missing patch degrades to no diff, never throws', () => {
+    for (const tur of [undefined, {}, { filePath: 'x.ts' }, { filePath: 'x.ts', structuredPatch: 'nope' }, { structuredPatch: [{ lines: 'bad' }] }]) {
+        const b = new LiveTurnBuilder();
+        b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'x.ts' } } }));
+        assert.doesNotThrow(() => b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false }] }, tool_use_result: tur })));
+        // A structuredPatch that is a non-empty array of malformed hunks still yields a (possibly
+        // empty) file; the point is it must not throw. The clearly-missing cases carry no edit.
+        if (tur === undefined || Object.keys(tur).length === 0) assert.equal(toolEdit(b), undefined);
+    }
+});
+
+test('a binary edit (no structuredPatch) carries no diff, a safe non-diff row', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Write', input: { file_path: 'logo.png' } } }));
+    b.apply(ev('user', {
+        message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'ok' }] },
+        tool_use_result: { filePath: 'logo.png' }
+    }));
+    assert.equal(toolEdit(b), undefined);
+});
+
+test('a huge created file is capped, so it cannot blow up the diff', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Write', input: { file_path: 'big.txt' } } }));
+    const huge = Array.from({ length: 100000 }, (_v, i) => 'row ' + i).join('\n');
+    b.apply(ev('user', {
+        message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'created' }] },
+        tool_use_result: { type: 'create', filePath: 'big.txt', structuredPatch: [], content: huge }
+    }));
+    const edit = toolEdit(b);
+    assert.ok(edit);
+    const lastLine = edit!.hunks[0]!.lines.at(-1)!;
+    assert.equal(lastLine.text, '... new file truncated', 'the create diff is bounded with a marker');
 });
 
 test('text and tool blocks keep the order they streamed in', () => {
