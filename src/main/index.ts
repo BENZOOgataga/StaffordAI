@@ -1796,7 +1796,12 @@ app.whenReady().then(async () => {
                 });
                 notifyChannelChanged();
             }
-            await (runnerManager ? runnerManager.submit(hireId, text) : Promise.resolve());
+            // The send is confirmed once the message is recorded, not when the colleague finishes
+            // replying. Awaiting the turn here kept the composer's text on screen until the answer
+            // arrived. The turn runs on the manager's own queue, so it is started and not awaited,
+            // exactly as the manager's contract intends ("the app does not await it on the IPC path").
+            // submit swallows its own turn errors, so this cannot reject unhandled.
+            if (runnerManager) void runnerManager.submit(hireId, text);
         },
         // The pending permission approvals, and the person's answer, which resolves the
         // paused seam for exactly that ask so the right turn continues or stops.
