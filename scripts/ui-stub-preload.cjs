@@ -17,7 +17,7 @@ const unsub = () => () => {};
 
 contextBridge.exposeInMainWorld('stafford', {
     health: async () => ({ ok: true, platform: 'win32', startedAt: '' }),
-    projects: { list: async () => ({ projects: [{ id: 'p1', name: 'test' }] }), create: async () => ({ id: 'p2', name: 'x' }), pickFolder: async () => 'C:/Users/x/Documents/archive' },
+    projects: { list: async () => ({ projects: [{ id: 'p1', name: 'test' }] }), create: async () => ({ id: 'p2', name: 'x' }), pickFolder: async () => '/example/project-folder' },
     hire: { create: async () => ({ id: 'h1', name: 'x', title: 'x', projectId: 'p1' }) },
     roster: { snapshot: async () => ({ cards }), onChanged: unsub },
     channel: (() => {
