@@ -632,6 +632,18 @@ function devOr<T>(realValue: () => T, pick: (fake: DevFakeState) => T): T {
 }
 
 /**
+ * While a dev fake overlay is active, a write on a faked task or approval must not reach the real
+ * lifecycle: the faked ids do not exist in the store, so a real review would error, and a real
+ * assign would persist a task, which the presentation-only fakes must never do. So a write returns
+ * a benign inert result instead. Clear the overlay to resume real writes. Packaged builds always
+ * take the real path (the guard short-circuits first).
+ */
+function devInert<T>(inert: T, realValue: () => T): T {
+    if (!app.isPackaged && devFake()) return inert;
+    return realValue();
+}
+
+/**
  * What needs the person right now, for the tray: tasks waiting on a review, and turns paused
  * on a permission ask. The same two things the board header and the approvals banner count.
  */
@@ -752,6 +764,9 @@ async function readTaskDiff(id: string): Promise<TaskDiffReply> {
  * invoke. A refusal is an answer ("you cannot approve a task that is already closed"), and
  * the renderer should show it; anything else is a real fault and still rejects.
  */
+/** The benign reply a task write returns while a dev fake overlay is active: success, no change. */
+const DEV_INERT_WRITE: TaskWriteReply = { ok: true, task: null, refused: null };
+
 function taskWrite(run: () => Task): TaskWriteReply {
     try {
         return { ok: true, task: taskRow(run()), refused: null };
@@ -1783,7 +1798,7 @@ app.whenReady().then(async () => {
             () => ({ pending: approvalRegistry ? approvalRegistry.list() : [] }),
             (f) => f.approvals
         ),
-        answerApproval: (id, approve, note) => { approvalRegistry?.answer(id, approve, note); },
+        answerApproval: (id, approve, note) => devInert<void>(undefined, () => { approvalRegistry?.answer(id, approve, note); }),
 
         // Tasks. The three writes go through the service, which is the only thing in the app
         // that writes a task state and which names the actor itself on every write.
@@ -1791,8 +1806,8 @@ app.whenReady().then(async () => {
             () => ({ rows: (repositories?.tasks.byHire(hireId, limit) ?? []).map(taskRow) }),
             (f) => f.byHire
         ),
-        assignTask: (payload) => taskWrite(() => requireTasks().assign(payload)),
-        startTask: (id) => taskWrite(() => {
+        assignTask: (payload) => devInert(DEV_INERT_WRITE, () => taskWrite(() => requireTasks().assign(payload))),
+        startTask: (id) => devInert(DEV_INERT_WRITE, () => taskWrite(() => {
             // The reply carries the task as it stands once it is running; the attempt itself
             // continues without the renderer waiting on it.
             const { task, finished } = requireTasks().start(id);
@@ -1800,11 +1815,11 @@ app.whenReady().then(async () => {
                 smoke('task ' + id + ' ended badly: ' + (error instanceof Error ? error.message : String(error)));
             });
             return task;
-        }),
+        })),
         // Approve and fail are decisions. Send-back is a decision that also puts the
         // colleague back to work, so its reply comes back as soon as the run is under way and
         // the attempt continues without the renderer waiting on it, exactly as start does.
-        reviewTask: (payload) => taskWrite(() => {
+        reviewTask: (payload) => devInert(DEV_INERT_WRITE, () => taskWrite(() => {
             const { task, finished } = requireTasks().review(payload.id, payload.decision, payload.note);
             if (finished) {
                 void finished.catch((error: unknown) => {
@@ -1813,7 +1828,7 @@ app.whenReady().then(async () => {
                 });
             }
             return task;
-        }),
+        })),
         taskDiff: (id) => readTaskDiff(id),
         // Unfinished tasks in full, finished ones capped. See TaskRepository.open for why the
         // unfinished set is deliberately not paginated.

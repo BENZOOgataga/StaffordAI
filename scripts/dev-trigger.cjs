@@ -29,9 +29,11 @@ if (!state || !STATES.includes(state)) {
     process.exit(1);
 }
 
+// The CLI cannot talk to the running Electron app directly, so it leaves the request in a temp
+// file the dev app polls. "clear" is a request telling the app to drop the overlay, so it is a
+// write like any other, not a delete: deleting the file would signal nothing.
 fs.writeFileSync(TRIGGER_FILE, JSON.stringify({ state, n }));
-process.stdout.write(
-    'wrote ' + TRIGGER_FILE + '\n' +
-    'state: ' + state + (state === 'needs-you' ? ' (n=' + n + ')' : '') + '\n' +
-    'the running dev app picks this up within about half a second. Nothing is persisted.\n'
-);
+const action = state === 'clear'
+    ? 'clearing the fake overlay: the running dev app reverts to real data'
+    : 'triggering ' + state + (state === 'needs-you' ? ' (n=' + n + ')' : '') + ': the running dev app renders it';
+process.stdout.write(action + ' within about half a second. Nothing is persisted.\n');
