@@ -20,6 +20,7 @@ interface SessionOverrides {
     ackCheckpoints?: (drainId: string) => void;
     channelReply?: (hireId: string, text: string) => Promise<void>;
     createProject?: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
+    pickFolder?: () => Promise<string | null>;
     createHire?: (payload: { type: string; title: string; projectId: string }) => HireCreated;
     permissionRules?: (projectId: string) => PermissionRulesReply;
     effectivePolicy?: (projectId: string, hireId: string | null) => PermissionEffectiveReply;
@@ -58,6 +59,7 @@ function deps(
         listProjects: () => projects,
         createProject: over.createProject
             ?? ((payload) => ({ id: 'proj-new', name: payload.name })),
+        pickFolder: over.pickFolder ?? (() => Promise.resolve(null)),
         createHire: over.createHire
             ?? ((payload) => ({ id: 'hire-new', name: 'Marion', title: payload.title, projectId: payload.projectId })),
         rosterSnapshot: () => roster,
@@ -127,6 +129,21 @@ test('project:create refuses a malformed payload before reaching createProject',
     assert.throws(() => handlers['project:create']({ name: '', repoPaths: [] }), /project:create requires/);
     assert.throws(() => handlers['project:create']({ name: 'ok' }), /project:create requires/);
     assert.equal(called, false, 'a malformed payload never reaches the create logic');
+});
+
+test('dialog:pick-folder routes to pickFolder and returns the chosen directory', async () => {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
+        pickFolder: () => Promise.resolve('C:/Users/me/project')
+    }));
+    const result = await (handlers['dialog:pick-folder'](undefined) as Promise<string | null>);
+    assert.equal(result, 'C:/Users/me/project');
+});
+
+test('dialog:pick-folder returns null when the picker is cancelled', async () => {
+    const handlers = buildHandlers(deps({ projects: [] }, { cards: [] }, {
+        pickFolder: () => Promise.resolve(null)
+    }));
+    assert.equal(await (handlers['dialog:pick-folder'](undefined) as Promise<string | null>), null);
 });
 
 test('hire:create is guarded and routes a valid payload to createHire', () => {

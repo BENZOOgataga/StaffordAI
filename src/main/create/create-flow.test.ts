@@ -16,7 +16,7 @@ import path from 'node:path';
 import { createProject, createHire, defaultPolicy, type CreateDeps } from './create-flow.ts';
 import type { Project, HiredAgent } from '../../domain/models.ts';
 
-function harness() {
+function harness(over: { isSelfPath?: (p: string) => boolean } = {}) {
     const projects = new Map<string, Project>();
     const hires: HiredAgent[] = [];
     // Every name the flow drew, so a test can prove the name comes from the draw and that a
@@ -27,6 +27,7 @@ function harness() {
     const deps: CreateDeps = {
         // The real filesystem check, so the directory validation is genuine.
         dirExists: (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
+        isSelfPath: over.isSelfPath ?? (() => false),
         insertProject: (project) => { projects.set(project.id, project); },
         getProject: (id) => projects.get(id) ?? null,
         insertHire: (hire) => { hires.push(hire); },
@@ -78,6 +79,34 @@ test('project:create with a nonexistent path is rejected and no project row is w
         /not an existing directory/
     );
     assert.equal(projects.size, 0, 'nothing was written for a bad path');
+});
+
+test("project:create with a folder that is Stafford's own directory is rejected, no row written", () => {
+    // A real, existing directory, so the dirExists check passes and the self-path guard is what
+    // refuses it, not the not-a-directory check.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-self-'));
+    try {
+        const { deps, projects } = harness({ isSelfPath: (p) => p === dir });
+        assert.throws(
+            () => createProject(deps, { name: 'Stafford', repoPaths: [dir] }),
+            /Stafford's own directory/
+        );
+        assert.equal(projects.size, 0, 'nothing was written for a self-path');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('project:create with a real, non-self folder still succeeds', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-ok-'));
+    try {
+        const { deps, projects } = harness({ isSelfPath: () => false });
+        const project = createProject(deps, { name: 'Stafford', repoPaths: [dir] });
+        assert.ok(project.id, 'a legitimate folder creates a project');
+        assert.equal(projects.size, 1);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });
 
 test('project:create with a path that is a file, not a directory, is rejected', () => {

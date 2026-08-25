@@ -37,6 +37,7 @@ import { resolveAppId } from './app-id.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import { drawName, NAME_POOL } from './create/name-pool.ts';
 import { seedManagedConfig, type ManagedFs } from './agents/managed-config.ts';
+import { hitsSelfPath } from './create/containment.ts';
 import { copyCredentialOwnerLocked } from './agents/credential-lock.ts';
 import { createRepositories, type Repositories } from './storage/repository.ts';
 import { runDrain, type DrainableAgent, type CheckpointResult } from './agents/drain.ts';
@@ -197,6 +198,26 @@ function dirExists(p: string): boolean {
 }
 
 /**
+ * Stafford's own directories, which a project must never be pointed at: the app/install dir, the
+ * runtime cwd (where Stafford itself runs), and the userData dir. Read per call so a repackage or a
+ * test that relocates them stays correct.
+ */
+function staffordSelfPaths(): string[] {
+    return [app.getAppPath(), process.cwd(), app.getPath('userData')];
+}
+
+/**
+ * True when a directory is, sits inside, or contains one of Stafford's own directories. Shared by
+ * the create guard and the spawn guards, so both refuse the same set through the same normalisation.
+ */
+function hitsSelf(candidate: string): boolean {
+    return hitsSelfPath(candidate, {
+        selfPaths: staffordSelfPaths(),
+        normalise: (value) => currentPlatform().normalisePath(value)
+    });
+}
+
+/**
  * The create flow's dependencies over the real store and filesystem. The
  * validation and the shapes live in create-flow.ts; this binds them to the real
  * repository inserts, the real directory check, and a fresh randomUUID id.
@@ -204,6 +225,7 @@ function dirExists(p: string): boolean {
 function createDeps(repositories: Repositories): CreateDeps {
     return {
         dirExists,
+        isSelfPath: hitsSelf,
         insertProject: (project) => repositories.projects.insert(project),
         getProject: (id) => repositories.projects.get(id),
         insertHire: (hire) => repositories.hires.insert(hire),
@@ -745,6 +767,11 @@ async function readTaskDiff(id: string): Promise<TaskDiffReply> {
     if (!task.resultBranch) return { files: [], error: null };
     const cwd = repositories?.projects.get(task.projectId)?.repos[0]?.path;
     if (!cwd) return { files: [], error: 'the project has no repository on this machine' };
+    // Never run git inside Stafford's own repo for a diff either; a misconfigured project fails
+    // closed with a clear reason rather than reading Stafford's own tree.
+    if (hitsSelf(cwd)) {
+        return { files: [], error: "this project points at Stafford's own directory; repoint its folder" };
+    }
 
     try {
         // The full patch, not just --numstat, so the review can render the actual changed lines.
@@ -928,6 +955,14 @@ function buildDelivery(store: HireStore): void {
             const project = repositories?.projects.get(hire.activeProjectId);
             const cwd = project?.repos[0]?.path;
             if (!cwd) return null;
+            // Fail closed if the project points at Stafford itself, so a colleague can never spawn
+            // inside Stafford's own repo. This is what protects a bad project record already saved:
+            // it cannot spawn until its folder is repointed. Same null fail-closed as an empty cwd.
+            if (hitsSelf(cwd)) {
+                process.stderr.write('[containment] refusing to spawn ' + hireId +
+                    ': project folder is Stafford\'s own directory, repoint it\n');
+                return null;
+            }
             return {
                 cwd, projectId: hire.activeProjectId,
                 resumeSessionId: hire.sessions[hire.activeProjectId] ?? null
@@ -1026,6 +1061,12 @@ function buildDelivery(store: HireStore): void {
             if (!hire || !hire.activeProjectId) return null;
             const cwd = repositories?.projects.get(hire.activeProjectId)?.repos[0]?.path;
             if (!cwd) return null;
+            // Same self-path guard as the chat path: a task must not run inside Stafford's own repo.
+            if (hitsSelf(cwd)) {
+                process.stderr.write('[containment] refusing to run a task for ' + hireId +
+                    ': project folder is Stafford\'s own directory, repoint it\n');
+                return null;
+            }
             return { cwd, projectId: hire.activeProjectId };
         },
         runTurn: (hireId, text, resumeSessionId) =>
@@ -1749,6 +1790,15 @@ app.whenReady().then(async () => {
         createProject: (payload) => {
             if (!repositories) throw new Error('project:create: the store is not open');
             return createProjectService(createDeps(repositories), payload);
+        },
+        pickFolder: async () => {
+            // Modal to the main window so the pick belongs to it. openDirectory only, single
+            // selection. The chosen path is still validated by createProject; this only saves typing.
+            const parent = window && !window.isDestroyed() ? window : undefined;
+            const result = parent
+                ? await dialog.showOpenDialog(parent, { properties: ['openDirectory'] })
+                : await dialog.showOpenDialog({ properties: ['openDirectory'] });
+            return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
         },
         createHire: (payload) => {
             if (!repositories) throw new Error('hire:create: the store is not open');

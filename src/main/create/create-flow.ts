@@ -48,6 +48,12 @@ export interface HireView {
 export interface CreateDeps {
     /** True iff the path is an existing directory. The load-bearing check. */
     readonly dirExists: (path: string) => boolean;
+    /**
+     * True iff the path is, sits inside, or contains one of Stafford's own directories. A project
+     * pointed at Stafford itself is refused, so a colleague can never spawn inside Stafford's source
+     * tree. The self-paths and the normalisation are injected (see `hitsSelfPath`).
+     */
+    readonly isSelfPath: (path: string) => boolean;
     readonly insertProject: (project: Project) => void;
     readonly getProject: (id: string) => Project | null;
     readonly insertHire: (hire: HiredAgent) => void;
@@ -98,6 +104,11 @@ export function createProject(deps: CreateDeps, input: CreateProjectInput): Proj
         }
         if (!deps.dirExists(path)) {
             throw new Error('repo path is not an existing directory: ' + path);
+        }
+        // A project must not point at Stafford itself, or a colleague spawns inside Stafford's own
+        // repo. Refused here at creation, and again at spawn as defense in depth.
+        if (deps.isSelfPath(path)) {
+            throw new Error("that folder is Stafford's own directory, pick the project's folder");
         }
     }
 
