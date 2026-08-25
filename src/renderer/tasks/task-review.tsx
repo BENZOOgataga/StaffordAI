@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Check, X, Undo2, GitBranch, FileDiff, FilePlus2, ShieldAlert, MessageSquareReply } from 'lucide-react';
+import { Check, X, Undo2, GitBranch, FilePlus2, ShieldAlert, MessageSquareReply } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { useTaskDiff, reviewTask } from './use-tasks.ts';
+import { DiffViewer } from './diff-viewer.tsx';
 import { resultLine, shortCommit, refusalLines, deliveredOutputs, attemptLine, taskCopy } from './task-model.ts';
 import type { Lang } from '../channel-view.ts';
 import type { TaskRow } from '../../shared/ipc.ts';
@@ -142,17 +143,7 @@ export function TaskReview({ task, lang }: { task: TaskRow; lang: Lang }): React
                         ) : (
                             <>
                                 <p className="text-muted-foreground text-xs">{resultLine(task, diff.files)}</p>
-                                <ul className="flex list-none flex-col gap-1 p-0">
-                                    {diff.files.map((file) => (
-                                        <li key={file.path} className="flex min-w-0 items-center gap-2 text-sm">
-                                            <FileDiff className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
-                                            <code className="min-w-0 flex-1 truncate">{file.path}</code>
-                                            <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                                                +{file.added} / -{file.removed}
-                                            </span>
-                                        </li>
-                                    ))}
-                                </ul>
+                                <DiffViewer files={diff.files} />
                             </>
                         )}
                     </div>

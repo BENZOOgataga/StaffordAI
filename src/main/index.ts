@@ -27,6 +27,7 @@ import { installTray, needsYouSignal, type TrayHandle } from './tray.ts';
 import {
     registerDevTriggers, applyDevState, devFake, type DevFakeState
 } from './dev/dev-triggers.ts';
+import { parseUnifiedDiff } from './tasks/diff-parse.ts';
 import { TRAY_ICON_PNG } from './tray-icons.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
@@ -62,7 +63,7 @@ import { randomUUID } from 'node:crypto';
 import type {
     RosterSnapshot, ActivityRow, SavedCheckpoints,
     PermissionRuleView, PermissionRulesReply, PermissionEffectiveReply, PermissionWriteReply,
-    PermissionAdd, PermissionUpdate, TaskRow, TaskWriteReply, TaskDiffReply, TaskDiffFile
+    PermissionAdd, PermissionUpdate, TaskRow, TaskWriteReply, TaskDiffReply
 } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 
@@ -736,24 +737,15 @@ async function readTaskDiff(id: string): Promise<TaskDiffReply> {
     if (!cwd) return { files: [], error: 'the project has no repository on this machine' };
 
     try {
+        // The full patch, not just --numstat, so the review can render the actual changed lines.
+        // -U8 carries eight lines of context each side, enough that two nearby changes fall in one
+        // hunk with a stretch of unchanged lines between them, which the viewer collapses. The
+        // content is git's own, so the rendered diff is byte-accurate to `git diff -U8 HEAD <branch>`.
         const out = await realCheckpointDeps(currentPlatform()).runGit(
-            ['diff', '--numstat', 'HEAD', task.resultBranch], { cwd, timeoutMs: 15_000 });
+            ['diff', '-U8', 'HEAD', task.resultBranch], { cwd, timeoutMs: 15_000 });
         if (out.timedOut) return { files: [], error: 'reading the diff took too long' };
         if (out.code !== 0) return { files: [], error: 'the result branch could not be read' };
-        const files: TaskDiffFile[] = [];
-        for (const line of out.stdout.split('\n')) {
-            const parts = line.split('\t');
-            if (parts.length < 3) continue;
-            const path = parts.slice(2).join('\t').trim();
-            if (path === '') continue;
-            // A dash means a binary file, which has no line counts rather than zero of them.
-            files.push({
-                path,
-                added: parts[0] === '-' ? 0 : Number(parts[0]) || 0,
-                removed: parts[1] === '-' ? 0 : Number(parts[1]) || 0
-            });
-        }
-        return { files, error: null };
+        return { files: parseUnifiedDiff(out.stdout), error: null };
     } catch {
         return { files: [], error: 'the result branch could not be read' };
     }
@@ -1829,7 +1821,7 @@ app.whenReady().then(async () => {
             }
             return task;
         })),
-        taskDiff: (id) => readTaskDiff(id),
+        taskDiff: (id) => devOr(() => readTaskDiff(id), (f) => Promise.resolve(f.diff)),
         // Unfinished tasks in full, finished ones capped. See TaskRepository.open for why the
         // unfinished set is deliberately not paginated.
         taskBoard: (closedLimit) => devOr(() => {

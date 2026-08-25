@@ -520,10 +520,26 @@ export interface TaskReview {
  * into a file, through the IPC boundary and into the renderer, and the branch is right there
  * in git for the moment I want to read it properly.
  */
+/** One line of a unified diff: an addition, a removal, or unchanged context. */
+export type TaskDiffLineKind = 'add' | 'del' | 'context';
+export interface TaskDiffLine {
+    readonly kind: TaskDiffLineKind;
+    /** The line's text, exactly as git emitted it, without the leading +, -, or space marker. */
+    readonly text: string;
+}
+/** One hunk of a file's diff: the @@ header git wrote, and its lines in order. */
+export interface TaskDiffHunk {
+    readonly header: string;
+    readonly lines: readonly TaskDiffLine[];
+}
 export interface TaskDiffFile {
     readonly path: string;
     readonly added: number;
     readonly removed: number;
+    /** The unified-diff hunks for this file, parsed from git's own output. Empty for a binary file. */
+    readonly hunks: readonly TaskDiffHunk[];
+    /** True when git reported a binary change, which has counts but no line-level hunks. */
+    readonly binary: boolean;
 }
 
 export interface TaskBoardRequest {

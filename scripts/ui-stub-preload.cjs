@@ -163,14 +163,62 @@ contextBridge.exposeInMainWorld('stafford', {
             ],
             closedTruncated: true
         }),
-        diff: async () => ({
-            files: [
-                { path: 'src/config/parse.ts', added: 84, removed: 0 },
-                { path: 'src/config/parse.test.ts', added: 61, removed: 0 },
-                { path: 'src/config/index.ts', added: 3, removed: 1 }
-            ],
-            error: null
-        }),
+        // A canned diff with hunks, so the harness renders the inline diff viewer: a .ts file with
+        // two hunks and a long unchanged run to collapse, a .tsx file, and a plain .md file.
+        diff: async () => {
+            const c = (text) => ({ kind: 'context', text });
+            const add = (text) => ({ kind: 'add', text });
+            const del = (text) => ({ kind: 'del', text });
+            return {
+                files: [
+                    {
+                        path: 'src/parser/tokenize.ts', added: 4, removed: 3, binary: false,
+                        hunks: [
+                            { header: '@@ -1,18 +1,19 @@ export function tokenize', lines: [
+                                c("import { Token } from './types';"), c(''),
+                                c('export function tokenize(input: string): Token[] {'),
+                                del('  const out = [];'), add('  const out: Token[] = [];'),
+                                c('  let i = 0;'), c(''),
+                                c('  // Skip leading whitespace and count the columns as we go, so a later'),
+                                c('  // error can point at the exact character rather than the whole line.'),
+                                c('  let column = 0;'), c('  while (i < input.length && input[i] === " ") {'),
+                                c('    column += 1;'), c('    i += 1;'), c('  }'), c(''),
+                                c('  while (i < input.length) {'), c('    const ch = input[i];'),
+                                del("    out.push({ kind: 'op', text: ch });"),
+                                add("    out.push({ kind: 'operator', value: ch, column });"),
+                                c('    i += 1;'), c('  }'), c('  return out;'), c('}')
+                            ] },
+                            { header: '@@ -40,7 +41,8 @@ function classify', lines: [
+                                c('function classify(ch: string): Kind {'),
+                                c('  if (ch >= "0" && ch <= "9") return "number";'),
+                                del('  if (ch === "+" || ch === "-") return "op";'),
+                                add('  if (ch === "+" || ch === "-" || ch === "*") return "operator";'),
+                                c('  return "text";'), c('}')
+                            ] }
+                        ]
+                    },
+                    {
+                        path: 'src/ui/Toolbar.tsx', added: 2, removed: 1, binary: false,
+                        hunks: [{ header: '@@ -12,9 +12,10 @@ export function Toolbar', lines: [
+                            c('  return ('), c('    <div className="toolbar">'),
+                            del('      <button onClick={onSave}>Save</button>'),
+                            add('      <button onClick={onSave} disabled={busy}>Save</button>'),
+                            add('      <button onClick={onRun}>Run</button>'),
+                            c('    </div>'), c('  );'), c('}')
+                        ] }]
+                    },
+                    {
+                        path: 'docs/notes.md', added: 1, removed: 0, binary: false,
+                        hunks: [{ header: '@@ -3,3 +3,4 @@', lines: [
+                            c('## Tokenizer'), c(''),
+                            add('The tokenizer now records a column on every token.'),
+                            c('It reads left to right in one pass.')
+                        ] }]
+                    }
+                ],
+                error: null
+            };
+        },
         onChanged: unsub
     },
     // Permission configuration. Sample rules that exercise the cases worth looking at: a

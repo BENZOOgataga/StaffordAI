@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const STATES = ['needs-you', 'approval', 'not-reporting', 'board-empty', 'board-no-tasks', 'board-populated', 'clear'];
+const STATES = ['needs-you', 'approval', 'not-reporting', 'board-empty', 'board-no-tasks', 'board-populated', 'review-diff', 'clear'];
 const TRIGGER_FILE = path.join(os.tmpdir(), 'stafford-dev-trigger.json');
 
 const state = process.argv[2];

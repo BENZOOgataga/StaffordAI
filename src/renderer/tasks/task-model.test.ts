@@ -85,9 +85,9 @@ test('a task that COMMITTED NOTHING reads differently from one that has not run'
 
 test('a result with files reads as a count and a shape', () => {
     const t = task({ state: 'needs-you', resultBranch: 'stafford/task/h1/t1' });
-    assert.equal(resultLine(t, [{ path: 'a.ts', added: 3, removed: 1 }]), '1 file, +3 / -1');
+    assert.equal(resultLine(t, [{ path: 'a.ts', added: 3, removed: 1, hunks: [], binary: false }]), '1 file, +3 / -1');
     assert.equal(
-        resultLine(t, [{ path: 'a.ts', added: 3, removed: 1 }, { path: 'b.ts', added: 2, removed: 0 }]),
+        resultLine(t, [{ path: 'a.ts', added: 3, removed: 1, hunks: [], binary: false }, { path: 'b.ts', added: 2, removed: 0, hunks: [], binary: false }]),
         '2 files, +5 / -1');
 });
 

@@ -22,6 +22,7 @@ const TRIGGERS: ReadonlyArray<{ label: string; run: (n: number) => void }> = [
     { label: 'board: empty', run: () => { void window.stafford.dev?.trigger('board-empty'); } },
     { label: 'board: no tasks', run: () => { void window.stafford.dev?.trigger('board-no-tasks'); } },
     { label: 'board: populated', run: () => { void window.stafford.dev?.trigger('board-populated'); } },
+    { label: 'review diff', run: () => { void window.stafford.dev?.trigger('review-diff'); } },
     { label: 'clear (real data)', run: () => { void window.stafford.dev?.clear(); } }
 ];
 
