@@ -614,6 +614,15 @@ function notifyChannelChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('channel:changed');
 }
 
+/**
+ * Pushes a colleague's streaming reply text to the open detail, so the Conversation tab types it
+ * out live. One-way, fire-and-forget: the text is not persisted here (recordReply does that at
+ * turn end), this only changes how the in-flight reply appears.
+ */
+function notifyConversationDelta(hireId: string, text: string): void {
+    if (window && !window.isDestroyed()) window.webContents.send('conversation:delta', { hireId, text });
+}
+
 function notifyTasksChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('tasks:changed');
     refreshTray();
@@ -965,6 +974,10 @@ function buildDelivery(store: HireStore): void {
             });
             notifyChannelChanged();
         },
+        // The colleague's reply typing out live during a chat turn. The whole accumulated text
+        // is pushed each time; the renderer shows it in a provisional bubble and drops that bubble
+        // for the persisted row once recordReply fires channel:changed. Chat turns only.
+        onText: (hireId, text) => notifyConversationDelta(hireId, text),
         // Each tool the colleague used this turn, into the append-only activity store.
         // The Transcript view and the Activity feed both read it back per hire. This
         // re-feeds the activity feed the removed hooks used to, now from the runner.

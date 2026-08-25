@@ -19,7 +19,8 @@ import {
     type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply, type TaskDiffReply, type TaskBoardReply
+    type TasksReply, type TaskWriteReply, type TaskDiffReply, type TaskBoardReply,
+    type ConversationStreamDelta
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -108,7 +109,11 @@ const api = Object.freeze({
             invoke('channel:conversation', { hireId, limit }) as Promise<ChannelPageReply>,
         reply: (hireId: string, text: string): Promise<void> =>
             invoke('channel:reply', { hireId, text }) as Promise<void>,
-        onChanged: (listener: () => void): (() => void) => on('channel:changed', () => listener())
+        onChanged: (listener: () => void): (() => void) => on('channel:changed', () => listener()),
+        // The colleague's reply streaming in live during a turn. The payload carries the whole
+        // text so far for one hire; the tab shows it until the persisted row lands. Read-only push.
+        onStreamDelta: (listener: (delta: ConversationStreamDelta) => void): (() => void) =>
+            on('conversation:delta', (payload) => listener(payload as ConversationStreamDelta))
     }),
 
     // The rich activity feed. byHire reads a colleague's persisted accomplishment

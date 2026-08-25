@@ -295,6 +295,73 @@ test('drainables expose each served colleague with a checkpoint that disposes th
     assert.deepEqual(committed.map((c) => c.hireId).sort(), ['hireA', 'hireB']);
 });
 
+// --- live text streaming (phase 1) ------------------------------------------
+
+const streamDelta = (text: string): string =>
+    JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } }) + '\n';
+
+test('a chat turn streams its text to onText as accumulated snapshots, then persists the final once', async () => {
+    const { spawn, children } = responder({ auto: false });
+    const pushes: Array<{ h: string; t: string }> = [];
+    const { deps, rec } = fakeDeps(spawn, { onText: (h, t) => { pushes.push({ h, t }); } });
+    const manager = new ClaudeRunnerManager(deps);
+
+    const turn = manager.submit('hireA', 'hi');
+    await tick();
+    const child = children[0];
+    child?.emit('{"type":"system","subtype":"init","session_id":"sess-1"}\n');
+    child?.emit(streamDelta('Hel'));
+    child?.emit(streamDelta('lo'));
+    child?.emit(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } }) + '\n');
+    child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
+    await turn;
+
+    // Each push carries the whole text so far, not a fragment, so a dropped push cannot garble it.
+    assert.deepEqual(pushes, [{ h: 'hireA', t: 'Hel' }, { h: 'hireA', t: 'Hello' }]);
+    // The persisted final matches the last streamed snapshot exactly: no duplication, no drift.
+    assert.deepEqual(rec.replies, [{ h: 'hireA', p: 'p-hireA', t: 'Hello' }]);
+    assert.equal(pushes.at(-1)?.t, rec.replies[0]?.t, 'the last stream snapshot equals the persisted message');
+});
+
+test('a task turn never streams to onText, so a task reply cannot leak into the conversation', async () => {
+    const { spawn, children } = responder({ auto: false });
+    const pushes: string[] = [];
+    const { deps } = fakeDeps(spawn, { onText: (_h, t) => { pushes.push(t); } });
+    const manager = new ClaudeRunnerManager(deps);
+
+    const turn = manager.submitTaskTurn('hireA', 'do the task', null);
+    await tick();
+    const child = children[0];
+    child?.emit('{"type":"system","subtype":"init","session_id":"sess-1"}\n');
+    child?.emit(streamDelta('secret task text'));
+    child?.emit(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'secret task text' }] } }) + '\n');
+    child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
+    await turn;
+
+    assert.deepEqual(pushes, [], 'the chat-only stream stayed silent for a task turn');
+});
+
+test('only text_delta streams: a thinking delta and other events are ignored, never fatal', async () => {
+    const { spawn, children } = responder({ auto: false });
+    const pushes: string[] = [];
+    const { deps } = fakeDeps(spawn, { onText: (_h, t) => { pushes.push(t); } });
+    const manager = new ClaudeRunnerManager(deps);
+
+    const turn = manager.submit('hireA', 'think then talk');
+    await tick();
+    const child = children[0];
+    child?.emit('{"type":"system","subtype":"init","session_id":"sess-1"}\n');
+    // A thinking delta and a tool-input delta must not add to the streamed text.
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"a":' } } }) + '\n');
+    child?.emit(streamDelta('Answer'));
+    child?.emit(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Answer' }] } }) + '\n');
+    child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
+    await turn;
+
+    assert.deepEqual(pushes, ['Answer'], 'thinking and tool-input deltas are excluded; plain text only');
+});
+
 // --- the task turn ----------------------------------------------------------
 
 test('a task turn returns its result, which a message turn has no way to report', async () => {
