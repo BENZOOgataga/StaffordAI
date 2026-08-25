@@ -86,6 +86,64 @@ function LiveTurn({ blocks, sender, lang }: {
 }
 
 /**
+ * The working words the indicator cycles through before any output arrives. Decorative, not literal
+ * status from the stream: the stream gives no per-moment human status, so these fill the gap the way
+ * the Claude apps' mumbling does. Kept generic and tasteful, and localized.
+ */
+const WORKING_WORDS: Record<Lang, readonly string[]> = {
+    en: ['Working', 'Thinking', 'Planning', 'Working on it', 'Getting started'],
+    fr: ['Au travail', 'Réflexion', 'Planification', 'En cours', 'Démarrage']
+};
+
+/** True when the OS asks for reduced motion, read once so the indicator can degrade to static. */
+function prefersReducedMotion(): boolean {
+    return typeof window !== 'undefined'
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/**
+ * The gap filler: an immediate working affordance shown in the in-flight bubble before the first
+ * token or tool event arrives, then replaced by the real streaming content. It cycles a few generic
+ * working words with a soft animated dot, in Stafford's muted bordered bubble so it matches a
+ * settled colleague message and there is no jump when output swaps in.
+ *
+ * Accessibility: the rotating word is aria-hidden, so the screen reader is not read a new word on
+ * every tick; one polite "working" status is announced instead. Under reduced motion the word does
+ * not rotate and the dot does not animate, it shows a single static "Working".
+ */
+function WorkingIndicator({ sender, lang }: { sender: string; lang: Lang }): React.JSX.Element {
+    const words = WORKING_WORDS[lang];
+    const reduced = React.useRef(prefersReducedMotion()).current;
+    const [i, setI] = React.useState(0);
+    React.useEffect(() => {
+        if (reduced) return;
+        const id = setInterval(() => setI((n) => (n + 1) % words.length), 1600);
+        return () => clearInterval(id);
+    }, [reduced, words.length]);
+    const word = reduced ? (words[0] ?? 'Working') : (words[i] ?? words[0] ?? 'Working');
+    return (
+        <div className="flex flex-col items-start gap-1">
+            <div className="text-muted-foreground flex items-center gap-2 px-1 text-xs" aria-hidden="true">
+                <span className="font-medium">{sender}</span>
+            </div>
+            <div className="bg-card border-border flex items-center gap-2 rounded-lg border px-3 py-1.5" aria-hidden="true">
+                <span className="text-muted-foreground text-sm">{word}</span>
+                {!reduced ? (
+                    <span className="flex gap-0.5">
+                        <span className="bg-muted-foreground/50 size-1 animate-pulse rounded-full [animation-delay:0ms]" />
+                        <span className="bg-muted-foreground/50 size-1 animate-pulse rounded-full [animation-delay:200ms]" />
+                        <span className="bg-muted-foreground/50 size-1 animate-pulse rounded-full [animation-delay:400ms]" />
+                    </span>
+                ) : null}
+            </div>
+            {/* One polite announcement, constant text so it is read once, not per rotated word. */}
+            <span className="sr-only" role="status">{lang === 'fr' ? 'Au travail' : 'Working'}</span>
+        </div>
+    );
+}
+
+/**
  * The redesigned conversation: a grouped, two-sided thread with a pinned composer.
  * Consecutive messages from one sender share a single name and time; your messages sit
  * on the right in a filled surface, the colleague's on the left in a bordered one, so
@@ -116,8 +174,9 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming 
     const [sending, setSending] = React.useState(false);
     const now = Date.now();
     const items = buildThread(rows, nameOf, self, lang);
-    // Something to show live only if a block carries text or a tool call, so an empty snapshot does
-    // not push an empty bubble.
+    // A turn is in flight while streaming is non-null. It has real content once a block carries text
+    // or a tool call; before that (an empty opening snapshot) it shows the working indicator.
+    const turnActive = streaming != null;
     const streamingBlocks = streaming && streaming.some((b) => b.kind === 'tool' || b.text !== '')
         ? streaming : null;
 
@@ -154,12 +213,16 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
-                {items.length === 0 && !streamingBlocks ? (
+                {items.length === 0 && !turnActive ? (
                     <p className="text-muted-foreground py-8 text-center text-sm">No messages yet. Say hello below.</p>
                 ) : (
                     <div className="flex flex-col gap-3">
                         {items.length > 0 ? <ConversationThread items={items} now={now} lang={lang} /> : null}
-                        {streamingBlocks ? <LiveTurn blocks={streamingBlocks} sender={nameOf(hireId)} lang={lang} /> : null}
+                        {streamingBlocks
+                            ? <LiveTurn blocks={streamingBlocks} sender={nameOf(hireId)} lang={lang} />
+                            : turnActive
+                                ? <WorkingIndicator sender={nameOf(hireId)} lang={lang} />
+                                : null}
                     </div>
                 )}
             </div>

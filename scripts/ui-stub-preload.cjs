@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld('stafford', {
             // (what recordReply plus channel:changed do in the real app), so a screenshot can show
             // the mid-stream bubble and the reconciled final message.
             __test: {
-                stream: (hireId, blocks) => { for (const l of streamListeners) l({ hireId, blocks }); },
+                stream: (hireId, blocks, done) => { for (const l of streamListeners) l({ hireId, blocks, done: !!done }); },
                 commit: (hireId, text) => {
                     (rows[hireId] = rows[hireId] || []).push({
                         id: 'final1', projectId: 'p1', senderId: hireId, kind: 'message', body: text, reference: null, at: '2026-08-25T09:00:05Z'

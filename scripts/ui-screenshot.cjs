@@ -22,6 +22,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
 
+// Lets a screenshot capture the reduced-motion variant of a surface, so an animation's static
+// fallback can be seen. Chromium honours this switch as the OS reduced-motion preference.
+if (process.env.SHOT_REDUCED) app.commandLine.appendSwitch('force-prefers-reduced-motion');
+
 const PAGE = process.argv[2] || 'preview.html';
 const OUT = process.argv[3] || 'ui-shot.png';
 const VIEW = process.argv[4] || '';
