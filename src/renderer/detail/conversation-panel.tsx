@@ -5,6 +5,7 @@ import { buildThread } from './conversation-model.ts';
 import { ConversationThread } from './conversation-thread.tsx';
 import { Markdown } from './markdown.tsx';
 import { CollapsibleLines } from './collapsible-lines.tsx';
+import { DiffViewer } from '../tasks/diff-viewer.tsx';
 import { FeedIconGlyph } from './feed-icon.tsx';
 import { feedIcon, toolPhrase, toolStatusLabel, type FeedRow } from '../activity-view.ts';
 import { type Lang } from '../channel-view.ts';
@@ -92,6 +93,13 @@ function LiveTurn({ blocks, sender, lang }: {
                             ) : null}
                         </div>
                     ) : null
+                ) : block.edit ? (
+                    // A successful edit renders its actual change through the same viewer the task
+                    // review uses, expanded in place. A failed or unparseable edit has no `edit` and
+                    // falls to the one-line island below.
+                    <div key={i} className="w-full max-w-[78%]">
+                        <DiffViewer files={[block.edit]} defaultOpen />
+                    </div>
                 ) : (
                     <ToolIsland key={i} block={block} lang={lang} />
                 )

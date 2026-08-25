@@ -87,12 +87,21 @@ export type LiveBlock =
         readonly target: string | null;
         readonly status: LiveToolStatus;
         /**
-         * A shell command's captured output (stdout and stderr combined), when the tool is a shell
-         * and its result has arrived. Bounded upstream so a pathological multi-megabyte stdout never
-         * crosses the bridge. Absent for non-shell tools and before the result lands; a file read
+         * A command's captured output (stdout and stderr combined), when the tool runs commands and
+         * its result has arrived. Bounded upstream so a pathological multi-megabyte stdout never
+         * crosses the bridge. Absent for non-command tools and before the result lands; a file read
          * never carries it (a read is an access, not output to show).
          */
         readonly output?: string;
+        /**
+         * A file edit's diff, when the tool is an Edit or a Write and its result carried a patch.
+         * Converted upstream from the stream's structuredPatch straight into the review viewer's file
+         * shape, so the Conversation renders the actual change through the same viewer, with no git
+         * call. A created file is an all-additions diff synthesised from its content, capped. Absent
+         * for non-edit tools, for a binary edit, and when the patch was missing or malformed, which
+         * degrades to the one-line "edited path".
+         */
+        readonly edit?: TaskDiffFile;
     };
 
 /**

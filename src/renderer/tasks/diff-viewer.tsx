@@ -67,8 +67,8 @@ function Hunk({ hunk, lang }: { hunk: TaskDiffHunk; lang: Lang }): React.JSX.Ele
 }
 
 /** One file: a clickable header row, and the diff below when open. */
-function FileRow({ file }: { file: TaskDiffFile }): React.JSX.Element {
-    const [open, setOpen] = React.useState(false);
+function FileRow({ file, defaultOpen = false }: { file: TaskDiffFile; defaultOpen?: boolean }): React.JSX.Element {
+    const [open, setOpen] = React.useState(defaultOpen);
     const lang = langForPath(file.path);
     return (
         <li className="border-border overflow-hidden rounded-md border">
@@ -102,11 +102,16 @@ function FileRow({ file }: { file: TaskDiffFile }): React.JSX.Element {
     );
 }
 
-/** The changed files, each collapsed by default, expandable in place. */
-export function DiffViewer({ files }: { files: readonly TaskDiffFile[] }): React.JSX.Element {
+/** The changed files, expandable in place. `defaultOpen` starts each expanded, for an inline edit in
+ * the conversation where the single file's change should show without a click; the task review leaves
+ * it off so a long list of files stays collapsed. */
+export function DiffViewer({ files, defaultOpen = false }: {
+    files: readonly TaskDiffFile[];
+    defaultOpen?: boolean;
+}): React.JSX.Element {
     return (
         <ul className="flex list-none flex-col gap-2 p-0">
-            {files.map((file) => <FileRow key={file.path} file={file} />)}
+            {files.map((file) => <FileRow key={file.path} file={file} defaultOpen={defaultOpen} />)}
         </ul>
     );
 }
