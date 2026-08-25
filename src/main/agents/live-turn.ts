@@ -18,8 +18,20 @@ import type { ClaudeStreamEvent } from './claude-runner.ts';
 import type { LiveBlock, LiveToolStatus } from '../../shared/ipc.ts';
 
 interface TextBlockM { kind: 'text'; text: string }
-interface ToolBlockM { kind: 'tool'; id: string; name: string; target: string | null; status: LiveToolStatus; partial: string }
+interface ToolBlockM { kind: 'tool'; id: string; name: string; target: string | null; status: LiveToolStatus; partial: string; output?: string }
 type BlockM = TextBlockM | ToolBlockM;
+
+/** The shell tools whose output the Conversation renders. Matched by name, the identity the stream
+ * gives, never guessed from the output shape. */
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'Shell']);
+
+/**
+ * The cap on a single shell command's captured output, in characters. A pathological multi-megabyte
+ * stdout is truncated to this before it crosses the bridge, so neither the IPC payload nor the
+ * renderer is blown up by one runaway command. 20000 characters is a few hundred lines, well past
+ * what a person reads inline, and the tail is dropped with a marker so the truncation is honest.
+ */
+const MAX_TOOL_OUTPUT_CHARS = 20000;
 
 export class LiveTurnBuilder {
     #blocks: BlockM[] = [];
@@ -31,7 +43,10 @@ export class LiveTurnBuilder {
         return this.#blocks.map((b) =>
             b.kind === 'text'
                 ? { kind: 'text', text: b.text }
-                : { kind: 'tool', id: b.id, name: b.name, target: b.target, status: b.status }
+                : {
+                    kind: 'tool', id: b.id, name: b.name, target: b.target, status: b.status,
+                    ...(b.output !== undefined ? { output: b.output } : {})
+                }
         );
     }
 
@@ -133,15 +148,40 @@ export class LiveTurnBuilder {
             const id = typeof part.tool_use_id === 'string' ? part.tool_use_id : '';
             if (id === '') continue;
             const status: LiveToolStatus = part.is_error === true ? 'error' : 'ok';
+            // A shell result's output is rendered even on failure, where stderr is the useful part.
+            const output = capOutput(resultText(part.content));
             for (const block of this.#blocks) {
-                if (block.kind === 'tool' && block.id === id && block.status !== status) {
-                    block.status = status;
+                if (block.kind !== 'tool' || block.id !== id) continue;
+                if (block.status !== status) { block.status = status; changed = true; }
+                // Only a shell tool carries its output; a read or an edit never does. Even an empty
+                // string is set, so the island can say the command ran and produced nothing.
+                if (SHELL_TOOLS.has(block.name) && block.output === undefined && output !== null) {
+                    block.output = output;
                     changed = true;
                 }
             }
         }
         return changed;
     }
+}
+
+/** The text of a tool_result's content: the string as-is, or the text parts of a block array. */
+function resultText(content: unknown): string | null {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return null;
+    const parts: string[] = [];
+    for (const p of content) {
+        if (isRecord(p) && p.type === 'text' && typeof p.text === 'string') parts.push(p.text);
+    }
+    return parts.length > 0 ? parts.join('') : '';
+}
+
+/** Bounds output to the cap, appending an honest marker when the tail is dropped. Null stays null. */
+function capOutput(text: string | null): string | null {
+    if (text === null) return null;
+    if (text.length <= MAX_TOOL_OUTPUT_CHARS) return text;
+    return text.slice(0, MAX_TOOL_OUTPUT_CHARS) + '\n... output truncated (' +
+        String(text.length - MAX_TOOL_OUTPUT_CHARS) + ' more characters)';
 }
 
 /** Parses a tool's accumulated input JSON and derives its one-line target, or null on any failure. */

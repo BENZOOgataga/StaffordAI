@@ -42,6 +42,64 @@ test('a failed tool_result marks the tool error', () => {
     assert.equal((b.snapshot()[0] as { status: string }).status, 'error');
 });
 
+// --- shell output and reads (phase 3) ---------------------------------------
+
+const toolOut = (b: LiveTurnBuilder): string | undefined =>
+    (b.snapshot()[0] as { output?: string }).output;
+
+test('a shell tool captures its result output, rendered even on success', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } } }));
+    b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'file-a\nfile-b\n' }] } }));
+    assert.equal(toolOut(b), 'file-a\nfile-b\n', 'the shell output is captured on the tool block');
+});
+
+test('a failed shell tool still captures its output, where stderr is the useful part', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'PowerShell', input: { command: 'nope' } } }));
+    b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: true, content: 'command not found: nope' }] } }));
+    assert.equal((b.snapshot()[0] as { status: string }).status, 'error');
+    assert.equal(toolOut(b), 'command not found: nope', 'a failed shell command keeps its stderr');
+});
+
+test('a file read never carries output: a read is an access, not output to show', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a.ts' } } }));
+    b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'the whole file contents here' }] } }));
+    assert.equal(toolOut(b), undefined, 'a read shows only its path, never the file body');
+});
+
+test('an edit carries no output either this phase: its diff is phase 4', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a.ts' } } }));
+    b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'edited' }] } }));
+    assert.equal(toolOut(b), undefined);
+});
+
+test('a shell result whose content is a block array joins its text parts', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo hi' } } }));
+    b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'hi\n' }, { type: 'text', text: 'there' }] }] } }));
+    assert.equal(toolOut(b), 'hi\nthere');
+});
+
+test('an empty shell result records an empty string, so the island can say it ran with no output', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'true' } } }));
+    b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: '' }] } }));
+    assert.equal(toolOut(b), '', 'empty is distinct from absent');
+});
+
+test('a pathological output is capped, so a runaway command cannot blow up the payload', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'yes' } } }));
+    const huge = 'x'.repeat(500000);
+    b.apply(ev('user', { message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: huge }] } }));
+    const out = toolOut(b) ?? '';
+    assert.ok(out.length < 21000, 'the output is bounded well under the raw size');
+    assert.match(out, /output truncated \(\d+ more characters\)/, 'the truncation is marked honestly');
+});
+
 test('text and tool blocks keep the order they streamed in', () => {
     const b = new LiveTurnBuilder();
     b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
