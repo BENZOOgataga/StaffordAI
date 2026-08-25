@@ -66,6 +66,7 @@ import type {
     PermissionAdd, PermissionUpdate, TaskRow, TaskWriteReply, TaskDiffReply
 } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
+import type { LiveBlock } from '../shared/ipc.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
@@ -615,12 +616,12 @@ function notifyChannelChanged(): void {
 }
 
 /**
- * Pushes a colleague's streaming reply text to the open detail, so the Conversation tab types it
- * out live. One-way, fire-and-forget: the text is not persisted here (recordReply does that at
- * turn end), this only changes how the in-flight reply appears.
+ * Pushes a colleague's streaming turn to the open detail, so the Conversation tab renders the
+ * reply text and its tool calls live. One-way, fire-and-forget: nothing is persisted here
+ * (recordReply does that at turn end), this only changes how the in-flight turn appears.
  */
-function notifyConversationDelta(hireId: string, text: string): void {
-    if (window && !window.isDestroyed()) window.webContents.send('conversation:delta', { hireId, text });
+function notifyConversationDelta(hireId: string, blocks: readonly LiveBlock[]): void {
+    if (window && !window.isDestroyed()) window.webContents.send('conversation:delta', { hireId, blocks });
 }
 
 function notifyTasksChanged(): void {
@@ -974,10 +975,10 @@ function buildDelivery(store: HireStore): void {
             });
             notifyChannelChanged();
         },
-        // The colleague's reply typing out live during a chat turn. The whole accumulated text
-        // is pushed each time; the renderer shows it in a provisional bubble and drops that bubble
-        // for the persisted row once recordReply fires channel:changed. Chat turns only.
-        onText: (hireId, text) => notifyConversationDelta(hireId, text),
+        // The colleague's turn streaming live during a chat turn: reply text and tool-call islands
+        // in order. The whole turn so far is pushed each time; the renderer shows it provisionally
+        // and drops it for the persisted row once recordReply fires channel:changed. Chat turns only.
+        onLive: (hireId, blocks) => notifyConversationDelta(hireId, blocks),
         // Each tool the colleague used this turn, into the append-only activity store.
         // The Transcript view and the Activity feed both read it back per hire. This
         // re-feeds the activity feed the removed hooks used to, now from the runner.

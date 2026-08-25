@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChannelMessageRow, ActivityRow } from '../../shared/ipc.ts';
+import type { ChannelMessageRow, ActivityRow, LiveBlock } from '../../shared/ipc.ts';
 
 const LIMIT = 200;
 
@@ -8,11 +8,12 @@ export interface DetailData {
     readonly actRows: readonly ActivityRow[];
     readonly loading: boolean;
     /**
-     * The colleague's reply as it streams live this turn, or null when nothing is streaming. It is
-     * shown in a provisional bubble and dropped the moment the persisted row lands, so the final,
-     * stored message is what remains. Never persisted; it only changes how the in-flight reply looks.
+     * The colleague's turn as it streams live, its reply text and tool-call islands in order, or
+     * null when nothing is streaming. Shown provisionally and dropped the moment the persisted row
+     * lands, so the final, stored message is what remains. Never persisted; it only changes how the
+     * in-flight turn looks.
      */
-    readonly streaming: string | null;
+    readonly streaming: readonly LiveBlock[] | null;
 }
 
 /**
@@ -30,7 +31,7 @@ export function useDetailData(hireId: string | null): DetailData {
     const [convRows, setConvRows] = useState<readonly ChannelMessageRow[]>([]);
     const [actRows, setActRows] = useState<readonly ActivityRow[]>([]);
     const [loading, setLoading] = useState<boolean>(hireId !== null);
-    const [streaming, setStreaming] = useState<string | null>(null);
+    const [streaming, setStreaming] = useState<readonly LiveBlock[] | null>(null);
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
@@ -72,11 +73,11 @@ export function useDetailData(hireId: string | null): DetailData {
             if (row.hireId !== hireId) return;
             setActRows((prev) => (prev.some((r) => r.id === row.id) ? prev : [...prev, row]));
         });
-        // The live reply. Each push carries the whole text so far for one hire, so set it straight
-        // rather than appending; a push for another colleague is ignored.
+        // The live turn. Each push carries the whole turn so far for one hire as ordered blocks, so
+        // set it straight rather than appending; a push for another colleague is ignored.
         const offStream = window.stafford.channel.onStreamDelta((delta) => {
             if (delta.hireId !== hireId) return;
-            setStreaming(delta.text);
+            setStreaming(delta.blocks);
         });
 
         return () => {

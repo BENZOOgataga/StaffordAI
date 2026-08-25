@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { ClaudeRunnerManager, type RunnerManagerDeps } from './runner-manager.ts';
 import { AGENT_STATES } from '../../domain/agent-state.ts';
 import type { SpawnFn } from './claude-runner.ts';
+import type { LiveBlock } from '../../shared/ipc.ts';
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -295,15 +296,19 @@ test('drainables expose each served colleague with a checkpoint that disposes th
     assert.deepEqual(committed.map((c) => c.hireId).sort(), ['hireA', 'hireB']);
 });
 
-// --- live text streaming (phase 1) ------------------------------------------
+// --- live streaming (text + tool islands) -----------------------------------
 
 const streamDelta = (text: string): string =>
-    JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } }) + '\n';
+    JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } }) + '\n';
 
-test('a chat turn streams its text to onText as accumulated snapshots, then persists the final once', async () => {
+/** The plain text of the last snapshot pushed, joining its text blocks. */
+const textOf = (blocks: readonly LiveBlock[]): string =>
+    blocks.filter((b): b is Extract<LiveBlock, { kind: 'text' }> => b.kind === 'text').map((b) => b.text).join('');
+
+test('a chat turn streams its text to onLive as accumulated snapshots, then persists the final once', async () => {
     const { spawn, children } = responder({ auto: false });
-    const pushes: Array<{ h: string; t: string }> = [];
-    const { deps, rec } = fakeDeps(spawn, { onText: (h, t) => { pushes.push({ h, t }); } });
+    const pushes: Array<{ h: string; blocks: readonly LiveBlock[] }> = [];
+    const { deps, rec } = fakeDeps(spawn, { onLive: (h, blocks) => { pushes.push({ h, blocks }); } });
     const manager = new ClaudeRunnerManager(deps);
 
     const turn = manager.submit('hireA', 'hi');
@@ -316,17 +321,73 @@ test('a chat turn streams its text to onText as accumulated snapshots, then pers
     child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
     await turn;
 
-    // Each push carries the whole text so far, not a fragment, so a dropped push cannot garble it.
-    assert.deepEqual(pushes, [{ h: 'hireA', t: 'Hel' }, { h: 'hireA', t: 'Hello' }]);
+    // Each push carries the whole turn so far, so the text accumulates snapshot by snapshot.
+    assert.deepEqual(pushes.map((p) => textOf(p.blocks)), ['Hel', 'Hello']);
+    assert.equal(pushes[0]?.h, 'hireA');
     // The persisted final matches the last streamed snapshot exactly: no duplication, no drift.
     assert.deepEqual(rec.replies, [{ h: 'hireA', p: 'p-hireA', t: 'Hello' }]);
-    assert.equal(pushes.at(-1)?.t, rec.replies[0]?.t, 'the last stream snapshot equals the persisted message');
+    assert.equal(textOf(pushes.at(-1)!.blocks), rec.replies[0]?.t, 'the last snapshot equals the persisted message');
 });
 
-test('a task turn never streams to onText, so a task reply cannot leak into the conversation', async () => {
+test('a chat turn streams tool calls as blocks that pair with their result and resolve status', async () => {
     const { spawn, children } = responder({ auto: false });
-    const pushes: string[] = [];
-    const { deps } = fakeDeps(spawn, { onText: (_h, t) => { pushes.push(t); } });
+    const pushes: Array<readonly LiveBlock[]> = [];
+    const { deps } = fakeDeps(spawn, { onLive: (_h, blocks) => { pushes.push(blocks); } });
+    const manager = new ClaudeRunnerManager(deps);
+
+    const turn = manager.submit('hireA', 'write a file');
+    await tick();
+    const child = children[0];
+    child?.emit('{"type":"system","subtype":"init","session_id":"sess-1"}\n');
+    // Some text, then a tool_use opening with an id and name, its input, and the block close.
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Writing it.' } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tu1', name: 'Write', input: {} } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"file_path":"a.ts"}' } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_stop', index: 1 } }) + '\n');
+
+    // Before the result, the tool block is present and running, with its target resolved.
+    const beforeResult = pushes.at(-1)!;
+    const runningTool = beforeResult.find((b) => b.kind === 'tool');
+    assert.ok(runningTool && runningTool.kind === 'tool');
+    assert.equal(runningTool.name, 'Write');
+    assert.equal(runningTool.target, 'a.ts', 'the one-line target came from the streamed input');
+    assert.equal(runningTool.status, 'running', 'a tool with no result yet reads as running');
+    // The order is preserved: the text block precedes the tool block.
+    assert.deepEqual(beforeResult.map((b) => b.kind), ['text', 'tool']);
+
+    // The tool_result arrives on a user event and resolves the matching tool by id.
+    child?.emit(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', is_error: false }] } }) + '\n');
+    const resolved = pushes.at(-1)!.find((b) => b.kind === 'tool');
+    assert.ok(resolved && resolved.kind === 'tool' && resolved.status === 'ok', 'a clean result marks the tool ok');
+
+    child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
+    await turn;
+});
+
+test('a failed tool result marks the block error', async () => {
+    const { spawn, children } = responder({ auto: false });
+    const pushes: Array<readonly LiveBlock[]> = [];
+    const { deps } = fakeDeps(spawn, { onLive: (_h, blocks) => { pushes.push(blocks); } });
+    const manager = new ClaudeRunnerManager(deps);
+
+    const turn = manager.submit('hireA', 'run it');
+    await tick();
+    const child = children[0];
+    child?.emit('{"type":"system","subtype":"init","session_id":"sess-1"}\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu9', name: 'Bash', input: {} } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu9', is_error: true }] } }) + '\n');
+    const tool = pushes.at(-1)!.find((b) => b.kind === 'tool');
+    assert.ok(tool && tool.kind === 'tool' && tool.status === 'error', 'is_error resolves the tool to error');
+
+    child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
+    await turn;
+});
+
+test('a task turn never streams to onLive, so a task turn cannot leak into the conversation', async () => {
+    const { spawn, children } = responder({ auto: false });
+    const pushes: unknown[] = [];
+    const { deps } = fakeDeps(spawn, { onLive: (_h, blocks) => { pushes.push(blocks); } });
     const manager = new ClaudeRunnerManager(deps);
 
     const turn = manager.submitTaskTurn('hireA', 'do the task', null);
@@ -341,25 +402,25 @@ test('a task turn never streams to onText, so a task reply cannot leak into the 
     assert.deepEqual(pushes, [], 'the chat-only stream stayed silent for a task turn');
 });
 
-test('only text_delta streams: a thinking delta and other events are ignored, never fatal', async () => {
+test('a thinking delta and other events are ignored, never fatal; only text and tools stream', async () => {
     const { spawn, children } = responder({ auto: false });
-    const pushes: string[] = [];
-    const { deps } = fakeDeps(spawn, { onText: (_h, t) => { pushes.push(t); } });
+    const pushes: Array<readonly LiveBlock[]> = [];
+    const { deps } = fakeDeps(spawn, { onLive: (_h, blocks) => { pushes.push(blocks); } });
     const manager = new ClaudeRunnerManager(deps);
 
     const turn = manager.submit('hireA', 'think then talk');
     await tick();
     const child = children[0];
     child?.emit('{"type":"system","subtype":"init","session_id":"sess-1"}\n');
-    // A thinking delta and a tool-input delta must not add to the streamed text.
-    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } }) + '\n');
-    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"a":' } } }) + '\n');
-    child?.emit(streamDelta('Answer'));
-    child?.emit(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Answer' }] } }) + '\n');
+    // A thinking block opens at an index; its deltas must not become text.
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } } }) + '\n');
+    child?.emit(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Answer' } } }) + '\n');
     child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
     await turn;
 
-    assert.deepEqual(pushes, ['Answer'], 'thinking and tool-input deltas are excluded; plain text only');
+    assert.equal(textOf(pushes.at(-1)!), 'Answer', 'the thinking text is excluded; only the reply text streams');
 });
 
 // --- the task turn ----------------------------------------------------------
