@@ -30,6 +30,7 @@ function ColleagueRow({ row, onSelect }: { row: RosterRow; onSelect: (card: Rost
             role="button"
             tabIndex={0}
             data-active={selected}
+            data-hire={card.id}
             onClick={open}
             onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); }

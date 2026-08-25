@@ -65,10 +65,24 @@ export const INVOKE_CHANNELS = [
     'tasks:board'
 ] as const;
 
+/**
+ * One live chunk of a colleague's reply as it streams, pushed while a chat turn is in flight.
+ * `text` is the whole assistant text accumulated so far this turn, not just the newest fragment,
+ * so a dropped or reordered push cannot garble the bubble: the renderer shows the latest snapshot
+ * and reconciles against the persisted message when the turn ends. Plain text blocks only; thinking
+ * and tool blocks are excluded upstream, so this never carries them.
+ */
+export interface ConversationStreamDelta {
+    readonly hireId: string;
+    readonly text: string;
+}
+
 /** Main pushes to the renderer. One-way, no reply. */
 export const EVENT_CHANNELS = [
     'roster:changed',
     'channel:changed',
+    // A colleague's reply text, streaming live during a chat turn. Payload: ConversationStreamDelta.
+    'conversation:delta',
     'activity:appended',
     // A pending approval was added or resolved, so the renderer re-reads the list.
     'approvals:changed',

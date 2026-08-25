@@ -20,10 +20,35 @@ contextBridge.exposeInMainWorld('stafford', {
     projects: { list: async () => ({ projects: [{ id: 'p1', name: 'test' }] }), create: async () => ({ id: 'p2', name: 'x' }) },
     hire: { create: async () => ({ id: 'h1', name: 'x', title: 'x', projectId: 'p1' }) },
     roster: { snapshot: async () => ({ cards }), onChanged: unsub },
-    channel: {
-        page: async () => ({ rows: [] }), since: async () => ({ rows: [] }),
-        conversation: async () => ({ rows: [] }), reply: async () => {}, onChanged: unsub
-    },
+    channel: (() => {
+        // A seeded conversation for colleague 'b' plus live-stream plumbing, so the harness can
+        // drive the phase-1 streaming path through the real renderer. streamListeners and
+        // changedListeners hold the renderer's own callbacks; the __test hooks below fire them.
+        const rows = { b: [
+            { id: 'you1', projectId: 'p1', senderId: 'benzoo', kind: 'message', body: 'Can you summarize the parser design in a sentence?', reference: null, at: '2026-08-25T09:00:00Z' }
+        ] };
+        const streamListeners = [];
+        const changedListeners = [];
+        return {
+            page: async () => ({ rows: [] }), since: async () => ({ rows: [] }),
+            conversation: async (hireId) => ({ rows: rows[hireId] || [] }),
+            reply: async () => {},
+            onChanged: (l) => { changedListeners.push(l); return () => {}; },
+            onStreamDelta: (l) => { streamListeners.push(l); return () => {}; },
+            // Harness-only. Fire a live text snapshot, and commit the final text as a persisted row
+            // (what recordReply plus channel:changed do in the real app), so a screenshot can show
+            // the mid-stream bubble and the reconciled final message.
+            __test: {
+                stream: (hireId, text) => { for (const l of streamListeners) l({ hireId, text }); },
+                commit: (hireId, text) => {
+                    (rows[hireId] = rows[hireId] || []).push({
+                        id: 'final1', projectId: 'p1', senderId: hireId, kind: 'message', body: text, reference: null, at: '2026-08-25T09:00:05Z'
+                    });
+                    for (const l of changedListeners) l();
+                }
+            }
+        };
+    })(),
     activity: { byHire: async () => ({ rows: [] }), onAppended: unsub },
     shell: { onNavigate: unsub },
     checkpoints: { saved: async () => null, ack: async () => {} },
