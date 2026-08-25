@@ -65,16 +65,36 @@ export const INVOKE_CHANNELS = [
     'tasks:board'
 ] as const;
 
+/** How a live tool call is doing: still running, finished ok, or failed. */
+export type LiveToolStatus = 'running' | 'ok' | 'error';
+
 /**
- * One live chunk of a colleague's reply as it streams, pushed while a chat turn is in flight.
- * `text` is the whole assistant text accumulated so far this turn, not just the newest fragment,
- * so a dropped or reordered push cannot garble the bubble: the renderer shows the latest snapshot
- * and reconciles against the persisted message when the turn ends. Plain text blocks only; thinking
- * and tool blocks are excluded upstream, so this never carries them.
+ * One block of a colleague's turn as it streams: a run of reply text, or a tool call paired with
+ * its result. The blocks are in message order, so text and tool calls interleave the way they
+ * happened. A tool block carries only its name, a short target, and status, never a result body:
+ * the collapsed one-liner the Conversation renders. Deliberately small, so nothing structured or
+ * unbounded crosses the bridge.
+ */
+export type LiveBlock =
+    | { readonly kind: 'text'; readonly text: string }
+    | {
+        readonly kind: 'tool';
+        readonly id: string;
+        readonly name: string;
+        readonly target: string | null;
+        readonly status: LiveToolStatus;
+    };
+
+/**
+ * A snapshot of a colleague's turn as it streams, pushed while a chat turn is in flight. `blocks`
+ * is the whole turn so far in order, not just the newest fragment, so a dropped or reordered push
+ * cannot garble the view: the renderer shows the latest snapshot and reconciles against the
+ * persisted message when the turn ends. Text and tool calls only; thinking and every other block
+ * are excluded upstream, so this never carries them.
  */
 export interface ConversationStreamDelta {
     readonly hireId: string;
-    readonly text: string;
+    readonly blocks: readonly LiveBlock[];
 }
 
 /** Main pushes to the renderer. One-way, no reply. */

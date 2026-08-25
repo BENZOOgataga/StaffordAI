@@ -31,9 +31,11 @@
  * Tested against Claude Code 2.1.237 (same as phase 2).
  */
 
-import { ClaudeRunner, autoApproveTool, type CanUseTool, type ClaudeStreamEvent, type RunnerChild, type SpawnFn, type TurnResult, type WireDirection } from './claude-runner.ts';
+import { ClaudeRunner, autoApproveTool, type CanUseTool, type RunnerChild, type SpawnFn, type TurnResult, type WireDirection } from './claude-runner.ts';
+import { LiveTurnBuilder, toolTarget } from './live-turn.ts';
 import { AGENT_STATES, type AgentState } from '../../domain/agent-state.ts';
 import type { CheckpointResult, DrainableAgent } from './drain.ts';
+import type { LiveBlock } from '../../shared/ipc.ts';
 
 /** Where a colleague's turn runs, and the id to resume from. Null if unresolvable. */
 export interface RunnerTarget {
@@ -58,13 +60,14 @@ export interface RunnerManagerDeps {
     /** Records Claude's reply into the #62 conversation store, keyed by hireId. */
     readonly recordReply: (hireId: string, projectId: string, text: string) => void;
     /**
-     * Streams the colleague's plain-text reply as it arrives, for the live Conversation tab.
-     * Called many times per chat turn with the whole accumulated text so far (a snapshot, not a
-     * fragment), then not at all once the turn ends, at which point recordReply persists the final
-     * text. Only the chat path streams; a task turn never calls this, so its text does not leak
-     * into the conversation. Optional: with it unset, nothing streams and behaviour is unchanged.
+     * Streams the colleague's turn as it arrives, for the live Conversation tab: the reply text
+     * and the tool calls it makes, in order, as a block snapshot. Called many times per chat turn
+     * with the whole turn so far (a snapshot, not a fragment), then not at all once the turn ends,
+     * at which point recordReply persists the final text. Only the chat path streams; a task turn
+     * never calls this, so its work does not leak into the conversation. Optional: with it unset,
+     * nothing streams and behaviour is unchanged.
      */
-    readonly onText?: (hireId: string, text: string) => void;
+    readonly onLive?: (hireId: string, blocks: readonly LiveBlock[]) => void;
     /**
      * Records one tool the colleague used this turn, for the Activity feed and the
      * Transcript view. status is 'ok' when the turn completed, 'incomplete' otherwise.
@@ -244,12 +247,12 @@ export class ClaudeRunnerManager {
         const live = this.#liveFor(hireId);
         live.cwd = target.cwd;
 
-        // Only a chat message streams its text to the Conversation tab. A task turn shares this
+        // Only a chat message streams its turn to the Conversation tab. A task turn shares this
         // body but must not stream into the conversation, so streaming is gated on the chat path
-        // (no `over`) and on the caller wiring `onText`. `streamed` accumulates the plain-text
-        // blocks across the turn so each push is a whole snapshot, robust to a dropped push.
-        const streamText = over === undefined ? this.#deps.onText : undefined;
-        let streamed = '';
+        // (no `over`) and on the caller wiring `onLive`. The builder folds the stream into ordered
+        // blocks, and each push is the whole turn so far, robust to a dropped push.
+        const emitLive = over === undefined ? this.#deps.onLive : undefined;
+        const liveBuilder = emitLive ? new LiveTurnBuilder() : null;
 
         // #61 isolation: seed the managed dir and hand the child CLAUDE_CONFIG_DIR, the
         // same config the pty path read. Idempotent per turn.
@@ -279,16 +282,13 @@ export class ClaudeRunnerManager {
             ...(this.#deps.traceWire
                 ? { onRawLine: (l: string, d: WireDirection) => this.#deps.traceWire!(hireId, l, d) }
                 : {}),
-            ...(streamText
+            ...(emitLive && liveBuilder
                 ? { onEvent: (event) => {
-                    // Phase 1 streams plain text only. A `text_delta` inside a `content_block_delta`
-                    // is the reply typing out; thinking deltas, tool-input deltas, and every other
-                    // event are ignored here, never fatal, per the stream's defensive posture. The
-                    // whole accumulated text is pushed so the renderer always has a correct snapshot.
-                    const delta = textDelta(event);
-                    if (delta === null) return;
-                    streamed += delta;
-                    streamText(hireId, streamed);
+                    // The builder folds text and tool events into ordered blocks; a thinking block
+                    // and every unhandled event are ignored, never fatal, per the stream's defensive
+                    // posture. A push carries the whole turn so far, so the renderer always has a
+                    // correct snapshot even if a push is dropped.
+                    if (liveBuilder.apply(event)) emitLive(hireId, liveBuilder.snapshot());
                 } }
                 : {})
         });
@@ -321,7 +321,7 @@ export class ClaudeRunnerManager {
         if (this.#deps.recordToolUse && result.toolUses.length > 0) {
             const status = result.status === 'completed' ? 'ok' : 'incomplete';
             for (const use of result.toolUses) {
-                this.#deps.recordToolUse(hireId, result.sessionId, use.name, toolTarget(use.name, use.input), status);
+                this.#deps.recordToolUse(hireId, result.sessionId, use.name, toolTarget(use.input), status);
             }
         }
 
@@ -336,43 +336,4 @@ export class ClaudeRunnerManager {
         this.#deps.setState(hireId, state);
         this.#deps.onStateChanged();
     }
-}
-
-/**
- * The plain-text fragment carried by one stream event, or null for anything else.
- *
- * The live text feature listens for exactly one shape: a `content_block_delta` whose `delta` is a
- * `text_delta`. That is the reply text typing out. A thinking delta, a tool-input delta, a whole
- * message, or an unknown event all return null and are skipped, so phase 1 streams text and nothing
- * else, and a reshaped or unexpected event is ignored rather than fatal.
- */
-function textDelta(event: ClaudeStreamEvent): string | null {
-    if (event.type !== 'stream_event') return null;
-    const inner = event.raw.event;
-    if (!isRecord(inner) || inner.type !== 'content_block_delta') return null;
-    const delta = inner.delta;
-    if (!isRecord(delta) || delta.type !== 'text_delta') return null;
-    return typeof delta.text === 'string' ? delta.text : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
-}
-
-/**
- * A short, human-readable target for a tool use, from its input: the file path for a
- * file tool, the command for a shell tool, the pattern for a search, else null. Bounded
- * so a huge input never becomes a huge row. Never returns raw structured input.
- */
-function toolTarget(_tool: string, input: unknown): string | null {
-    if (typeof input !== 'object' || input === null) return null;
-    const i = input as Record<string, unknown>;
-    const first = (...keys: string[]): string | null => {
-        for (const k of keys) if (typeof i[k] === 'string' && (i[k] as string).length > 0) return i[k] as string;
-        return null;
-    };
-    const value = first('file_path', 'path', 'notebook_path', 'command', 'pattern', 'query', 'url', 'prompt', 'description');
-    if (value === null) return null;
-    const oneLine = value.replace(/\s+/g, ' ').trim();
-    return oneLine.length > 120 ? oneLine.slice(0, 120) + '...' : oneLine;
 }
