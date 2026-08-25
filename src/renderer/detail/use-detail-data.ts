@@ -3,6 +3,11 @@ import type { ChannelMessageRow, ActivityRow, LiveBlock } from '../../shared/ipc
 
 const LIMIT = 200;
 
+/** A block carries real output: a tool call, or text that is not empty. An empty text run does not. */
+function hasLiveContent(block: LiveBlock): boolean {
+    return block.kind === 'tool' || block.text !== '';
+}
+
 export interface DetailData {
     readonly convRows: readonly ChannelMessageRow[];
     readonly actRows: readonly ActivityRow[];
@@ -74,9 +79,16 @@ export function useDetailData(hireId: string | null): DetailData {
             setActRows((prev) => (prev.some((r) => r.id === row.id) ? prev : [...prev, row]));
         });
         // The live turn. Each push carries the whole turn so far for one hire as ordered blocks, so
-        // set it straight rather than appending; a push for another colleague is ignored.
+        // set it straight rather than appending; a push for another colleague is ignored. An empty
+        // snapshot means the turn started but has not produced output yet, which the tab shows as a
+        // working indicator. The final push carries `done`: it clears an indicator that never got
+        // output, but leaves real content in place so the persisted row replaces it without a gap.
         const offStream = window.stafford.channel.onStreamDelta((delta) => {
             if (delta.hireId !== hireId) return;
+            if (delta.done) {
+                setStreaming((prev) => (prev && prev.some(hasLiveContent) ? prev : null));
+                return;
+            }
             setStreaming(delta.blocks);
         });
 

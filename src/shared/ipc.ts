@@ -94,10 +94,16 @@ export type LiveBlock =
  * cannot garble the view: the renderer shows the latest snapshot and reconciles against the
  * persisted message when the turn ends. Text and tool calls only; thinking and every other block
  * are excluded upstream, so this never carries them.
+ *
+ * The turn's lifecycle rides the same push. An opening snapshot with empty `blocks` marks the turn
+ * started before any output, which the tab fills with a working indicator. `done` marks the turn
+ * finished, so the tab can drop a lingering indicator when a turn produced no output at all.
  */
 export interface ConversationStreamDelta {
     readonly hireId: string;
     readonly blocks: readonly LiveBlock[];
+    /** True on the final push of a turn, so the tab clears an indicator that never got output. */
+    readonly done?: boolean;
 }
 
 /** Main pushes to the renderer. One-way, no reply. */

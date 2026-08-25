@@ -642,8 +642,8 @@ function notifyChannelChanged(): void {
  * reply text and its tool calls live. One-way, fire-and-forget: nothing is persisted here
  * (recordReply does that at turn end), this only changes how the in-flight turn appears.
  */
-function notifyConversationDelta(hireId: string, blocks: readonly LiveBlock[]): void {
-    if (window && !window.isDestroyed()) window.webContents.send('conversation:delta', { hireId, blocks });
+function notifyConversationDelta(hireId: string, blocks: readonly LiveBlock[], done: boolean): void {
+    if (window && !window.isDestroyed()) window.webContents.send('conversation:delta', { hireId, blocks, done });
 }
 
 function notifyTasksChanged(): void {
@@ -1013,7 +1013,7 @@ function buildDelivery(store: HireStore): void {
         // The colleague's turn streaming live during a chat turn: reply text and tool-call islands
         // in order. The whole turn so far is pushed each time; the renderer shows it provisionally
         // and drops it for the persisted row once recordReply fires channel:changed. Chat turns only.
-        onLive: (hireId, blocks) => notifyConversationDelta(hireId, blocks),
+        onLive: (hireId, blocks, done) => notifyConversationDelta(hireId, blocks, done),
         // Each tool the colleague used this turn, into the append-only activity store.
         // The Transcript view and the Activity feed both read it back per hire. This
         // re-feeds the activity feed the removed hooks used to, now from the runner.

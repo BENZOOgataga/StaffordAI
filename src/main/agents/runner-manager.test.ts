@@ -305,10 +305,10 @@ const streamDelta = (text: string): string =>
 const textOf = (blocks: readonly LiveBlock[]): string =>
     blocks.filter((b): b is Extract<LiveBlock, { kind: 'text' }> => b.kind === 'text').map((b) => b.text).join('');
 
-test('a chat turn streams its text to onLive as accumulated snapshots, then persists the final once', async () => {
+test('a chat turn opens with an empty snapshot, streams text, then closes with done', async () => {
     const { spawn, children } = responder({ auto: false });
-    const pushes: Array<{ h: string; blocks: readonly LiveBlock[] }> = [];
-    const { deps, rec } = fakeDeps(spawn, { onLive: (h, blocks) => { pushes.push({ h, blocks }); } });
+    const pushes: Array<{ h: string; blocks: readonly LiveBlock[]; done: boolean }> = [];
+    const { deps, rec } = fakeDeps(spawn, { onLive: (h, blocks, done) => { pushes.push({ h, blocks, done }); } });
     const manager = new ClaudeRunnerManager(deps);
 
     const turn = manager.submit('hireA', 'hi');
@@ -321,12 +321,16 @@ test('a chat turn streams its text to onLive as accumulated snapshots, then pers
     child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
     await turn;
 
-    // Each push carries the whole turn so far, so the text accumulates snapshot by snapshot.
-    assert.deepEqual(pushes.map((p) => textOf(p.blocks)), ['Hel', 'Hello']);
-    assert.equal(pushes[0]?.h, 'hireA');
-    // The persisted final matches the last streamed snapshot exactly: no duplication, no drift.
+    // The turn opens with an empty snapshot, so the tab can show a working indicator before output.
+    assert.deepEqual(pushes[0], { h: 'hireA', blocks: [], done: false }, 'an empty opening snapshot');
+    // The content pushes accumulate the whole text so far, snapshot by snapshot.
+    const content = pushes.filter((p) => !p.done && textOf(p.blocks) !== '');
+    assert.deepEqual(content.map((p) => textOf(p.blocks)), ['Hel', 'Hello']);
+    // The final push is the done marker, so the tab can drop a lingering indicator.
+    assert.equal(pushes.at(-1)?.done, true, 'the last push closes the turn');
+    // The persisted final matches the last content snapshot exactly: no duplication, no drift.
     assert.deepEqual(rec.replies, [{ h: 'hireA', p: 'p-hireA', t: 'Hello' }]);
-    assert.equal(textOf(pushes.at(-1)!.blocks), rec.replies[0]?.t, 'the last snapshot equals the persisted message');
+    assert.equal(textOf(content.at(-1)!.blocks), rec.replies[0]?.t, 'the last content snapshot equals the persisted message');
 });
 
 test('a chat turn streams tool calls as blocks that pair with their result and resolve status', async () => {
@@ -420,7 +424,10 @@ test('a thinking delta and other events are ignored, never fatal; only text and 
     child?.emit('{"type":"result","is_error":false,"session_id":"sess-1"}\n');
     await turn;
 
-    assert.equal(textOf(pushes.at(-1)!), 'Answer', 'the thinking text is excluded; only the reply text streams');
+    // The last content snapshot (ignoring the opening and the closing empty pushes) is the reply
+    // text alone; the thinking never became text.
+    const lastContent = pushes.filter((b) => textOf(b) !== '').at(-1);
+    assert.equal(textOf(lastContent!), 'Answer', 'the thinking text is excluded; only the reply text streams');
 });
 
 // --- the task turn ----------------------------------------------------------

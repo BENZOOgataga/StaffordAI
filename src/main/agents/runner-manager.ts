@@ -61,13 +61,13 @@ export interface RunnerManagerDeps {
     readonly recordReply: (hireId: string, projectId: string, text: string) => void;
     /**
      * Streams the colleague's turn as it arrives, for the live Conversation tab: the reply text
-     * and the tool calls it makes, in order, as a block snapshot. Called many times per chat turn
-     * with the whole turn so far (a snapshot, not a fragment), then not at all once the turn ends,
-     * at which point recordReply persists the final text. Only the chat path streams; a task turn
-     * never calls this, so its work does not leak into the conversation. Optional: with it unset,
-     * nothing streams and behaviour is unchanged.
+     * and the tool calls it makes, in order, as a block snapshot. Called with an empty snapshot the
+     * moment the turn starts (so the tab can show a working indicator before any output), then many
+     * times with the whole turn so far as blocks arrive, then once at the end with `done` true so the
+     * tab can drop an indicator for a turn that produced nothing. Only the chat path streams; a task
+     * turn never calls this. Optional: with it unset, nothing streams and behaviour is unchanged.
      */
-    readonly onLive?: (hireId: string, blocks: readonly LiveBlock[]) => void;
+    readonly onLive?: (hireId: string, blocks: readonly LiveBlock[], done: boolean) => void;
     /**
      * Records one tool the colleague used this turn, for the Activity feed and the
      * Transcript view. status is 'ok' when the turn completed, 'incomplete' otherwise.
@@ -288,7 +288,7 @@ export class ClaudeRunnerManager {
                     // and every unhandled event are ignored, never fatal, per the stream's defensive
                     // posture. A push carries the whole turn so far, so the renderer always has a
                     // correct snapshot even if a push is dropped.
-                    if (liveBuilder.apply(event)) emitLive(hireId, liveBuilder.snapshot());
+                    if (liveBuilder.apply(event)) emitLive(hireId, liveBuilder.snapshot(), false);
                 } }
                 : {})
         });
@@ -297,11 +297,18 @@ export class ClaudeRunnerManager {
         // Working the moment the turn starts. State is derived from the runner's own
         // lifecycle now, not from hooks, which no longer fire on this path.
         this.#setState(hireId, AGENT_STATES.WORKING);
+        // An opening empty snapshot, so the tab shows a working indicator in the gap before the
+        // first token or tool event. The builder's snapshots replace it as soon as output arrives.
+        if (emitLive) emitLive(hireId, [], false);
 
         const resumeSessionId = over ? over.resumeSessionId : target.resumeSessionId;
         const result = await runner.runTurn({ text, resumeSessionId });
 
         live.runner = null;
+        // Close the live stream for this turn. `done` lets the tab drop a working indicator for a
+        // turn that produced no output at all; a turn that did produce output is replaced by its
+        // persisted message instead, so this never blanks real content.
+        if (emitLive) emitLive(hireId, [], true);
 
         // Persist the session id so the next turn resumes, and so it survives a restart. A
         // task turn skips this: its session belongs to the task row, not to the chat thread.
