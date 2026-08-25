@@ -24,6 +24,9 @@ import { applyAppMenu, hideMenuBar } from './window/app-menu.ts';
 import { registerWindowControls, wireMaximizeEvents } from './window/window-controls.ts';
 import { resolveWindowBounds, readWindowState, saveWindowState, WINDOW_DEFAULTS, type Rect } from './window/window-state.ts';
 import { installTray, needsYouSignal, type TrayHandle } from './tray.ts';
+import {
+    registerDevTriggers, applyDevState, devFake, type DevFakeState
+} from './dev/dev-triggers.ts';
 import { TRAY_ICON_PNG } from './tray-icons.ts';
 import { configureLoginItem } from './login-item.ts';
 import { registerHandlers } from './ipc/handlers.ts';
@@ -360,7 +363,12 @@ function openWindow(view?: string): void {
             // Tell the sandboxed preload whether this window is frameless, so the renderer
             // mounts the custom title bar only where the OS frame was removed. Passed as a
             // launch argument rather than over IPC so it is available synchronously at load.
-            additionalArguments: isMac ? [] : ['--stafford-frameless']
+            // --stafford-dev, only in a dev build, gates the hidden dev trigger panel; a
+            // packaged build never passes it, so the preload never exposes the dev surface.
+            additionalArguments: [
+                ...(isMac ? [] : ['--stafford-frameless']),
+                ...(app.isPackaged ? [] : ['--stafford-dev'])
+            ]
         }
     });
 
@@ -611,13 +619,28 @@ function notifyTasksChanged(): void {
 }
 
 /**
+ * In a dev build, prefer the dev fake overlay's field over the real source; in a packaged build,
+ * always the real value. `!app.isPackaged` short-circuits first, so a packaged build never reads
+ * the overlay at all. This is how a trigger fakes a read without touching the store.
+ */
+function devOr<T>(realValue: () => T, pick: (fake: DevFakeState) => T): T {
+    if (!app.isPackaged) {
+        const fake = devFake();
+        if (fake) return pick(fake);
+    }
+    return realValue();
+}
+
+/**
  * What needs the person right now, for the tray: tasks waiting on a review, and turns paused
  * on a permission ask. The same two things the board header and the approvals banner count.
  */
 function trayCounts(): { review: number; paused: number } {
-    const review = repositories ? repositories.tasks.open().filter((t) => t.state === 'needs-you').length : 0;
-    const paused = approvalRegistry ? approvalRegistry.list().length : 0;
-    return { review, paused };
+    return devOr(() => {
+        const review = repositories ? repositories.tasks.open().filter((t) => t.state === 'needs-you').length : 0;
+        const paused = approvalRegistry ? approvalRegistry.list().length : 0;
+        return { review, paused };
+    }, (fake) => fake.trayCount);
 }
 
 // The needs-you count last reflected, so a notification fires only when it rises, not on every
@@ -650,6 +673,21 @@ function refreshTray(opts?: { notify?: boolean }): void {
     const signal = needsYouSignal(lastNeedsYouCount, review, paused);
     if ((opts?.notify ?? true) && signal.fire) showNeedsYouNotification(signal.title, signal.body);
     lastNeedsYouCount = signal.count;
+}
+
+/**
+ * Applies a dev overlay (dev builds only): emit the same change signals a real write would, so the
+ * renderer re-reads and renders the fake through its normal read paths, then refresh the tray,
+ * which pops the notification on a rise exactly as a real needs-you rise would. A null overlay is a
+ * clear, and the same emits make the renderer re-read the real data. Presentation only, no store write.
+ */
+function applyDevOverlay(_fake: DevFakeState | null): void {
+    if (window && !window.isDestroyed()) {
+        window.webContents.send('roster:changed');
+        window.webContents.send('tasks:changed');
+        window.webContents.send('approvals:changed');
+    }
+    refreshTray();
 }
 
 function requireTasks(): TaskService {
@@ -1695,7 +1733,7 @@ app.whenReady().then(async () => {
             if (!repositories) throw new Error('hire:create: the store is not open');
             return createHireService(createDeps(repositories), payload);
         },
-        rosterSnapshot,
+        rosterSnapshot: () => devOr(rosterSnapshot, (f) => f.roster),
         permissionRules: (projectId) => permissionRulesFor(projectId),
         effectivePolicy: (projectId, hireId) => effectivePolicyFor(projectId, hireId),
         addPermissionRule: (payload) => addPermissionRule(payload),
@@ -1741,14 +1779,18 @@ app.whenReady().then(async () => {
         },
         // The pending permission approvals, and the person's answer, which resolves the
         // paused seam for exactly that ask so the right turn continues or stops.
-        pendingApprovals: () => ({ pending: approvalRegistry ? approvalRegistry.list() : [] }),
+        pendingApprovals: () => devOr(
+            () => ({ pending: approvalRegistry ? approvalRegistry.list() : [] }),
+            (f) => f.approvals
+        ),
         answerApproval: (id, approve, note) => { approvalRegistry?.answer(id, approve, note); },
 
         // Tasks. The three writes go through the service, which is the only thing in the app
         // that writes a task state and which names the actor itself on every write.
-        tasksByHire: (hireId, limit) => ({
-            rows: (repositories?.tasks.byHire(hireId, limit) ?? []).map(taskRow)
-        }),
+        tasksByHire: (hireId, limit) => devOr(
+            () => ({ rows: (repositories?.tasks.byHire(hireId, limit) ?? []).map(taskRow) }),
+            (f) => f.byHire
+        ),
         assignTask: (payload) => taskWrite(() => requireTasks().assign(payload)),
         startTask: (id) => taskWrite(() => {
             // The reply carries the task as it stands once it is running; the attempt itself
@@ -1775,14 +1817,14 @@ app.whenReady().then(async () => {
         taskDiff: (id) => readTaskDiff(id),
         // Unfinished tasks in full, finished ones capped. See TaskRepository.open for why the
         // unfinished set is deliberately not paginated.
-        taskBoard: (closedLimit) => {
+        taskBoard: (closedLimit) => devOr(() => {
             const open = repositories?.tasks.open() ?? [];
             const closed = repositories?.tasks.recentClosed(closedLimit + 1) ?? [];
             return {
                 rows: [...open, ...closed.slice(0, closedLimit)].map(taskRow),
                 closedTruncated: closed.length > closedLimit
             };
-        }
+        }, (f) => f.board)
     });
 
     smoke('boot ok: tray-resident, no window at launch, platform ' + currentPlatform().id +
@@ -1890,6 +1932,25 @@ app.whenReady().then(async () => {
     // do not pop a notification for it: only a rise during the session notifies, not the backlog
     // that was already there when the app came up.
     refreshTray({ notify: false });
+
+    // Dev-only UI-state triggers. registerDevTriggers is a no-op when packaged, so the trigger
+    // channels are never registered in a production build. The CLI file-watch is dev-gated here
+    // too, so it never runs when packaged.
+    registerDevTriggers({ ipcMain, isPackaged: app.isPackaged, onApply: applyDevOverlay });
+    if (!app.isPackaged) {
+        const triggerFile = path.join(os.tmpdir(), 'stafford-dev-trigger.json');
+        let lastMtime = 0;
+        const timer = setInterval(() => {
+            try {
+                const stat = fs.statSync(triggerFile);
+                if (stat.mtimeMs === lastMtime) return;
+                lastMtime = stat.mtimeMs;
+                const req = JSON.parse(fs.readFileSync(triggerFile, 'utf8')) as { state?: string; n?: number };
+                if (req.state) applyDevState(String(req.state), typeof req.n === 'number' ? req.n : 1, applyDevOverlay);
+            } catch { /* no trigger file yet, or a partial write: ignore and poll again */ }
+        }, 500);
+        timer.unref();
+    }
 });
 
 // No window at launch and none when the last window closes: the tray keeps the
