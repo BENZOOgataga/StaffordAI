@@ -16,6 +16,9 @@ export const INVOKE_CHANNELS = [
     'health',
     'projects:list',
     'project:create',
+    // Opens a native folder picker and returns the chosen directory, or null if cancelled. The
+    // create form uses it so a project's folder is picked, not typed; main still validates the pick.
+    'dialog:pick-folder',
     'hire:create',
     'roster:snapshot',
     'channel:page',

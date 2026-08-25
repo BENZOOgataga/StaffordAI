@@ -80,7 +80,9 @@ const api = Object.freeze({
     projects: Object.freeze({
         list: (): Promise<ProjectsList> => invoke('projects:list') as Promise<ProjectsList>,
         create: (name: string, repoPaths: readonly string[]): Promise<ProjectCreated> =>
-            invoke('project:create', { name, repoPaths }) as Promise<ProjectCreated>
+            invoke('project:create', { name, repoPaths }) as Promise<ProjectCreated>,
+        // Opens the native folder picker for the create form. Returns the chosen directory or null.
+        pickFolder: (): Promise<string | null> => invoke('dialog:pick-folder') as Promise<string | null>
     }),
 
     // Hiring a colleague into a project. Returns the created hire's id and safe

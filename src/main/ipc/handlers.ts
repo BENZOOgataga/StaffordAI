@@ -46,6 +46,8 @@ export interface HandlerDeps {
      * invoke. Ids and names cross back, never a path.
      */
     readonly createProject: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
+    /** Opens a native folder picker, returning the chosen directory or null if cancelled. */
+    readonly pickFolder: () => Promise<string | null>;
     /**
      * Creates a hire bound to a project, returning its id and safe fields. Throws
      * on an unknown definition type or a missing project, which becomes a rejected
@@ -147,6 +149,11 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
             }
             return deps.createProject({ name: payload.name, repoPaths: payload.repoPaths });
         },
+
+        // Opens the native folder picker for the create form. No payload; returns the chosen
+        // directory or null. The chosen path is still validated by createProject, so the picker
+        // is convenience, not the trust boundary.
+        'dialog:pick-folder': (): Promise<string | null> => deps.pickFolder(),
 
         // Creating a hire, bound to an owning project so its cold-spawn cwd
         // resolves to that project's real directory. Refuses an unknown definition

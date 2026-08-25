@@ -742,6 +742,9 @@
   }
   .sheet-title { margin: 0; font-size: 1.1rem; font-weight: 600; letter-spacing: -0.01em; }
   .field { display: flex; flex-direction: column; gap: 6px; }
+  .field-row { display: flex; gap: 8px; align-items: stretch; }
+  .field-row input { flex: 1 1 auto; min-width: 0; }
+  .field-row .btn { flex: 0 0 auto; white-space: nowrap; }
   .field label { color: var(--muted); font-size: 0.85rem; }
   .field input, .field select {
     appearance: none;
@@ -799,7 +802,10 @@
     </div>
     <div class="field">
       <label id="project-repo-label" for="project-repo">Repository folder</label>
-      <input id="project-repo" type="text" autocomplete="off" spellcheck="false" />
+      <div class="field-row">
+        <input id="project-repo" type="text" autocomplete="off" spellcheck="false" readonly />
+        <button id="project-browse" class="btn btn-secondary" type="button">Choose folder</button>
+      </div>
       <p id="project-hint" class="form-hint"></p>
     </div>
     <p id="project-error" class="form-error" role="alert" hidden></p>

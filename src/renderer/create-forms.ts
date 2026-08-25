@@ -25,6 +25,7 @@ const hireSheet = document.getElementById('hire-sheet') as HTMLElement;
 // Project form elements.
 const projectName = document.getElementById('project-name') as HTMLInputElement;
 const projectRepo = document.getElementById('project-repo') as HTMLInputElement;
+const projectBrowse = document.getElementById('project-browse') as HTMLButtonElement;
 const projectHint = document.getElementById('project-hint') as HTMLElement;
 const projectError = document.getElementById('project-error') as HTMLElement;
 const projectCreate = document.getElementById('project-create') as HTMLButtonElement;
@@ -49,6 +50,20 @@ function clearError(el: HTMLElement): void {
 
 function refreshProjectHint(): void {
     projectHint.textContent = hintText(copy, pathHint(projectRepo.value));
+}
+
+/**
+ * Opens the native folder picker and fills the path field with the chosen directory. The field is
+ * read-only, so this is the only way to set it, which removes the paste, typo, and left-over-value
+ * class that let a wrong path in by hand. Main still validates the pick (it exists, and it is not
+ * Stafford's own directory), so a cancelled pick leaves the field as it was.
+ */
+async function browseForFolder(): Promise<void> {
+    const picked = await window.stafford.projects.pickFolder();
+    if (picked) {
+        projectRepo.value = picked;
+        refreshProjectHint();
+    }
 }
 
 function openSheet(sheet: HTMLElement, firstField: HTMLElement): void {
@@ -156,7 +171,7 @@ export function initCreateForms(deps: { onCreated: () => void }): void {
         hireRole.appendChild(option);
     }
 
-    projectRepo.addEventListener('input', refreshProjectHint);
+    projectBrowse.addEventListener('click', () => void browseForFolder());
     projectCreate.addEventListener('click', () => void submitProject());
     projectCancel.addEventListener('click', () => closeSheet(projectSheet));
     hireSubmit.addEventListener('click', () => void submitHire());
@@ -176,6 +191,7 @@ function localizeLabels(): void {
     set('project-sheet-title', copy.projectTitle);
     set('project-name-label', copy.nameLabel);
     set('project-repo-label', copy.repoLabel);
+    set('project-browse', copy.browse);
     set('project-create', copy.create);
     set('project-cancel', copy.cancel);
     set('hire-sheet-title', copy.hireTitle);

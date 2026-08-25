@@ -167,7 +167,7 @@ export function realPathWithMissingLeaf(
  * Both the rule scopes and the request path go through this same function. Two paths compared
  * after different pipelines is the defect this whole file keeps re-learning.
  */
-function resolveForCompare(
+export function resolveForCompare(
     normalise: (value: string) => string,
     realpath: (value: string) => string,
     base: string,

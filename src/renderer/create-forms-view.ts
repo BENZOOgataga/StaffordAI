@@ -71,6 +71,8 @@ export interface FormCopy {
     readonly hireTitle: string;
     readonly nameLabel: string;
     readonly repoLabel: string;
+    /** The folder-picker button label. */
+    readonly browse: string;
     readonly roleLabel: string;
     readonly projectLabel: string;
     readonly hintAbsolute: string;
@@ -92,11 +94,12 @@ const EN: FormCopy = {
     hireTitle: 'Hire a colleague',
     nameLabel: 'Name',
     repoLabel: 'Repository folder',
+    browse: 'Choose folder',
     roleLabel: 'Role',
     projectLabel: 'Project',
     hintAbsolute: 'Looks like a folder path. I check it exists when you add it.',
     hintRelative: 'Enter the full path to an existing folder on this machine.',
-    hintEmpty: 'The full path to the project folder on this machine.',
+    hintEmpty: 'Choose the project folder on this machine.',
     create: 'Add project',
     cancel: 'Cancel',
     hireNeedsProject: 'Add a project first, so your colleague has somewhere to work.',
@@ -112,11 +115,12 @@ const FR: FormCopy = {
     hireTitle: 'Engager un collègue',
     nameLabel: 'Nom',
     repoLabel: 'Dossier du dépôt',
+    browse: 'Choisir un dossier',
     roleLabel: 'Rôle',
     projectLabel: 'Projet',
     hintAbsolute: 'Cela ressemble à un chemin de dossier. Je vérifie son existence à l\'ajout.',
     hintRelative: 'Saisissez le chemin complet vers un dossier existant sur cette machine.',
-    hintEmpty: 'Le chemin complet vers le dossier du projet sur cette machine.',
+    hintEmpty: 'Choisissez le dossier du projet sur cette machine.',
     create: 'Ajouter le projet',
     cancel: 'Annuler',
     hireNeedsProject: 'Ajoutez d\'abord un projet, pour que votre collègue ait un endroit où travailler.',
