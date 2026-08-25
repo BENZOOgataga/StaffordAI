@@ -45,6 +45,18 @@ contextBridge.exposeInMainWorld('stafford', {
                         id: 'final1', projectId: 'p1', senderId: hireId, kind: 'message', body: text, reference: null, at: '2026-08-25T09:00:05Z'
                     });
                     for (const l of changedListeners) l();
+                },
+                // Reproduces the REAL send sequence that the plain `stream` hook missed and that let a
+                // broken indicator pass: the person's own message lands and fires channel:changed
+                // (which re-reads the conversation), racing the turn-start empty snapshot. The old
+                // clear-on-re-read logic blanked the indicator here; the fix keeps it. A harness run
+                // that drives this and checks the indicator is still present would have caught the bug.
+                sendRace: (hireId) => {
+                    (rows[hireId] = rows[hireId] || []).push({
+                        id: 'you-race', projectId: 'p1', senderId: 'benzoo', kind: 'message', body: 'run the tests please', reference: null, at: '2026-08-25T09:01:00Z'
+                    });
+                    for (const l of changedListeners) l();                          // channel:changed -> re-read
+                    for (const l of streamListeners) l({ hireId, blocks: [], done: false }); // turn-start indicator
                 }
             }
         };
