@@ -206,12 +206,67 @@ test('text and tool blocks keep the order they streamed in', () => {
 
 // --- graceful degradation ---------------------------------------------------
 
-test('a thinking block and its deltas never become text', () => {
+// --- thinking blocks (phase 5) ----------------------------------------------
+
+interface ThinkBlk { kind: string; text: string; seconds: number | null }
+const thinkBlk = (b: LiveTurnBuilder): ThinkBlk | undefined =>
+    b.snapshot().find((x) => x.kind === 'thinking') as ThinkBlk | undefined;
+
+test('a thinking block accumulates its reasoning, and the signature is never in the text', () => {
     const b = new LiveTurnBuilder();
     b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }));
-    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'reasoning' } }));
-    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } }));
-    assert.deepEqual(b.snapshot(), [], 'thinking is out of scope this phase and adds no block');
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'first ' } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'second' } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'SECRET-SIG' } }));
+    const t = thinkBlk(b);
+    assert.ok(t, 'a thinking block exists');
+    assert.equal(t!.text, 'first second', 'the reasoning accumulated from thinking_delta');
+    assert.equal(t!.text.includes('SECRET-SIG'), false, 'the signature never leaks into the text');
+    assert.equal(t!.seconds, null, 'still streaming, so no duration yet');
+});
+
+test('a thinking block gets a duration in seconds at content_block_stop, from an injected clock', () => {
+    let t = 1000;
+    const b = new LiveTurnBuilder(() => t);
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'mulling' } }));
+    t = 4200; // 3.2s later
+    b.apply(se({ type: 'content_block_stop', index: 0 }));
+    assert.equal(thinkBlk(b)!.seconds, 3, 'rounded start-to-stop seconds');
+});
+
+test('redacted reasoning: empty text but a real duration, which the tab still shows as "Thought for Ns"', () => {
+    // Real captured behaviour: thinking_deltas arrive with an empty `thinking` string (the reasoning
+    // text is redacted in this mode), yet the block ran for real. The text stays empty and the
+    // duration is set, so the renderer shows the duration rather than dropping a genuine think.
+    let t = 2000;
+    const b = new LiveTurnBuilder(() => t);
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '' } }));
+    t = 5000;
+    b.apply(se({ type: 'content_block_stop', index: 0 }));
+    assert.equal(thinkBlk(b)!.text, '', 'the reasoning text is redacted');
+    assert.equal(thinkBlk(b)!.seconds, 3, 'but the duration is real, so the island shows "Thought for 3s"');
+});
+
+test('thinking renders above the reply: it precedes the text block in order', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } }));
+    b.apply(se({ type: 'content_block_stop', index: 0 }));
+    b.apply(se({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }));
+    b.apply(se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'the answer' } }));
+    assert.deepEqual(b.snapshot().map((x) => x.kind), ['thinking', 'text']);
+});
+
+test('a malformed thinking event does not throw', () => {
+    const b = new LiveTurnBuilder();
+    assert.doesNotThrow(() => {
+        b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }));
+        b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta' } }));
+        b.apply(se({ type: 'content_block_stop', index: 0 }));
+    });
+    assert.equal(thinkBlk(b)!.text, '', 'a delta with no thinking string adds nothing');
 });
 
 test('an unknown tool still renders: it keeps its name and a null-or-parsed target, no throw', () => {

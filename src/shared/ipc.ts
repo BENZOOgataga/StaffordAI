@@ -81,6 +81,18 @@ export type LiveToolStatus = 'running' | 'ok' | 'error';
 export type LiveBlock =
     | { readonly kind: 'text'; readonly text: string }
     | {
+        /**
+         * The colleague's reasoning for this turn, when the model emitted a thinking block. `text` is
+         * the reasoning, accumulated from the stream; the cryptographic signature is never included.
+         * `seconds` is how long the thinking took once it finished, or null while it is still
+         * streaming (the tab shows "Thinking..." then "Thought for Ns"). A turn with no thinking, or
+         * thinking omitted by config, carries no thinking block at all.
+         */
+        readonly kind: 'thinking';
+        readonly text: string;
+        readonly seconds: number | null;
+    }
+    | {
         readonly kind: 'tool';
         readonly id: string;
         readonly name: string;

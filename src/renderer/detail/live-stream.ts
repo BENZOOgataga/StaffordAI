@@ -19,9 +19,15 @@
 
 import type { LiveBlock } from '../../shared/ipc.ts';
 
-/** A block carries real output: a tool call, or text that is not empty. An empty text run does not. */
+/**
+ * A block carries real output: a tool call, non-empty text, or a thinking block that is streaming
+ * text or has finished (a duration). A thinking block whose reasoning is redacted still counts once
+ * it finishes, because "Thought for Ns" is itself the content worth showing.
+ */
 export function hasLiveContent(block: LiveBlock): boolean {
-    return block.kind === 'tool' || block.text !== '';
+    if (block.kind === 'tool') return true;
+    if (block.kind === 'thinking') return block.text !== '' || block.seconds !== null;
+    return block.text !== '';
 }
 
 /** True when the streaming state holds real output rather than only the working indicator. */

@@ -18,11 +18,12 @@ import type { ClaudeStreamEvent } from './claude-runner.ts';
 import type { LiveBlock, LiveToolStatus, TaskDiffFile, TaskDiffLine } from '../../shared/ipc.ts';
 
 interface TextBlockM { kind: 'text'; text: string }
+interface ThinkingBlockM { kind: 'thinking'; text: string; seconds: number | null; startMs: number }
 interface ToolBlockM {
     kind: 'tool'; id: string; name: string; target: string | null; status: LiveToolStatus;
     partial: string; output?: string; edit?: TaskDiffFile;
 }
-type BlockM = TextBlockM | ToolBlockM;
+type BlockM = TextBlockM | ThinkingBlockM | ToolBlockM;
 
 /** The command-running tools whose output the Conversation renders. Matched by name, the identity the
  * stream gives, never guessed from the output shape. (PowerShell is not a shell in the bash sense, so
@@ -44,18 +45,24 @@ export class LiveTurnBuilder {
     #blocks: BlockM[] = [];
     /** Per current message: content index to the block it opened, so deltas find their block. */
     #byIndex = new Map<number, BlockM | null>();
+    /** The wall clock, injected so the "Thought for Ns" duration is deterministic under test. */
+    readonly #now: () => number;
+
+    constructor(now: () => number = Date.now) {
+        this.#now = now;
+    }
 
     /** The block list for the wire, tool blocks stripped of their internal partial-json buffer. */
     snapshot(): LiveBlock[] {
-        return this.#blocks.map((b) =>
-            b.kind === 'text'
-                ? { kind: 'text', text: b.text }
-                : {
-                    kind: 'tool', id: b.id, name: b.name, target: b.target, status: b.status,
-                    ...(b.output !== undefined ? { output: b.output } : {}),
-                    ...(b.edit !== undefined ? { edit: b.edit } : {})
-                }
-        );
+        return this.#blocks.map((b) => {
+            if (b.kind === 'text') return { kind: 'text', text: b.text };
+            if (b.kind === 'thinking') return { kind: 'thinking', text: b.text, seconds: b.seconds };
+            return {
+                kind: 'tool', id: b.id, name: b.name, target: b.target, status: b.status,
+                ...(b.output !== undefined ? { output: b.output } : {}),
+                ...(b.edit !== undefined ? { edit: b.edit } : {})
+            };
+        });
     }
 
     /** Folds one event in. Returns true when the snapshot changed, so a push is worth sending. */
@@ -102,8 +109,21 @@ export class LiveTurnBuilder {
                 this.#byIndex.set(idx, block);
                 return true;
             }
-            // A thinking or other block: remember the index maps to nothing, so its deltas are
-            // ignored rather than mistaken for text.
+            if (cb.type === 'thinking') {
+                // The reasoning block. Its text accumulates from thinking_delta; the signature never
+                // does. An empty one (no deltas, or omitted mode) is simply not rendered downstream.
+                const block: ThinkingBlockM = {
+                    kind: 'thinking',
+                    text: typeof cb.thinking === 'string' ? cb.thinking : '',
+                    seconds: null,
+                    startMs: this.#now()
+                };
+                this.#blocks.push(block);
+                this.#byIndex.set(idx, block);
+                return block.text !== '';
+            }
+            // Any other block type: remember the index maps to nothing, so its deltas are ignored
+            // rather than mistaken for text.
             this.#byIndex.set(idx, null);
             return false;
         }
@@ -125,11 +145,18 @@ export class LiveTurnBuilder {
                 }
                 return false;
             }
+            if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+                // The reasoning text. The signature_delta is a different delta type and falls through
+                // to ignored below, so the signature is never appended to what is rendered.
+                if (block && block.kind === 'thinking') { block.text += delta.thinking; return delta.thinking !== ''; }
+                return false;
+            }
             if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
                 if (block && block.kind === 'tool') block.partial += delta.partial_json;
                 // The target updates at content_block_stop, not per fragment, so no visible change here.
                 return false;
             }
+            // Any other delta, signature_delta included, is not content and is dropped.
             return false;
         }
 
@@ -140,6 +167,12 @@ export class LiveTurnBuilder {
             if (block && block.kind === 'tool' && block.partial !== '') {
                 const target = parseTarget(block.partial);
                 if (target !== null && target !== block.target) { block.target = target; return true; }
+            }
+            if (block && block.kind === 'thinking' && block.seconds === null) {
+                // The thinking finished: stamp how long it took, so the island reads "Thought for Ns"
+                // instead of "Thinking...". Derived from the block's own start-to-stop wall time.
+                block.seconds = Math.max(0, Math.round((this.#now() - block.startMs) / 1000));
+                return block.text !== '';
             }
             return false;
         }
