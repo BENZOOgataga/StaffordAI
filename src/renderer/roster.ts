@@ -132,6 +132,14 @@ function main(): void {
     const KNOWN_VIEWS = new Set(['home', 'roster', 'board', 'channel', 'permissions']);
     window.stafford.shell.onNavigate((view) => { if (KNOWN_VIEWS.has(view)) showView(view); });
 
+    // The hidden dev trigger panel, in a dev build only. Code-split so its chunk never loads in
+    // production, and gated on the dev bridge the preload exposes only under --stafford-dev.
+    if (window.stafford.dev?.isDev) {
+        void import('./dev-panel.ts').then((m) => m.initDevPanel()).catch((error: unknown) => {
+            console.error('[dev-panel] mount failed:', error);
+        });
+    }
+
     // Home is the default view on launch: the overview a person wants first, rather than
     // dropping straight into the roster.
     showView('home');

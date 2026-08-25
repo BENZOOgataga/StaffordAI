@@ -21,6 +21,7 @@
   "scripts": {
     "electron:install": "install-electron",
     "dev": "electron-vite dev",
+    "dev:trigger": "node scripts/dev-trigger.cjs",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "package": "electron-vite build && electron-builder --mac --dir",

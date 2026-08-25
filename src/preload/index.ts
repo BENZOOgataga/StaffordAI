@@ -62,6 +62,9 @@ function winOn(channel: WindowEventChannel, listener: (payload: unknown) => void
 // window, so the renderer knows synchronously at load whether to draw the custom title
 // bar, without an extra IPC round-trip.
 const FRAMELESS = process.argv.includes('--stafford-frameless');
+// Only a dev build passes --stafford-dev (see index.ts). It gates the dev trigger surface, so a
+// packaged build never exposes `dev` and there is nothing for the hidden panel to call.
+const DEV = process.argv.includes('--stafford-dev');
 
 /**
  * The one object the renderer sees. Frozen, so the renderer cannot rewrite a
@@ -232,7 +235,20 @@ const api = Object.freeze({
     shell: Object.freeze({
         onNavigate: (listener: (view: string) => void): (() => void) =>
             on('shell:navigate', (payload) => listener(String(payload)))
-    })
+    }),
+
+    // Dev-only UI-state triggers, present only when --stafford-dev was passed (dev builds). A
+    // packaged build leaves this undefined, so the hidden panel has nothing to call. These invoke
+    // the dev channels directly rather than through the guarded allowlist, because the whole
+    // surface is dev-gated at exposure; in a packaged build main also registers no handler for them.
+    dev: DEV
+        ? Object.freeze({
+            isDev: true as const,
+            trigger: (state: string, n?: number): Promise<unknown> =>
+                ipcRenderer.invoke('dev:trigger', { state, n }),
+            clear: (): Promise<unknown> => ipcRenderer.invoke('dev:clear')
+        })
+        : undefined
 });
 
 contextBridge.exposeInMainWorld('stafford', api);
