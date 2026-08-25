@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { buildThread } from './conversation-model.ts';
 import { ConversationThread } from './conversation-thread.tsx';
 import { Markdown } from './markdown.tsx';
+import { CollapsibleLines } from './collapsible-lines.tsx';
 import { FeedIconGlyph } from './feed-icon.tsx';
 import { feedIcon, toolPhrase, toolStatusLabel, type FeedRow } from '../activity-view.ts';
 import { type Lang } from '../channel-view.ts';
@@ -28,20 +29,34 @@ function ToolIsland({ block, lang }: { block: Extract<LiveBlock, { kind: 'tool' 
         status: isError ? 'error' : 'ok', live: true
     };
     const statusLabel = isError ? toolStatusLabel('error', lang) : null;
+    // A shell tool carries its output once the result lands (present, even if empty); a read or an
+    // edit never does. So the presence of `output` is what turns the one-line island into a command
+    // island with its stdout/stderr below, on failure included, where stderr is the useful part.
+    const hasOutput = block.output !== undefined;
+    const emptyOutput = hasOutput && (block.output ?? '').trim() === '';
     return (
         <div className={cn(
-            'flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm',
+            'w-full max-w-[78%] overflow-hidden rounded-md border text-sm',
             isError ? 'border-status-error/40 bg-status-error/5' : 'border-border bg-muted/30'
         )}>
-            <FeedIconGlyph icon={feedIcon(row)}
-                className={cn('size-3.5 shrink-0', isError ? 'text-status-error' : 'text-muted-foreground')} />
-            <span className={cn('min-w-0 flex-1 truncate', isError ? 'text-status-error' : 'text-muted-foreground')}>
-                {toolPhrase(block.name || 'a tool', block.target, lang)}
-            </span>
-            {isRunning ? (
-                <span className="bg-muted-foreground/50 size-1.5 shrink-0 animate-pulse rounded-full" />
+            <div className="flex items-center gap-2 px-2.5 py-1.5">
+                <FeedIconGlyph icon={feedIcon(row)}
+                    className={cn('size-3.5 shrink-0', isError ? 'text-status-error' : 'text-muted-foreground')} />
+                <span className={cn('min-w-0 flex-1 truncate', isError ? 'text-status-error' : 'text-muted-foreground')}>
+                    {toolPhrase(block.name || 'a tool', block.target, lang)}
+                </span>
+                {isRunning ? (
+                    <span className="bg-muted-foreground/50 size-1.5 shrink-0 animate-pulse rounded-full" />
+                ) : null}
+                {statusLabel ? <span className="text-status-error shrink-0 text-xs">{statusLabel}</span> : null}
+            </div>
+            {hasOutput ? (
+                <div className="px-2 pb-2">
+                    {emptyOutput
+                        ? <p className="text-muted-foreground px-2 py-1 font-mono text-xs">(no output)</p>
+                        : <CollapsibleLines text={block.output ?? ''} />}
+                </div>
             ) : null}
-            {statusLabel ? <span className="text-status-error shrink-0 text-xs">{statusLabel}</span> : null}
         </div>
     );
 }

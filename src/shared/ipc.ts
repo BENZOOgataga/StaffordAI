@@ -86,6 +86,13 @@ export type LiveBlock =
         readonly name: string;
         readonly target: string | null;
         readonly status: LiveToolStatus;
+        /**
+         * A shell command's captured output (stdout and stderr combined), when the tool is a shell
+         * and its result has arrived. Bounded upstream so a pathological multi-megabyte stdout never
+         * crosses the bridge. Absent for non-shell tools and before the result lands; a file read
+         * never carries it (a read is an access, not output to show).
+         */
+        readonly output?: string;
     };
 
 /**
