@@ -66,10 +66,21 @@ function Hunk({ hunk, lang }: { hunk: TaskDiffHunk; lang: Lang }): React.JSX.Ele
     );
 }
 
-/** One file: a clickable header row, and the diff below when open. */
-function FileRow({ file, defaultOpen = false }: { file: TaskDiffFile; defaultOpen?: boolean }): React.JSX.Element {
+/** One file: a clickable header row, and the diff below when open. When collapsed with a `preview`, it
+ * shows the first few diff lines and a "show N more lines" affordance, the same short-preview default
+ * every action body uses, rather than the full diff or nothing at all. */
+function FileRow({ file, defaultOpen = false, preview = 0 }: {
+    file: TaskDiffFile; defaultOpen?: boolean; preview?: number;
+}): React.JSX.Element {
     const [open, setOpen] = React.useState(defaultOpen);
     const lang = langForPath(file.path);
+    // A flat preview of the change: the first `preview` diff lines, with the rest hidden behind the
+    // expand. Reuses the same colored Line rows as the full diff, so the preview reads as the top of
+    // the real change, not a separate summary.
+    const allLines = preview > 0 && !file.binary ? file.hunks.flatMap((h) => h.lines) : [];
+    const previewLines = allLines.slice(0, preview);
+    const previewHidden = Math.max(0, allLines.length - preview);
+    const showPreview = !open && preview > 0 && !file.binary && file.hunks.length > 0;
     return (
         <li className="border-border overflow-hidden rounded-md border">
             <button
@@ -97,21 +108,37 @@ function FileRow({ file, defaultOpen = false }: { file: TaskDiffFile; defaultOpe
                             ? <p className="text-muted-foreground px-2 py-2">No textual changes.</p>
                             : file.hunks.map((h, i) => <Hunk key={i} hunk={h} lang={lang} />)}
                 </div>
+            ) : showPreview ? (
+                <div className="border-border overflow-x-auto border-t font-mono text-xs leading-relaxed">
+                    {previewLines.map((l, i) => <Line key={i} line={l} lang={lang} />)}
+                    {previewHidden > 0 ? (
+                        <button
+                            type="button"
+                            data-diff-preview-more
+                            onClick={() => setOpen(true)}
+                            className="text-muted-foreground hover:text-foreground bg-muted/20 w-full border-t px-2 py-0.5 text-left"
+                        >
+                            {'⋯'} show {previewHidden} more {previewHidden === 1 ? 'line' : 'lines'}
+                        </button>
+                    ) : null}
+                </div>
             ) : null}
         </li>
     );
 }
 
-/** The changed files, expandable in place. `defaultOpen` starts each expanded, for an inline edit in
- * the conversation where the single file's change should show without a click; the task review leaves
- * it off so a long list of files stays collapsed. */
-export function DiffViewer({ files, defaultOpen = false }: {
+/** The changed files, expandable in place. `defaultOpen` starts each fully expanded (the task review's
+ * pre-existing use); `preview` starts each collapsed to its first few diff lines with a "show N more
+ * lines" expand, the short-preview default the conversation and activity bodies use. With neither, a
+ * file stays a header row until clicked. */
+export function DiffViewer({ files, defaultOpen = false, preview = 0 }: {
     files: readonly TaskDiffFile[];
     defaultOpen?: boolean;
+    preview?: number;
 }): React.JSX.Element {
     return (
         <ul className="flex list-none flex-col gap-2 p-0">
-            {files.map((file) => <FileRow key={file.path} file={file} defaultOpen={defaultOpen} />)}
+            {files.map((file) => <FileRow key={file.path} file={file} defaultOpen={defaultOpen} preview={preview} />)}
         </ul>
     );
 }
