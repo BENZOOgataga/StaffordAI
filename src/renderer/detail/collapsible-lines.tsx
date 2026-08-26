@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { splitCollapsed } from './collapse.ts';
+import { splitCollapsed, PREVIEW_LINES } from './collapse.ts';
 
 /**
  * A block of monospace output, collapsed to a few visible lines with a "show N more lines" affordance
@@ -11,7 +11,7 @@ import { splitCollapsed } from './collapse.ts';
  * expands it. The collapse maths lives in `collapse.ts`, pure and DOM-free, so it is tested directly.
  */
 
-const DEFAULT_VISIBLE = 15;
+const DEFAULT_VISIBLE = PREVIEW_LINES;
 
 export function CollapsibleLines({ text, visible = DEFAULT_VISIBLE }: { text: string; visible?: number }): React.JSX.Element {
     const [open, setOpen] = React.useState(false);

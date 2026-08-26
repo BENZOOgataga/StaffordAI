@@ -3,6 +3,7 @@ import { Brain, ChevronRight, ChevronDown, Square, SquareCheckBig, Loader2, List
 import { cn } from '@/lib/utils';
 import { Markdown } from './markdown.tsx';
 import { CollapsibleLines } from './collapsible-lines.tsx';
+import { PREVIEW_LINES } from './collapse.ts';
 import { DiffViewer } from '../tasks/diff-viewer.tsx';
 import { FeedIconGlyph } from './feed-icon.tsx';
 import { feedIcon, toolPhrase, toolStatusLabel, type FeedRow } from '../activity-view.ts';
@@ -384,7 +385,7 @@ function BlockList({ blocks, lang, live, insideReasoning = false }: {
                         : null;
                 }
                 if (block.edit) {
-                    return <div key={i} className="w-full max-w-[78%]"><DiffViewer files={[block.edit]} defaultOpen /></div>;
+                    return <div key={i} className="w-full max-w-[78%]"><DiffViewer files={[block.edit]} preview={PREVIEW_LINES} /></div>;
                 }
                 return <ToolIsland key={i} block={block} lang={lang} />;
             })}

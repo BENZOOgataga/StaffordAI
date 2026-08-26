@@ -4,6 +4,7 @@ import { ChevronRight, ChevronDown, Brain, ListChecks } from 'lucide-react';
 import { FeedIconGlyph } from './feed-icon.tsx';
 import { feedIcon, toolPhrase, toolStatusLabel, activityTime, type FeedRow } from '../activity-view.ts';
 import { CollapsibleLines } from './collapsible-lines.tsx';
+import { PREVIEW_LINES } from './collapse.ts';
 import { DiffViewer } from '../tasks/diff-viewer.tsx';
 import { TodoList } from './turn-blocks.tsx';
 import { type Lang } from '../channel-view.ts';
@@ -56,7 +57,7 @@ function actionBody(block: ActivityBlock, lang: Lang): React.JSX.Element | null 
         );
     }
     if (block.todos !== undefined) return <TodoList todos={block.todos} lang={lang} />;
-    if (block.edit) return <DiffViewer files={[block.edit]} defaultOpen />;
+    if (block.edit) return <DiffViewer files={[block.edit]} preview={PREVIEW_LINES} />;
     if (block.output !== undefined && block.output.trim() !== '') return <CollapsibleLines text={block.output} />;
     return null;
 }

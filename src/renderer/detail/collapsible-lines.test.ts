@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { splitCollapsed } from './collapse.ts';
+import { splitCollapsed, PREVIEW_LINES } from './collapse.ts';
+
+test('the shared preview threshold is one small value, so every action body collapses the same', () => {
+    assert.equal(PREVIEW_LINES, 4, 'the single collapse threshold, shared by shell output and the diff preview');
+    const text = Array.from({ length: 10 }, (_v, i) => 'l' + i).join('\n');
+    assert.equal(splitCollapsed(text, PREVIEW_LINES).hidden, 6, '10 lines minus the 4-line preview shows 6 behind the expand');
+});
 
 test('short output is not collapsed: nothing is hidden', () => {
     const { lines, hidden } = splitCollapsed('a\nb\nc', 15);
