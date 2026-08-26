@@ -83,8 +83,12 @@ function ProjectForm({ copy, initialName, initialFolder, onSubmit, onCancel, sub
     const [name, setName] = React.useState(initialName);
     const [folder, setFolder] = React.useState(initialFolder);
     const browse = async (): Promise<void> => {
-        const picked = await window.stafford.projects.pickFolder();
-        if (picked) setFolder(picked);
+        // The picker can reject (a dialog or IPC error). Swallow it so a failed browse leaves the
+        // field as it was rather than becoming an unhandled rejection with no feedback.
+        try {
+            const picked = await window.stafford.projects.pickFolder();
+            if (picked) setFolder(picked);
+        } catch { /* a cancelled or failed pick just leaves the current folder */ }
     };
     const canSubmit = name.trim() !== '' && folder.trim() !== '' && !busy;
     return (
@@ -140,9 +144,13 @@ function ProjectCard({ project, copy, onChanged }: {
 
     const remove = async (): Promise<void> => {
         setError(null);
-        const reply = await window.stafford.projects.remove(project.id);
-        if (!reply.ok) { setError(reply.warning); return; }
-        onChanged();
+        try {
+            const reply = await window.stafford.projects.remove(project.id);
+            if (!reply.ok) { setError(reply.warning); return; }
+            onChanged();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+        }
     };
 
     return (
@@ -199,10 +207,12 @@ function ParkedRow({ colleague, projects, copy, onChanged }: {
 }): React.JSX.Element {
     const [target, setTarget] = React.useState<string>(projects[0]?.id ?? '');
     const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
     const rebind = async (): Promise<void> => {
         if (!target) return;
-        setBusy(true);
+        setBusy(true); setError(null);
         try { await window.stafford.projects.rebind(colleague.id, target); onChanged(); }
+        catch (e) { setError(e instanceof Error ? e.message : String(e)); }
         finally { setBusy(false); }
     };
     return (
@@ -211,6 +221,7 @@ function ParkedRow({ colleague, projects, copy, onChanged }: {
                 <Link2 className="size-3.5" aria-hidden="true" />{colleague.name}
             </span>
             <span className="text-muted-foreground text-xs">{colleague.title}</span>
+            {error ? <span className="text-status-error text-xs" role="alert">{error}</span> : null}
             <div className="ml-auto flex items-center gap-2">
                 <span className="text-muted-foreground text-xs">{copy.rebindTo}</span>
                 <select

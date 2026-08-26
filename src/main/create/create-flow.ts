@@ -144,6 +144,9 @@ export function createHire(deps: CreateDeps, input: CreateHireInput): HireView {
     // passes, so a rejected hire never burns a pooled name.
     const name = deps.assignName();
 
+    // One clock read for both the hire time and the binding epoch, so they are exactly equal at
+    // creation, as the epoch's contract states, rather than a microsecond apart across two reads.
+    const at = deps.now();
     // Bind to the owning project so resolveTarget resolves the cold-spawn cwd to
     // that project's first repo path, which createProject validated is real.
     const hire: HiredAgent = {
@@ -156,10 +159,10 @@ export function createHire(deps: CreateDeps, input: CreateHireInput): HireView {
         sessions: {},
         activeProjectId: input.projectId,
         state: AGENT_STATES.IDLE,
-        hiredAt: deps.now(),
+        hiredAt: at,
         // The binding epoch the history reads filter by. At hire it is the hire time, so the
         // conversation starts empty; a rebind later moves it to now for the same clean start.
-        activeSince: deps.now(),
+        activeSince: at,
         firedAt: null
     };
     deps.insertHire(hire);
