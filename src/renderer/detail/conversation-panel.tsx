@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Brain, ChevronRight, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Textarea } from '@/components/ui/textarea';
 import { buildThread } from './conversation-model.ts';
@@ -63,6 +64,44 @@ function ToolIsland({ block, lang }: { block: Extract<LiveBlock, { kind: 'tool' 
 }
 
 /**
+ * The colleague's reasoning for a turn, as a collapsed muted island above the reply. Collapsed by
+ * default (reasoning is background, not the answer), a click expands it. The label reads "Thinking..."
+ * while it streams and "Thought for Ns" once it finishes. The reasoning text accumulates live, so
+ * expanding mid-thought shows what has arrived so far. The cryptographic signature is never part of
+ * this text, it is dropped upstream. Uses the same click-to-expand idiom as the diff file row.
+ */
+function ThinkingIsland({ text, seconds, lang }: { text: string; seconds: number | null; lang: Lang }): React.JSX.Element {
+    const [open, setOpen] = React.useState(false);
+    const label = seconds === null
+        ? (lang === 'fr' ? 'Réflexion...' : 'Thinking...')
+        : (lang === 'fr' ? 'Réfléchi pendant ' + seconds + ' s' : 'Thought for ' + seconds + 's');
+    return (
+        <div className="bg-muted/40 border-border w-full max-w-[78%] overflow-hidden rounded-md border">
+            <button
+                type="button"
+                data-thinking
+                aria-expanded={open}
+                onClick={() => setOpen((v) => !v)}
+                className="hover:bg-accent/30 flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
+            >
+                {open
+                    ? <ChevronDown className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+                    : <ChevronRight className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />}
+                <Brain className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+                <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">{label}</span>
+            </button>
+            {open ? (
+                <div className="text-muted-foreground border-border border-t px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap">
+                    {text !== ''
+                        ? text
+                        : <span className="italic">{lang === 'fr' ? '(raisonnement non affiché)' : '(reasoning not shown)'}</span>}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
+/**
  * The colleague's turn as it streams: reply text in the same left-aligned bordered bubble a settled
  * message uses, and each tool call as an inset island, interleaved in the order they happened. The
  * live text and the final message look identical, so there is no jump when the persisted bubble
@@ -93,6 +132,14 @@ function LiveTurn({ blocks, sender, lang }: {
                             ) : null}
                         </div>
                     ) : null
+                ) : block.kind === 'thinking' ? (
+                    // Thinking renders above the reply (it precedes output in the stream). It shows
+                    // once it is streaming text or has finished (a duration): a finished think with
+                    // redacted text still reads "Thought for Ns", which is worth showing. A block that
+                    // has neither (omitted, or just opened) renders nothing.
+                    block.text !== '' || block.seconds !== null
+                        ? <ThinkingIsland key={i} text={block.text} seconds={block.seconds} lang={lang} />
+                        : null
                 ) : block.edit ? (
                     // A successful edit renders its actual change through the same viewer the task
                     // review uses, expanded in place. A failed or unparseable edit has no `edit` and

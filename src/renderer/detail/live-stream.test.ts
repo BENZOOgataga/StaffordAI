@@ -5,11 +5,18 @@ import type { LiveBlock } from '../../shared/ipc.ts';
 
 const text = (t: string): LiveBlock => ({ kind: 'text', text: t });
 const tool = (): LiveBlock => ({ kind: 'tool', id: 't', name: 'Read', target: 'a.ts', status: 'running' });
+const think = (t: string, seconds: number | null): LiveBlock => ({ kind: 'thinking', text: t, seconds });
 
 test('hasLiveContent: a tool or non-empty text is content, an empty text run is not', () => {
     assert.equal(hasLiveContent(tool()), true);
     assert.equal(hasLiveContent(text('hi')), true);
     assert.equal(hasLiveContent(text('')), false);
+});
+
+test('hasLiveContent: a thinking block is content once it streams text or finishes, not while just open', () => {
+    assert.equal(hasLiveContent(think('reasoning', null)), true, 'streaming reasoning text');
+    assert.equal(hasLiveContent(think('', 3)), true, 'redacted reasoning but a real duration');
+    assert.equal(hasLiveContent(think('', null)), false, 'just opened, no text and no duration yet');
 });
 
 test('streamHasContent distinguishes the indicator from real output', () => {
