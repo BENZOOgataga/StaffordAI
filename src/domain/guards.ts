@@ -61,6 +61,11 @@ export function isChannelConversation(value: unknown): value is ChannelConversat
     return isObject(value) && isHireId(value.hireId) && isBoundedInt(value.limit, 1, 1000);
 }
 
+/** The persisted rich turns for one colleague: a bounded hire id, no limit (the read caps itself). */
+export function isChannelTurnEvents(value: unknown): value is { hireId: string } {
+    return isObject(value) && isHireId(value.hireId);
+}
+
 /** Acknowledging a drain's saved-work notice: a bounded drain id, no path. */
 export function isCheckpointAck(value: unknown): value is CheckpointAck {
     return isObject(value) && isBoundedString(value.drainId, 256);

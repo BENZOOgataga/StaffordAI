@@ -28,7 +28,7 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
     openTabNonce?: number;
 }): React.JSX.Element {
     const hireId = selected?.id ?? null;
-    const { convRows, actRows, streaming } = useDetailData(hireId);
+    const { convRows, actRows, streaming, turnEvents } = useDetailData(hireId);
     const [tab, setTab] = React.useState<TabId>(DEFAULT_TAB);
 
     // A fresh colleague opens on the front tab, the conversation, unless something asked for
@@ -80,7 +80,7 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
                         </div>
 
                         <TabsContent value="conversation" className="mt-0 flex min-h-0 flex-1 flex-col">
-                            <ConversationPanel hireId={hireId} rows={convRows} nameOf={nameOf} self={CHANNEL_SELF_SENDER} lang={lang} streaming={streaming} />
+                            <ConversationPanel hireId={hireId} rows={convRows} nameOf={nameOf} self={CHANNEL_SELF_SENDER} lang={lang} streaming={streaming} turnEvents={turnEvents} />
                         </TabsContent>
                         {/* Assign work and review what came back. In the detail pane rather
                             than on a screen of its own, because a task is something I give to

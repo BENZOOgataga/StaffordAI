@@ -7,7 +7,8 @@ import {
     type ProjectCreated, type HireCreated, type ActivityRow, type SavedCheckpoints,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply, type TaskBoardReply
+    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply, type TaskBoardReply,
+    type TurnEventsReply
 } from '../../shared/ipc.ts';
 
 interface SessionOverrides {
@@ -19,6 +20,7 @@ interface SessionOverrides {
     savedCheckpoints?: () => SavedCheckpoints | null;
     ackCheckpoints?: (drainId: string) => void;
     channelReply?: (hireId: string, text: string) => Promise<void>;
+    channelTurnEvents?: (hireId: string) => TurnEventsReply;
     createProject?: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
     pickFolder?: () => Promise<string | null>;
     createHire?: (payload: { type: string; title: string; projectId: string }) => HireCreated;
@@ -66,6 +68,7 @@ function deps(
         channelPage: over.channelPage ?? (() => []),
         channelSince: over.channelSince ?? (() => []),
         channelConversation: over.channelConversation ?? (() => []),
+        channelTurnEvents: over.channelTurnEvents ?? (() => ({ byMessage: {} })),
         activityByHire: over.activityByHire ?? (() => []),
         savedCheckpoints: over.savedCheckpoints ?? (() => null),
         ackCheckpoints: over.ackCheckpoints ?? (() => { /* noop */ }),

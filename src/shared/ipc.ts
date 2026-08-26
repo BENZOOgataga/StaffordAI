@@ -24,6 +24,9 @@ export const INVOKE_CHANNELS = [
     'channel:page',
     'channel:since',
     'channel:conversation',
+    // The persisted rich block snapshots for a colleague's finished turns, keyed by message id, so a
+    // reopened conversation re-renders past thinking, tool calls, diffs, and todos, not just text.
+    'channel:turn-events',
     'channel:reply',
     'activity:by-hire',
     'checkpoints:saved',
@@ -143,6 +146,15 @@ export type LiveBlock =
  * started before any output, which the tab fills with a working indicator. `done` marks the turn
  * finished, so the tab can drop a lingering indicator when a turn produced no output at all.
  */
+/**
+ * The persisted rich turns for one colleague, keyed by the reply's message id. A message with an
+ * entry re-renders its full rich content (thinking, tools, diffs, todos, text) from these blocks; a
+ * message without one (a pre-feature turn, or one that did not persist) renders its plain text.
+ */
+export interface TurnEventsReply {
+    readonly byMessage: Readonly<Record<string, readonly LiveBlock[]>>;
+}
+
 export interface ConversationStreamDelta {
     readonly hireId: string;
     readonly blocks: readonly LiveBlock[];

@@ -19,10 +19,11 @@ import {
     type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
-    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply, type TaskBoardReply
+    type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply, type TaskBoardReply,
+    type TurnEventsReply
 } from '../../shared/ipc.ts';
 import {
-    isChannelPage, isChannelSince, isChannelConversation, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
+    isChannelPage, isChannelSince, isChannelConversation, isChannelTurnEvents, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
     isApprovalAnswer,
     isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove,
     isTasksByHire, isTaskAssign, isTaskStart, isTaskReview, isTaskDiff, isTaskBoard
@@ -79,6 +80,8 @@ export interface HandlerDeps {
     /** Rows newer than a cursor, for the tail append. */
     readonly channelSince: (after: ChannelCursor, limit: number) => readonly ChannelMessageRow[];
     readonly channelConversation: (hireId: string, limit: number) => readonly ChannelMessageRow[];
+    /** One colleague's persisted rich turns, keyed by message id, for the reopen re-render. */
+    readonly channelTurnEvents: (hireId: string) => TurnEventsReply;
     /** One colleague's persisted activity, oldest-first, for the Activity feed's history. */
     readonly activityByHire: (hireId: string, limit: number) => readonly ActivityRow[];
     /** The saved work from the most recent committed drain, or null when there is nothing new to show. */
@@ -191,6 +194,13 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'channel:conversation': (payload: unknown): ChannelPageReply => {
             if (!isChannelConversation(payload)) throw new Error('channel:conversation requires {hireId,limit}');
             return { rows: deps.channelConversation(payload.hireId, payload.limit) };
+        },
+
+        // The persisted rich turns for one colleague, keyed by message id, so a reopened
+        // conversation re-renders past thinking, tools, diffs, and todos, not just text.
+        'channel:turn-events': (payload: unknown): TurnEventsReply => {
+            if (!isChannelTurnEvents(payload)) throw new Error('channel:turn-events requires {hireId}');
+            return deps.channelTurnEvents(payload.hireId);
         },
 
         // One colleague's persisted activity history, for the Activity feed on open.

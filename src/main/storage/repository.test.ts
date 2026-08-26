@@ -268,6 +268,18 @@ test('activity byHire is scoped to one colleague, not the whole team', () => {
     });
 });
 
+test('turn_events append and read back per hire, oldest-first, scoped to the colleague', () => {
+    withRepos((repos) => {
+        repos.turnEvents.append({ messageId: 'm2', hireId: 'marion', blocks: '[{"kind":"text","text":"b"}]', at: '2026-08-18T12:01:00Z' });
+        repos.turnEvents.append({ messageId: 'm1', hireId: 'marion', blocks: '[{"kind":"text","text":"a"}]', at: '2026-08-18T12:00:00Z' });
+        repos.turnEvents.append({ messageId: 't1', hireId: 'theo', blocks: '[]', at: '2026-08-18T12:00:00Z' });
+        const rows = repos.turnEvents.byHire('marion', 50);
+        assert.deepEqual(rows.map((r) => r.messageId), ['m1', 'm2'], 'oldest-first, only marion');
+        assert.equal(rows[0]!.blocks, '[{"kind":"text","text":"a"}]', 'the block JSON round-trips verbatim');
+        assert.deepEqual(repos.turnEvents.byHire('theo', 50).map((r) => r.messageId), ['t1']);
+    });
+});
+
 test('an incomplete action round-trips with its status', () => {
     withRepos((repos) => {
         repos.activity.append(activity('a1', 'marion', 'Edit', 'incomplete', '2026-08-18T12:00:00Z'));

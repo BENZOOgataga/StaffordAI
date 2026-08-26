@@ -1,219 +1,33 @@
 import * as React from 'react';
-import { Brain, ChevronRight, ChevronDown, Square, SquareCheckBig, Loader2, ListChecks } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { Textarea } from '@/components/ui/textarea';
 import { buildThread } from './conversation-model.ts';
 import { ConversationThread } from './conversation-thread.tsx';
-import { Markdown } from './markdown.tsx';
-import { CollapsibleLines } from './collapsible-lines.tsx';
-import { DiffViewer } from '../tasks/diff-viewer.tsx';
-import { FeedIconGlyph } from './feed-icon.tsx';
-import { feedIcon, toolPhrase, toolStatusLabel, type FeedRow } from '../activity-view.ts';
+import { TurnBlocks } from './turn-blocks.tsx';
 import { type Lang } from '../channel-view.ts';
 import { runSend } from './send-message.ts';
-import type { ChannelMessageRow, LiveBlock, LiveTodo } from '../../shared/ipc.ts';
+import type { ChannelMessageRow, LiveBlock } from '../../shared/ipc.ts';
 
 /**
- * One tool call as a collapsed inset island: the Activity feed's own icon and phrase, plus its
- * status. A failure takes the status-error token so it reads as failed; a call still running shows
- * a soft pulse and resolves when its result lands. Collapsed one-liner only, no output body: the
- * command, the file contents, and the diff are later phases. It reuses feedIcon/toolPhrase/
- * toolStatusLabel so a colleague's actions read here exactly as they do in Activity, and an unknown
- * tool still renders a safe generic phrase rather than throwing.
- */
-function ToolIsland({ block, lang }: { block: Extract<LiveBlock, { kind: 'tool' }>; lang: Lang }): React.JSX.Element {
-    const isError = block.status === 'error';
-    const isRunning = block.status === 'running';
-    // A FeedRow shaped for the shared helpers. Only a real failure carries a status word; running
-    // and ok stay quiet, exactly as the Activity feed treats them.
-    const row: FeedRow = {
-        kind: 'tool', id: block.id, at: '', tool: block.name, target: block.target,
-        status: isError ? 'error' : 'ok', live: true
-    };
-    const statusLabel = isError ? toolStatusLabel('error', lang) : null;
-    // A shell tool carries its output once the result lands (present, even if empty); a read or an
-    // edit never does. So the presence of `output` is what turns the one-line island into a command
-    // island with its stdout/stderr below, on failure included, where stderr is the useful part.
-    const hasOutput = block.output !== undefined;
-    const emptyOutput = hasOutput && (block.output ?? '').trim() === '';
-    return (
-        <div className={cn(
-            'w-full max-w-[78%] overflow-hidden rounded-md border text-sm',
-            isError ? 'border-status-error/40 bg-status-error/5' : 'border-border bg-muted/30'
-        )}>
-            <div className="flex items-center gap-2 px-2.5 py-1.5">
-                <FeedIconGlyph icon={feedIcon(row)}
-                    className={cn('size-3.5 shrink-0', isError ? 'text-status-error' : 'text-muted-foreground')} />
-                <span className={cn('min-w-0 flex-1 truncate', isError ? 'text-status-error' : 'text-muted-foreground')}>
-                    {toolPhrase(block.name || 'a tool', block.target, lang)}
-                </span>
-                {isRunning ? (
-                    <span className="bg-muted-foreground/50 size-1.5 shrink-0 animate-pulse rounded-full" />
-                ) : null}
-                {statusLabel ? <span className="text-status-error shrink-0 text-xs">{statusLabel}</span> : null}
-            </div>
-            {hasOutput ? (
-                <div className="px-2 pb-2">
-                    {emptyOutput
-                        ? <p className="text-muted-foreground px-2 py-1 font-mono text-xs">(no output)</p>
-                        : <CollapsibleLines text={block.output ?? ''} />}
-                </div>
-            ) : null}
-        </div>
-    );
-}
-
-/**
- * The colleague's reasoning for a turn, as a collapsed muted island above the reply. Collapsed by
- * default (reasoning is background, not the answer), a click expands it. The label reads "Thinking..."
- * while it streams and "Thought for Ns" once it finishes. The reasoning text accumulates live, so
- * expanding mid-thought shows what has arrived so far. The cryptographic signature is never part of
- * this text, it is dropped upstream. Uses the same click-to-expand idiom as the diff file row.
- */
-function ThinkingIsland({ text, seconds, lang }: { text: string; seconds: number | null; lang: Lang }): React.JSX.Element {
-    const [open, setOpen] = React.useState(false);
-    const label = seconds === null
-        ? (lang === 'fr' ? 'Réflexion...' : 'Thinking...')
-        : (lang === 'fr' ? 'Réfléchi pendant ' + seconds + ' s' : 'Thought for ' + seconds + 's');
-    return (
-        <div className="bg-muted/40 border-border w-full max-w-[78%] overflow-hidden rounded-md border">
-            <button
-                type="button"
-                data-thinking
-                aria-expanded={open}
-                onClick={() => setOpen((v) => !v)}
-                className="hover:bg-accent/30 flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
-            >
-                {open
-                    ? <ChevronDown className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
-                    : <ChevronRight className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />}
-                <Brain className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
-                <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">{label}</span>
-            </button>
-            {open ? (
-                <div className="text-muted-foreground border-border border-t px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap">
-                    {text !== ''
-                        ? text
-                        : <span className="italic">{lang === 'fr' ? '(raisonnement non affiché)' : '(reasoning not shown)'}</span>}
-                </div>
-            ) : null}
-        </div>
-    );
-}
-
-/** The state glyph for a todo row: a checked box when done, a spinner while in progress, an empty box
- * otherwise. An unknown state falls to the empty box, a safe default. */
-function TodoGlyph({ status }: { status: LiveTodo['status'] }): React.JSX.Element {
-    if (status === 'done') return <SquareCheckBig className="text-status-idle size-3.5 shrink-0" aria-hidden="true" />;
-    if (status === 'in-progress') return <Loader2 className="text-status-working size-3.5 shrink-0 animate-spin" aria-hidden="true" />;
-    return <Square className="text-muted-foreground/60 size-3.5 shrink-0" aria-hidden="true" />;
-}
-
-/**
- * A colleague's live plan, from TodoWrite, as a checklist island: shadcn checkbox-style rows with a
- * state glyph per item. It updates in place as later TodoWrite calls arrive (the caller renders only
- * the latest list), so a done item shows checked and struck through, the current one spins. An empty
- * list renders just the header, never a crash. Muted, in Stafford's language, not a Claude reskin.
- */
-function TodoList({ todos, lang }: { todos: readonly LiveTodo[]; lang: Lang }): React.JSX.Element {
-    const doneCount = todos.filter((t) => t.status === 'done').length;
-    return (
-        <div className="bg-muted/40 border-border w-full max-w-[78%] overflow-hidden rounded-md border">
-            <div className="text-muted-foreground flex items-center gap-2 px-2.5 py-1.5 text-xs">
-                <ListChecks className="size-3.5 shrink-0" aria-hidden="true" />
-                <span className="font-medium">{lang === 'fr' ? 'Plan' : 'Plan'}</span>
-                {todos.length > 0 ? <span className="tabular-nums">{doneCount}/{todos.length}</span> : null}
-            </div>
-            {todos.length > 0 ? (
-                <ul className="border-border list-none border-t px-2.5 py-1.5">
-                    {todos.map((t, i) => (
-                        <li key={i} className="flex items-start gap-2 py-0.5 text-sm">
-                            <span className="mt-0.5"><TodoGlyph status={t.status} /></span>
-                            <span className={cn(
-                                'min-w-0 flex-1 break-words',
-                                t.status === 'done' ? 'text-muted-foreground line-through'
-                                    : t.status === 'in-progress' ? 'text-foreground' : 'text-muted-foreground'
-                            )}>
-                                {t.text}
-                            </span>
-                        </li>
-                    ))}
-                </ul>
-            ) : null}
-        </div>
-    );
-}
-
-/**
- * The colleague's turn as it streams: reply text in the same left-aligned bordered bubble a settled
- * message uses, and each tool call as an inset island, interleaved in the order they happened. The
- * live text and the final message look identical, so there is no jump when the persisted bubble
- * replaces this. aria-hidden keeps the screen reader off the per-token updates; the persisted
- * message announces once. A soft caret on the last text run marks it as still arriving.
+ * The colleague's turn as it streams: the same block rendering a settled turn uses, wrapped so it is
+ * aria-hidden (the screen reader is not read the per-token updates; the persisted message announces
+ * once) and marked live (a caret on the last text run). When the turn ends, the persisted turn renders
+ * the identical blocks, so there is no jump.
  */
 function LiveTurn({ blocks, sender, lang }: {
     blocks: readonly LiveBlock[];
     sender: string;
     lang: Lang;
 }): React.JSX.Element {
-    // The caret belongs on the last text run, the thing actually typing; if the turn currently ends
-    // on a tool call, no caret shows and the running island's pulse carries the liveness instead.
-    let lastTextIndex = -1;
-    blocks.forEach((b, i) => { if (b.kind === 'text' && b.text !== '') lastTextIndex = i; });
-    // TodoWrite is called repeatedly, each call carrying the whole updated list. To show one evolving
-    // checklist instead of a stack, the latest todos render at the first TodoWrite's position and the
-    // later ones are skipped. Identity is "the TodoWrite blocks of this turn", the latest superseding.
-    let firstTodoIndex = -1;
-    let currentTodos: readonly LiveTodo[] | null = null;
-    blocks.forEach((b, i) => {
-        if (b.kind === 'tool' && b.todos !== undefined) {
-            if (firstTodoIndex === -1) firstTodoIndex = i;
-            currentTodos = b.todos;
-        }
-    });
     return (
         <div className="flex flex-col items-start gap-1.5" aria-hidden="true">
             <div className="text-muted-foreground flex items-center gap-2 px-1 text-xs">
                 <span className="font-medium">{sender}</span>
             </div>
-            {blocks.map((block, i) =>
-                block.kind === 'text' ? (
-                    block.text !== '' ? (
-                        <div key={i} className="bg-card border-border max-w-[78%] rounded-lg border px-3 py-1.5 text-sm break-words">
-                            <Markdown text={block.text} />
-                            {i === lastTextIndex ? (
-                                <span className="bg-muted-foreground/60 ml-0.5 inline-block h-3.5 w-1.5 translate-y-0.5 animate-pulse rounded-[1px] align-middle" />
-                            ) : null}
-                        </div>
-                    ) : null
-                ) : block.kind === 'thinking' ? (
-                    // Thinking renders above the reply (it precedes output in the stream). It shows
-                    // once it is streaming text or has finished (a duration): a finished think with
-                    // redacted text still reads "Thought for Ns", which is worth showing. A block that
-                    // has neither (omitted, or just opened) renders nothing.
-                    block.text !== '' || block.seconds !== null
-                        ? <ThinkingIsland key={i} text={block.text} seconds={block.seconds} lang={lang} />
-                        : null
-                ) : block.kind === 'tool' && block.todos !== undefined ? (
-                    // The evolving checklist: render the latest list once, at the first TodoWrite's
-                    // spot, and skip the later TodoWrite blocks so they update in place, not stack.
-                    i === firstTodoIndex && currentTodos
-                        ? <TodoList key="todos" todos={currentTodos} lang={lang} />
-                        : null
-                ) : block.edit ? (
-                    // A successful edit renders its actual change through the same viewer the task
-                    // review uses, expanded in place. A failed or unparseable edit has no `edit` and
-                    // falls to the one-line island below.
-                    <div key={i} className="w-full max-w-[78%]">
-                        <DiffViewer files={[block.edit]} defaultOpen />
-                    </div>
-                ) : (
-                    <ToolIsland key={i} block={block} lang={lang} />
-                )
-            )}
+            <TurnBlocks blocks={blocks} lang={lang} live />
         </div>
     );
 }
+
 
 /**
  * The working words the indicator cycles through before any output arrives. Decorative, not literal
@@ -283,7 +97,7 @@ function WorkingIndicator({ sender, lang }: { sender: string; lang: Lang }): Rea
  * The composer keeps the existing behaviour exactly: Enter sends, Shift-Enter adds a
  * line, and the send goes through window.stafford.channel.reply unchanged.
  */
-export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming }: {
+export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming, turnEvents }: {
     hireId: string;
     rows: readonly ChannelMessageRow[];
     nameOf: (senderId: string) => string;
@@ -296,7 +110,13 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming 
      * arrive; the final persisted message, in the live region, is what gets announced, once.
      */
     streaming?: readonly LiveBlock[] | null;
+    /** The persisted rich blocks per message id, so past turns re-render their full rich content. */
+    turnEvents?: Readonly<Record<string, readonly LiveBlock[]>>;
 }): React.JSX.Element {
+    const richFor = React.useCallback(
+        (messageId: string): readonly LiveBlock[] | null => turnEvents?.[messageId] ?? null,
+        [turnEvents]
+    );
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const stick = React.useRef(true);
     const [text, setText] = React.useState('');
@@ -347,7 +167,7 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming 
                     <p className="text-muted-foreground py-8 text-center text-sm">No messages yet. Say hello below.</p>
                 ) : (
                     <div className="flex flex-col gap-3">
-                        {items.length > 0 ? <ConversationThread items={items} now={now} lang={lang} /> : null}
+                        {items.length > 0 ? <ConversationThread items={items} now={now} lang={lang} richFor={richFor} /> : null}
                         {streamingBlocks
                             ? <LiveTurn blocks={streamingBlocks} sender={nameOf(hireId)} lang={lang} />
                             : turnActive

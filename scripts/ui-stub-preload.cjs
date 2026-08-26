@@ -29,9 +29,12 @@ contextBridge.exposeInMainWorld('stafford', {
         ] };
         const streamListeners = [];
         const changedListeners = [];
+        // Persisted rich turns per hire, keyed by message id, so a reopen re-renders the rich blocks.
+        const turnEvents = {};
         return {
             page: async () => ({ rows: [] }), since: async () => ({ rows: [] }),
             conversation: async (hireId) => ({ rows: rows[hireId] || [] }),
+            turnEvents: async (hireId) => ({ byMessage: turnEvents[hireId] || {} }),
             reply: async () => {},
             onChanged: (l) => { changedListeners.push(l); return () => {}; },
             onStreamDelta: (l) => { streamListeners.push(l); return () => {}; },
@@ -44,6 +47,16 @@ contextBridge.exposeInMainWorld('stafford', {
                     (rows[hireId] = rows[hireId] || []).push({
                         id: 'final1', projectId: 'p1', senderId: hireId, kind: 'message', body: text, reference: null, at: '2026-08-25T09:00:05Z'
                     });
+                    for (const l of changedListeners) l();
+                },
+                // Persists a finished turn's rich blocks against a new colleague message (what
+                // recordReply plus turn_events do in the real app), so a screenshot can show a past
+                // turn re-rendering its full rich content on reopen, not just its text.
+                persistTurn: (hireId, messageId, text, blocks) => {
+                    (rows[hireId] = rows[hireId] || []).push({
+                        id: messageId, projectId: 'p1', senderId: hireId, kind: 'message', body: text, reference: null, at: '2026-08-25T09:02:00Z'
+                    });
+                    (turnEvents[hireId] = turnEvents[hireId] || {})[messageId] = blocks;
                     for (const l of changedListeners) l();
                 },
                 // Reproduces the REAL send sequence that the plain `stream` hook missed and that let a
