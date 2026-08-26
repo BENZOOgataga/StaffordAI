@@ -8,6 +8,69 @@ const se = (event: unknown): ClaudeStreamEvent => ({ type: 'stream_event', raw: 
 /** A top-level event of any type, as the runner hands it to onEvent. */
 const ev = (type: string, raw: Record<string, unknown>): ClaudeStreamEvent => ({ type, raw: { type, ...raw } });
 
+// --- TodoWrite checklists (phase 6) -----------------------------------------
+
+interface Todo { text: string; status: string }
+/** Drives a full TodoWrite tool call (start, input as one json fragment, stop) and returns its todos. */
+function todoCall(b: LiveTurnBuilder, input: unknown, id = 't1', index = 0): readonly Todo[] | undefined {
+    b.apply(se({ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name: 'TodoWrite', input: {} } }));
+    b.apply(se({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) } }));
+    b.apply(se({ type: 'content_block_stop', index }));
+    const blk = b.snapshot().find((x) => x.kind === 'tool' && (x as { name: string }).name === 'TodoWrite' && (x as { id: string }).id === id);
+    return (blk as { todos?: readonly Todo[] } | undefined)?.todos;
+}
+
+test('a TodoWrite parses its todos: content and mapped status per row', () => {
+    const b = new LiveTurnBuilder();
+    const todos = todoCall(b, { todos: [
+        { content: 'Write the parser', status: 'completed', activeForm: 'Writing the parser' },
+        { content: 'Cover it with tests', status: 'in_progress', activeForm: 'Covering it with tests' },
+        { content: 'Wire it up', status: 'pending', activeForm: 'Wiring it up' }
+    ] });
+    assert.ok(todos);
+    assert.deepEqual(todos!.map((t) => t.status), ['done', 'in-progress', 'pending'], 'the real status values map to the tab enum');
+    assert.equal(todos![0]!.text, 'Write the parser', 'a done row uses its content');
+    assert.equal(todos![1]!.text, 'Covering it with tests', 'an in-progress row reads as its active form');
+    assert.equal(todos![2]!.text, 'Wire it up', 'a pending row uses its content');
+});
+
+test('an unknown status becomes the safe "other", never a throw', () => {
+    const b = new LiveTurnBuilder();
+    const todos = todoCall(b, { todos: [{ content: 'x', status: 'blocked' }] });
+    assert.equal(todos![0]!.status, 'other');
+});
+
+test('an empty todos array is a valid empty checklist, not a failure', () => {
+    const b = new LiveTurnBuilder();
+    const todos = todoCall(b, { todos: [] });
+    assert.deepEqual(todos, [], 'empty, but present, so the island shows and does not fall back');
+});
+
+test('a malformed TodoWrite input carries no todos, so it degrades to the generic one-liner', () => {
+    const b = new LiveTurnBuilder();
+    assert.equal(todoCall(b, { nope: true }), undefined, 'no todos array, no checklist');
+    const b2 = new LiveTurnBuilder();
+    b2.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'TodoWrite', input: {} } }));
+    b2.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{not valid json' } }));
+    assert.doesNotThrow(() => b2.apply(se({ type: 'content_block_stop', index: 0 })));
+    assert.equal((b2.snapshot()[0] as { todos?: unknown }).todos, undefined);
+});
+
+test('a huge todo list is capped so a runaway plan cannot bloat the payload', () => {
+    const b = new LiveTurnBuilder();
+    const many = Array.from({ length: 500 }, (_v, i) => ({ content: 'step ' + i, status: 'pending' }));
+    const todos = todoCall(b, { todos: many });
+    assert.ok(todos && todos.length <= 100, 'the list is bounded');
+});
+
+test('a non-TodoWrite tool never carries todos', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Read', input: {} } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"file_path":"a.ts"}' } }));
+    b.apply(se({ type: 'content_block_stop', index: 0 }));
+    assert.equal((b.snapshot()[0] as { todos?: unknown }).todos, undefined);
+});
+
 test('text deltas across a block accumulate into one text block in order', () => {
     const b = new LiveTurnBuilder();
     b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));

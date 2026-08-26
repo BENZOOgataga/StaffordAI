@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Brain, ChevronRight, ChevronDown } from 'lucide-react';
+import { Brain, ChevronRight, ChevronDown, Square, SquareCheckBig, Loader2, ListChecks } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Textarea } from '@/components/ui/textarea';
 import { buildThread } from './conversation-model.ts';
@@ -11,7 +11,7 @@ import { FeedIconGlyph } from './feed-icon.tsx';
 import { feedIcon, toolPhrase, toolStatusLabel, type FeedRow } from '../activity-view.ts';
 import { type Lang } from '../channel-view.ts';
 import { runSend } from './send-message.ts';
-import type { ChannelMessageRow, LiveBlock } from '../../shared/ipc.ts';
+import type { ChannelMessageRow, LiveBlock, LiveTodo } from '../../shared/ipc.ts';
 
 /**
  * One tool call as a collapsed inset island: the Activity feed's own icon and phrase, plus its
@@ -101,6 +101,49 @@ function ThinkingIsland({ text, seconds, lang }: { text: string; seconds: number
     );
 }
 
+/** The state glyph for a todo row: a checked box when done, a spinner while in progress, an empty box
+ * otherwise. An unknown state falls to the empty box, a safe default. */
+function TodoGlyph({ status }: { status: LiveTodo['status'] }): React.JSX.Element {
+    if (status === 'done') return <SquareCheckBig className="text-status-idle size-3.5 shrink-0" aria-hidden="true" />;
+    if (status === 'in-progress') return <Loader2 className="text-status-working size-3.5 shrink-0 animate-spin" aria-hidden="true" />;
+    return <Square className="text-muted-foreground/60 size-3.5 shrink-0" aria-hidden="true" />;
+}
+
+/**
+ * A colleague's live plan, from TodoWrite, as a checklist island: shadcn checkbox-style rows with a
+ * state glyph per item. It updates in place as later TodoWrite calls arrive (the caller renders only
+ * the latest list), so a done item shows checked and struck through, the current one spins. An empty
+ * list renders just the header, never a crash. Muted, in Stafford's language, not a Claude reskin.
+ */
+function TodoList({ todos, lang }: { todos: readonly LiveTodo[]; lang: Lang }): React.JSX.Element {
+    const doneCount = todos.filter((t) => t.status === 'done').length;
+    return (
+        <div className="bg-muted/40 border-border w-full max-w-[78%] overflow-hidden rounded-md border">
+            <div className="text-muted-foreground flex items-center gap-2 px-2.5 py-1.5 text-xs">
+                <ListChecks className="size-3.5 shrink-0" aria-hidden="true" />
+                <span className="font-medium">{lang === 'fr' ? 'Plan' : 'Plan'}</span>
+                {todos.length > 0 ? <span className="tabular-nums">{doneCount}/{todos.length}</span> : null}
+            </div>
+            {todos.length > 0 ? (
+                <ul className="border-border list-none border-t px-2.5 py-1.5">
+                    {todos.map((t, i) => (
+                        <li key={i} className="flex items-start gap-2 py-0.5 text-sm">
+                            <span className="mt-0.5"><TodoGlyph status={t.status} /></span>
+                            <span className={cn(
+                                'min-w-0 flex-1 break-words',
+                                t.status === 'done' ? 'text-muted-foreground line-through'
+                                    : t.status === 'in-progress' ? 'text-foreground' : 'text-muted-foreground'
+                            )}>
+                                {t.text}
+                            </span>
+                        </li>
+                    ))}
+                </ul>
+            ) : null}
+        </div>
+    );
+}
+
 /**
  * The colleague's turn as it streams: reply text in the same left-aligned bordered bubble a settled
  * message uses, and each tool call as an inset island, interleaved in the order they happened. The
@@ -117,6 +160,17 @@ function LiveTurn({ blocks, sender, lang }: {
     // on a tool call, no caret shows and the running island's pulse carries the liveness instead.
     let lastTextIndex = -1;
     blocks.forEach((b, i) => { if (b.kind === 'text' && b.text !== '') lastTextIndex = i; });
+    // TodoWrite is called repeatedly, each call carrying the whole updated list. To show one evolving
+    // checklist instead of a stack, the latest todos render at the first TodoWrite's position and the
+    // later ones are skipped. Identity is "the TodoWrite blocks of this turn", the latest superseding.
+    let firstTodoIndex = -1;
+    let currentTodos: readonly LiveTodo[] | null = null;
+    blocks.forEach((b, i) => {
+        if (b.kind === 'tool' && b.todos !== undefined) {
+            if (firstTodoIndex === -1) firstTodoIndex = i;
+            currentTodos = b.todos;
+        }
+    });
     return (
         <div className="flex flex-col items-start gap-1.5" aria-hidden="true">
             <div className="text-muted-foreground flex items-center gap-2 px-1 text-xs">
@@ -139,6 +193,12 @@ function LiveTurn({ blocks, sender, lang }: {
                     // has neither (omitted, or just opened) renders nothing.
                     block.text !== '' || block.seconds !== null
                         ? <ThinkingIsland key={i} text={block.text} seconds={block.seconds} lang={lang} />
+                        : null
+                ) : block.kind === 'tool' && block.todos !== undefined ? (
+                    // The evolving checklist: render the latest list once, at the first TodoWrite's
+                    // spot, and skip the later TodoWrite blocks so they update in place, not stack.
+                    i === firstTodoIndex && currentTodos
+                        ? <TodoList key="todos" todos={currentTodos} lang={lang} />
                         : null
                 ) : block.edit ? (
                     // A successful edit renders its actual change through the same viewer the task
