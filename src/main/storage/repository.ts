@@ -63,11 +63,11 @@ export class HireRepository {
 
     constructor(db: StorageDatabase) {
         this.#insert = db.prepare(
-            'INSERT INTO hires (id, name, type, title, seniority, owner_id, sessions, active_project_id, state, hired_at, fired_at) ' +
-            'VALUES (@id, @name, @type, @title, @seniority, @owner_id, @sessions, @active_project_id, @state, @hired_at, @fired_at)');
+            'INSERT INTO hires (id, name, type, title, seniority, owner_id, sessions, active_project_id, state, hired_at, active_since, fired_at) ' +
+            'VALUES (@id, @name, @type, @title, @seniority, @owner_id, @sessions, @active_project_id, @state, @hired_at, @active_since, @fired_at)');
         this.#update = db.prepare(
             'UPDATE hires SET name=@name, type=@type, title=@title, seniority=@seniority, owner_id=@owner_id, ' +
-            'sessions=@sessions, active_project_id=@active_project_id, state=@state, hired_at=@hired_at, fired_at=@fired_at WHERE id=@id');
+            'sessions=@sessions, active_project_id=@active_project_id, state=@state, hired_at=@hired_at, active_since=@active_since, fired_at=@fired_at WHERE id=@id');
         this.#get = db.prepare('SELECT * FROM hires WHERE id = ?');
         this.#all = db.prepare('SELECT * FROM hires ORDER BY hired_at');
     }
@@ -88,12 +88,14 @@ export class ProjectRepository {
     readonly #update: Statement;
     readonly #get: Statement;
     readonly #all: Statement;
+    readonly #delete: Statement;
 
     constructor(db: StorageDatabase) {
         this.#insert = db.prepare('INSERT INTO projects (id, name, repos, policy) VALUES (@id, @name, @repos, @policy)');
         this.#update = db.prepare('UPDATE projects SET name=@name, repos=@repos, policy=@policy WHERE id=@id');
         this.#get = db.prepare('SELECT * FROM projects WHERE id = ?');
         this.#all = db.prepare('SELECT * FROM projects ORDER BY name');
+        this.#delete = db.prepare('DELETE FROM projects WHERE id = ?');
     }
 
     insert(project: Project): void { this.#insert.run(projectToRow(project)); }
@@ -104,6 +106,8 @@ export class ProjectRepository {
     }
     /** All projects. Bounded by user creation, so no pagination. */
     all(): Project[] { return rowsOf(this.#all).map(projectFromRow); }
+    /** Removes a project by id. The projects table is mutable (no append-only trigger). */
+    deleteById(id: string): void { this.#delete.run(id); }
 }
 
 /** Tasks. Grow without a ceiling, so reads are paginated. */
@@ -275,6 +279,7 @@ export class ChannelRepository {
     readonly #before: Statement;
     readonly #after: Statement;
     readonly #conversation: Statement;
+    readonly #conversationSince: Statement;
 
     constructor(db: StorageDatabase) {
         this.#append = db.prepare(
@@ -287,6 +292,11 @@ export class ChannelRepository {
         // cap, reversed to oldest-first by the caller.
         this.#conversation = db.prepare(
             'SELECT * FROM channel_messages WHERE sender_id = @hireId OR target_hire_id = @hireId ' +
+            'ORDER BY at DESC, id DESC LIMIT @limit');
+        // The same, bounded to the colleague's current binding: only rows from active_since forward,
+        // so a rebind onto a new project reads as clean as a fresh hire.
+        this.#conversationSince = db.prepare(
+            'SELECT * FROM channel_messages WHERE (sender_id = @hireId OR target_hire_id = @hireId) AND at >= @since ' +
             'ORDER BY at DESC, id DESC LIMIT @limit');
         this.#pageByProject = db.prepare(
             'SELECT * FROM channel_messages WHERE project_id = ? ORDER BY at, id LIMIT ? OFFSET ?');
@@ -337,8 +347,11 @@ export class ChannelRepository {
      * Conversation tab reads, so a person's reply to one colleague does not appear in
      * another's. Events for the hire come along, since they share the sender_id key.
      */
-    conversationFor(hireId: string, limit: number): ChannelMessage[] {
-        return (this.#conversation.all({ hireId, limit }) as Row[]).map(channelMessageFromRow).reverse();
+    conversationFor(hireId: string, limit: number, since: string | null = null): ChannelMessage[] {
+        const rows = since !== null
+            ? this.#conversationSince.all({ hireId, limit, since })
+            : this.#conversation.all({ hireId, limit });
+        return (rows as Row[]).map(channelMessageFromRow).reverse();
     }
 }
 
@@ -350,6 +363,7 @@ export class ChannelRepository {
 export class ActivityRepository {
     readonly #append: Statement;
     readonly #byHire: Statement;
+    readonly #byHireSince: Statement;
 
     constructor(db: StorageDatabase) {
         this.#append = db.prepare(
@@ -357,13 +371,16 @@ export class ActivityRepository {
             'VALUES (@id, @hire_id, @session_id, @tool, @target, @status, @at)');
         this.#byHire = db.prepare(
             'SELECT * FROM activity_events WHERE hire_id = ? ORDER BY at, id LIMIT ?');
+        this.#byHireSince = db.prepare(
+            'SELECT * FROM activity_events WHERE hire_id = ? AND at >= ? ORDER BY at, id LIMIT ?');
     }
 
     append(record: ActivityRecord): void { this.#append.run(activityRecordToRow(record)); }
 
-    /** One colleague's actions, oldest-first, up to `limit`, for the reopen history. */
-    byHire(hireId: string, limit: number): ActivityRecord[] {
-        return (this.#byHire.all(hireId, limit) as Row[]).map(activityRecordFromRow);
+    /** One colleague's actions since its current binding, oldest-first, up to `limit`. */
+    byHire(hireId: string, limit: number, since: string | null = null): ActivityRecord[] {
+        const rows = since !== null ? this.#byHireSince.all(hireId, since, limit) : this.#byHire.all(hireId, limit);
+        return (rows as Row[]).map(activityRecordFromRow);
     }
 }
 
@@ -383,21 +400,25 @@ export interface TurnEventsRecord {
 export class TurnEventsRepository {
     readonly #append: Statement;
     readonly #byHire: Statement;
+    readonly #byHireSince: Statement;
 
     constructor(db: StorageDatabase) {
         this.#append = db.prepare(
             'INSERT INTO turn_events (message_id, hire_id, blocks, at) VALUES (@messageId, @hireId, @blocks, @at)');
         this.#byHire = db.prepare(
             'SELECT * FROM turn_events WHERE hire_id = ? ORDER BY at, message_id LIMIT ?');
+        this.#byHireSince = db.prepare(
+            'SELECT * FROM turn_events WHERE hire_id = ? AND at >= ? ORDER BY at, message_id LIMIT ?');
     }
 
     append(record: TurnEventsRecord): void {
         this.#append.run({ messageId: record.messageId, hireId: record.hireId, blocks: record.blocks, at: record.at });
     }
 
-    /** One colleague's persisted rich turns, oldest-first, up to `limit`. */
-    byHire(hireId: string, limit: number): TurnEventsRecord[] {
-        return (this.#byHire.all(hireId, limit) as Row[]).map((row) => ({
+    /** One colleague's persisted rich turns since its current binding, oldest-first, up to `limit`. */
+    byHire(hireId: string, limit: number, since: string | null = null): TurnEventsRecord[] {
+        const rows = since !== null ? this.#byHireSince.all(hireId, since, limit) : this.#byHire.all(hireId, limit);
+        return (rows as Row[]).map((row) => ({
             messageId: String(row.message_id), hireId: String(row.hire_id),
             blocks: String(row.blocks), at: String(row.at)
         }));

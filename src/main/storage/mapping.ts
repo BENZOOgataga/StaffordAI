@@ -93,7 +93,7 @@ export function hireToRow(h: HiredAgent): Row {
     return {
         id: h.id, name: h.name, type: h.type, title: h.title, seniority: h.seniority,
         owner_id: h.ownerId, sessions: JSON.stringify(h.sessions), active_project_id: h.activeProjectId,
-        state: h.state, hired_at: h.hiredAt, fired_at: h.firedAt
+        state: h.state, hired_at: h.hiredAt, active_since: h.activeSince, fired_at: h.firedAt
     };
 }
 
@@ -105,7 +105,7 @@ export function hireFromRow(row: Row): HiredAgent {
         seniority: int(row, 'seniority'), ownerId: str(row, 'owner_id'),
         sessions: object<Record<string, string>>(row, 'sessions'),
         activeProjectId: nstr(row, 'active_project_id'), state,
-        hiredAt: str(row, 'hired_at'), firedAt: nstr(row, 'fired_at')
+        hiredAt: str(row, 'hired_at'), activeSince: nstr(row, 'active_since'), firedAt: nstr(row, 'fired_at')
     };
 }
 

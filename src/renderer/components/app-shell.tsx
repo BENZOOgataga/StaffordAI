@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { LayoutDashboard, Users, ClipboardList, MessageSquare, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Users, ClipboardList, MessageSquare, ShieldCheck, FolderGit2 } from 'lucide-react';
 import { Sidebar, SidebarSection, SidebarItem } from '@/components/ui/sidebar';
 
 /**
@@ -13,6 +13,9 @@ import { Sidebar, SidebarSection, SidebarItem } from '@/components/ui/sidebar';
 const NAV: ReadonlyArray<{ view: string; label: string; Icon: React.ComponentType<{ className?: string }> }> = [
     { view: 'home', label: 'Home', Icon: LayoutDashboard },
     { view: 'roster', label: 'Roster', Icon: Users },
+    // Full project management: create, view, edit the folder, delete, and see which colleagues are
+    // bound to each. A project is more than a name picked once, so it gets its own surface.
+    { view: 'projects', label: 'Projects', Icon: FolderGit2 },
     // Tasks across every colleague. At the app level rather than inside one colleague,
     // because the question it answers is "is anything waiting on me", and that answer is
     // spread across as many tabs as there are colleagues.

@@ -50,7 +50,11 @@ export function buildRosterGroups(
         rows: group.cards.map((card) => ({
             card,
             status: statusForState(card.state),
-            stateText: stateLabel(card, now) + (card.project ? ' on ' + card.project : ''),
+            // A colleague on no project is parked: it cannot work until rebound, so the row says so
+            // rather than showing a bare state with no project, which reads as a broken blank.
+            stateText: stateLabel(card, now) + (card.project
+                ? ' on ' + card.project
+                : (lang === 'fr' ? ' · sans projet' : ' · parked')),
             badged: badged.has(card.id),
             selected: card.id === selectedId
         }))

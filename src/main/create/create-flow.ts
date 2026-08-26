@@ -91,26 +91,33 @@ export function defaultPolicy(): ProjectPolicy {
     };
 }
 
-export function createProject(deps: CreateDeps, input: CreateProjectInput): ProjectView {
-    const name = input.name?.trim();
-    if (!name) throw new Error('a project needs a name');
-    if (!Array.isArray(input.repoPaths) || input.repoPaths.length === 0) {
+/**
+ * The load-bearing path validation, shared by creating a project and editing its folder so an edit is
+ * held to exactly the same rules: every path must be a non-empty string, an existing directory, and
+ * not Stafford's own tree. Throws on the first bad path, before any write, so a bad input never
+ * half-applies. The self-path refusal is defense in depth with the spawn-time guard.
+ */
+export function validateRepoPaths(deps: Pick<CreateDeps, 'dirExists' | 'isSelfPath'>, repoPaths: readonly string[]): void {
+    if (!Array.isArray(repoPaths) || repoPaths.length === 0) {
         throw new Error('a project needs at least one repo path');
     }
-    // Validate every path before writing anything, so a bad one never half-creates.
-    for (const path of input.repoPaths) {
+    for (const path of repoPaths) {
         if (typeof path !== 'string' || path.trim().length === 0) {
             throw new Error('a repo path must be a non-empty string');
         }
         if (!deps.dirExists(path)) {
             throw new Error('repo path is not an existing directory: ' + path);
         }
-        // A project must not point at Stafford itself, or a colleague spawns inside Stafford's own
-        // repo. Refused here at creation, and again at spawn as defense in depth.
         if (deps.isSelfPath(path)) {
             throw new Error("that folder is Stafford's own directory, pick the project's folder");
         }
     }
+}
+
+export function createProject(deps: CreateDeps, input: CreateProjectInput): ProjectView {
+    const name = input.name?.trim();
+    if (!name) throw new Error('a project needs a name');
+    validateRepoPaths(deps, input.repoPaths);
 
     const project: Project = {
         id: deps.uuid(),
@@ -137,6 +144,9 @@ export function createHire(deps: CreateDeps, input: CreateHireInput): HireView {
     // passes, so a rejected hire never burns a pooled name.
     const name = deps.assignName();
 
+    // One clock read for both the hire time and the binding epoch, so they are exactly equal at
+    // creation, as the epoch's contract states, rather than a microsecond apart across two reads.
+    const at = deps.now();
     // Bind to the owning project so resolveTarget resolves the cold-spawn cwd to
     // that project's first repo path, which createProject validated is real.
     const hire: HiredAgent = {
@@ -149,7 +159,10 @@ export function createHire(deps: CreateDeps, input: CreateHireInput): HireView {
         sessions: {},
         activeProjectId: input.projectId,
         state: AGENT_STATES.IDLE,
-        hiredAt: deps.now(),
+        hiredAt: at,
+        // The binding epoch the history reads filter by. At hire it is the hire time, so the
+        // conversation starts empty; a rebind later moves it to now for the same clean start.
+        activeSince: at,
         firedAt: null
     };
     deps.insertHire(hire);

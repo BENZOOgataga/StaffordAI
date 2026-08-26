@@ -16,6 +16,14 @@ export const INVOKE_CHANNELS = [
     'health',
     'projects:list',
     'project:create',
+    // The Projects management tab: read every project's full values with its bound colleagues, edit a
+    // project's name and folder (validated as a create is), delete it (parking its colleagues), and
+    // rebind a parked colleague to a project as a fresh session. Renderer-to-main only, the same
+    // boundary as permissions: a colleague has no preload and no channel to reach these.
+    'projects:manage-view',
+    'project:update',
+    'project:delete',
+    'colleague:rebind',
     // Opens a native folder picker and returns the chosen directory, or null if cancelled. The
     // create form uses it so a project's folder is picked, not typed; main still validates the pick.
     'dialog:pick-folder',
@@ -220,6 +228,8 @@ export const EVENT_CHANNELS = [
     'approvals:changed',
     // A pending question was added or resolved, so the conversation re-reads its choices.
     'questions:changed',
+    // A project was created, edited, deleted, or a colleague rebound, so the Projects tab re-reads.
+    'projects:changed',
     // A permission rule was added, edited or removed, so any open config view re-reads.
     'permissions:changed',
     // A task was assigned, moved, or reviewed, so any open task view re-reads.
@@ -303,6 +313,68 @@ export interface ProjectCreate {
 export interface ProjectCreated {
     readonly id: string;
     readonly name: string;
+}
+
+/**
+ * The Projects management tab reads a project's full values, including its folder paths. This is a
+ * deliberate, narrow exception to the "no paths to the renderer" rule above: only Benzoo's own config
+ * UI consumes it, a colleague has no preload and no channel, and managing a project's folder is
+ * impossible without showing it. Same boundary as the permissions surface, which already returns path
+ * scopes to the same UI.
+ */
+export interface ProjectRepoView {
+    readonly path: string;
+    readonly label: string;
+}
+
+/** One colleague as the Projects tab shows it: enough to name it and mark whether it is parked. */
+export interface ColleagueRef {
+    readonly id: string;
+    readonly name: string;
+    readonly title: string;
+    readonly state: string;
+    /** True when the colleague is bound to no project, so it cannot work until rebound. */
+    readonly parked: boolean;
+}
+
+/** One project with its full values and the colleagues bound to it, for the management tab. */
+export interface ProjectManageView {
+    readonly id: string;
+    readonly name: string;
+    readonly repos: readonly ProjectRepoView[];
+    /** False when the project's working folder no longer exists on disk, so the tab flags it. */
+    readonly folderValid: boolean;
+    readonly colleagues: readonly ColleagueRef[];
+}
+
+/** The whole Projects tab in one read: every project with its colleagues, plus the parked colleagues. */
+export interface ProjectsManageReply {
+    readonly projects: readonly ProjectManageView[];
+    readonly parked: readonly ColleagueRef[];
+}
+
+/** Editing a project's name and folders. Paths are validated exactly as a create's are. */
+export interface ProjectUpdate {
+    readonly id: string;
+    readonly name: string;
+    readonly repoPaths: readonly string[];
+}
+
+/** Deleting a project by id. Its colleagues are parked, not deleted. */
+export interface ProjectDelete {
+    readonly id: string;
+}
+
+/** Rebinding a parked (or any) colleague to a project, as a fresh session. */
+export interface ColleagueRebind {
+    readonly hireId: string;
+    readonly projectId: string;
+}
+
+/** The reply to a project management write: ok, plus a warning for a refused-but-not-fatal case. */
+export interface ProjectWriteReply {
+    readonly ok: boolean;
+    readonly warning: string | null;
 }
 
 /**

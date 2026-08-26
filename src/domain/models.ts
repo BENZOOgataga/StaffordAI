@@ -95,10 +95,18 @@ export interface HiredAgent {
     ownerId: string;
     /** projectId to sessionId, one session per project worked. */
     sessions: Record<string, string>;
-    /** At most one active at a time; null when none is. */
+    /** At most one active at a time; null when none is. Null means parked (bound to no project). */
     activeProjectId: string | null;
     state: AgentState;
     hiredAt: string;
+    /**
+     * When the current binding began: the hire time at creation, moved to now on a rebind. The
+     * conversation, activity, and turn-history reads show only rows from this point forward, so a
+     * rebind onto a new project reads as clean as a fresh hire even though the append-only history
+     * tables still hold the old project's rows. Null on a colleague from before this field existed,
+     * which the reads treat as "no lower bound" so its full history still shows.
+     */
+    activeSince: string | null;
     firedAt: string | null;
 }
 

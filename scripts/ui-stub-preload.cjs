@@ -17,7 +17,25 @@ const unsub = () => () => {};
 
 contextBridge.exposeInMainWorld('stafford', {
     health: async () => ({ ok: true, platform: 'win32', startedAt: '' }),
-    projects: { list: async () => ({ projects: [{ id: 'p1', name: 'test' }] }), create: async () => ({ id: 'p2', name: 'x' }), pickFolder: async () => '/example/project-folder' },
+    projects: {
+        list: async () => ({ projects: [{ id: 'p1', name: 'test' }] }),
+        create: async () => ({ id: 'p2', name: 'x' }),
+        pickFolder: async () => '/example/project-folder',
+        // The Projects management tab: two projects (one with a missing folder), a bound colleague, and
+        // a parked colleague, so a screenshot shows every state the tab renders at once.
+        manageView: async () => ({
+            projects: [
+                { id: 'p1', name: 'Stafford', repos: [{ path: 'C:/Users/dev/Git/stafford', label: 'stafford' }], folderValid: true,
+                    colleagues: [{ id: 'b', name: 'Alexi', title: 'PM assistant', state: 'idle', parked: false }] },
+                { id: 'p2', name: 'Archive', repos: [{ path: 'C:/Users/dev/Documents/archive', label: 'archive' }], folderValid: false, colleagues: [] }
+            ],
+            parked: [{ id: 'a', name: 'Marion', title: 'PM assistant', state: 'idle', parked: true }]
+        }),
+        update: async () => ({ ok: true, warning: null }),
+        remove: async () => ({ ok: true, warning: null }),
+        rebind: async () => ({ ok: true, warning: null }),
+        onChanged: unsub
+    },
     hire: { create: async () => ({ id: 'h1', name: 'x', title: 'x', projectId: 'p1' }) },
     roster: { snapshot: async () => ({ cards }), onChanged: unsub },
     channel: (() => {

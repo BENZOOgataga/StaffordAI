@@ -61,7 +61,7 @@ test('WAL is active after open, confirmed rather than assumed', () => {
 
 test('the migrations run and bring the database to the current version with every table', () => {
     withDb(({ db, migration }) => {
-        assert.deepEqual(migration, { from: 0, to: 11, applied: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] });
+        assert.deepEqual(migration, { from: 0, to: 12, applied: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] });
         const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[])
             .map((r) => r.name);
         for (const t of ['activity_events', 'channel_messages', 'drain_report', 'hires', 'permission_rules', 'policy_log', 'projects', 'tasks', 'turn_events', 'used_names']) {
@@ -76,7 +76,7 @@ test('opening an already-migrated database applies nothing', () => {
         const first = openDatabase({ appDataDir });
         first.db.close();
         const second = openDatabase({ appDataDir });
-        assert.deepEqual(second.migration, { from: 11, to: 11, applied: [] });
+        assert.deepEqual(second.migration, { from: 12, to: 12, applied: [] });
         second.db.close();
     } finally {
         rmSync(appDataDir, { recursive: true, force: true });

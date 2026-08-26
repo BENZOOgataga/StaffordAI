@@ -71,6 +71,23 @@ test('a hire created into a project at a real path resolves its cold-spawn cwd t
     }
 });
 
+test('a created hire has activeSince exactly equal to hiredAt, even when the clock advances between reads', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-create-'));
+    try {
+        const { deps, hires } = harness();
+        // An advancing clock: each read returns a later time. The hire time and the binding epoch must
+        // still be equal, because they come from one read, not two.
+        let tick = 0;
+        const advancing: CreateDeps = { ...deps, now: () => '2026-08-13T00:00:0' + (tick++) + '.000Z' };
+        const project = createProject(advancing, { name: 'Stafford', repoPaths: [dir] });
+        const hire = createHire(advancing, { type: 'lead-developer', title: 'Lead developer', projectId: project.id });
+        const stored = hires.find((h) => h.id === hire.id)!;
+        assert.equal(stored.activeSince, stored.hiredAt, 'the binding epoch equals the hire time at creation');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test('project:create with a nonexistent path is rejected and no project row is written', () => {
     const { deps, projects } = harness();
     const bogus = path.join(os.tmpdir(), 'stafford-does-not-exist-' + Math.floor(1)) + '-x';

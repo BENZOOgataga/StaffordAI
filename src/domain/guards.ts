@@ -13,7 +13,7 @@
 
 import type {
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
-    ProjectCreate, HireCreate, ApprovalAnswer, QuestionAnswer,
+    ProjectCreate, ProjectUpdate, ProjectDelete, ColleagueRebind, HireCreate, ApprovalAnswer, QuestionAnswer,
     PermissionRulesRequest, PermissionEffectiveRequest, PermissionAdd, PermissionUpdate, PermissionRemove,
     TasksByHireRequest, TaskAssign, TaskStart, TaskReview, TaskDiffRequest, TaskBoardRequest
 } from '../shared/ipc.ts';
@@ -117,6 +117,26 @@ export function isProjectCreate(value: unknown): value is ProjectCreate {
         return false;
     }
     return value.repoPaths.every((path) => isBoundedString(path, 4096));
+}
+
+/** Editing a project: a bounded id plus the same name and repo-path shape a create takes. */
+export function isProjectUpdate(value: unknown): value is ProjectUpdate {
+    if (!isObject(value) || !isBoundedString(value.id, 256)) return false;
+    if (!isBoundedString(value.name, 256)) return false;
+    if (!Array.isArray(value.repoPaths) || value.repoPaths.length === 0 || value.repoPaths.length > 64) {
+        return false;
+    }
+    return value.repoPaths.every((path) => isBoundedString(path, 4096));
+}
+
+/** Deleting a project: a bounded id. */
+export function isProjectDelete(value: unknown): value is ProjectDelete {
+    return isObject(value) && isBoundedString(value.id, 256);
+}
+
+/** Rebinding a colleague: a bounded hire id and project id. */
+export function isColleagueRebind(value: unknown): value is ColleagueRebind {
+    return isObject(value) && isBoundedString(value.hireId, 256) && isBoundedString(value.projectId, 256);
 }
 
 /** Creating a hire: bounded name, type, title, and an owning project id. */

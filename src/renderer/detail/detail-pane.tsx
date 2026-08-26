@@ -78,7 +78,7 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
                         </div>
 
                         <TabsContent value="conversation" className="mt-0 flex min-h-0 flex-1 flex-col">
-                            <ConversationPanel hireId={hireId} rows={convRows} nameOf={nameOf} self={CHANNEL_SELF_SENDER} lang={lang} streaming={streaming} turnEvents={turnEvents} />
+                            <ConversationPanel hireId={hireId} rows={convRows} nameOf={nameOf} self={CHANNEL_SELF_SENDER} lang={lang} streaming={streaming} turnEvents={turnEvents} parked={selected.project === null} />
                         </TabsContent>
                         {/* Assign work and review what came back. In the detail pane rather
                             than on a screen of its own, because a task is something I give to
