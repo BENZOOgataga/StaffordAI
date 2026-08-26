@@ -74,7 +74,7 @@ test('a hire created into a project at a real path resolves its cold-spawn cwd t
 test('a created hire has activeSince exactly equal to hiredAt, even when the clock advances between reads', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stafford-create-'));
     try {
-        const { deps, projects, hires } = harness();
+        const { deps, hires } = harness();
         // An advancing clock: each read returns a later time. The hire time and the binding epoch must
         // still be equal, because they come from one read, not two.
         let tick = 0;
