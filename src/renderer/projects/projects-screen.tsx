@@ -21,7 +21,7 @@ interface Copy {
     title: string; add: string; create: string; cancel: string; name: string; folder: string; browse: string;
     save: string; edit: string; del: string; noProjects: string; addHint: string; colleagues: string;
     none: string; parked: string; parkedHint: string; rebind: string; rebindTo: string; invalidFolder: string;
-    working: string; namePh: string; deleteConfirm: string;
+    working: string; namePh: string; deleteConfirm: string; saveFailed: string; rebindFailed: string;
 }
 
 const COPY: Record<Lang, Copy> = {
@@ -31,7 +31,8 @@ const COPY: Record<Lang, Copy> = {
         addHint: 'Add a project to put a colleague to work on it.', colleagues: 'Colleagues', none: 'None yet',
         parked: 'Parked colleagues', parkedHint: 'Bound to no project. Rebind one to put it back to work.',
         rebind: 'Rebind', rebindTo: 'Rebind to', invalidFolder: 'Folder missing, repoint it',
-        working: 'working', namePh: 'Project name', deleteConfirm: 'Delete this project?'
+        working: 'working', namePh: 'Project name', deleteConfirm: 'Delete this project?',
+        saveFailed: 'Save was refused.', rebindFailed: 'Rebind was refused.'
     },
     fr: {
         title: 'Projets', add: 'Ajouter un projet', create: 'Créer', cancel: 'Annuler', name: 'Nom', folder: 'Dossier',
@@ -39,7 +40,8 @@ const COPY: Record<Lang, Copy> = {
         addHint: 'Ajoutez un projet pour y mettre un collègue au travail.', colleagues: 'Collègues', none: 'Aucun',
         parked: 'Collègues sans projet', parkedHint: 'Liés à aucun projet. Réaffectez-en un pour le remettre au travail.',
         rebind: 'Réaffecter', rebindTo: 'Réaffecter vers', invalidFolder: 'Dossier introuvable, corrigez-le',
-        working: 'au travail', namePh: 'Nom du projet', deleteConfirm: 'Supprimer ce projet ?'
+        working: 'au travail', namePh: 'Nom du projet', deleteConfirm: 'Supprimer ce projet ?',
+        saveFailed: 'Enregistrement refusé.', rebindFailed: 'Réaffectation refusée.'
     }
 };
 
@@ -132,7 +134,8 @@ function ProjectCard({ project, copy, onChanged }: {
     const save = async (name: string, newFolder: string): Promise<void> => {
         setBusy(true); setError(null);
         try {
-            await window.stafford.projects.update(project.id, name, [newFolder]);
+            const reply = await window.stafford.projects.update(project.id, name, [newFolder]);
+            if (!reply.ok) { setError(reply.warning ?? copy.saveFailed); return; }
             setEditing(false);
             onChanged();
         } catch (e) {
@@ -211,8 +214,11 @@ function ParkedRow({ colleague, projects, copy, onChanged }: {
     const rebind = async (): Promise<void> => {
         if (!target) return;
         setBusy(true); setError(null);
-        try { await window.stafford.projects.rebind(colleague.id, target); onChanged(); }
-        catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        try {
+            const reply = await window.stafford.projects.rebind(colleague.id, target);
+            if (!reply.ok) { setError(reply.warning ?? copy.rebindFailed); return; }
+            onChanged();
+        } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
         finally { setBusy(false); }
     };
     return (
