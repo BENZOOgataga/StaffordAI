@@ -320,9 +320,11 @@ export class ClaudeRunnerManager {
         // Working the moment the turn starts. State is derived from the runner's own
         // lifecycle now, not from hooks, which no longer fire on this path.
         this.#setState(hireId, AGENT_STATES.WORKING);
-        // An opening empty snapshot, so the tab shows a working indicator in the gap before the
-        // first token or tool event. The builder's snapshots replace it as soon as output arrives.
-        if (emitLive) emitLive(hireId, [], false);
+        // An opening empty snapshot, so the tab shows a working indicator in the gap before the first
+        // token or tool event. The builder's snapshots replace it as soon as output arrives. Guarded:
+        // this fires after WORKING is set but before the turn runs, so an unguarded throw here would
+        // strand the colleague on Working with no turn in flight, the very failure this file prevents.
+        if (emitLive) this.#safely(hireId, 'live-open', () => emitLive(hireId, [], false));
 
         const resumeSessionId = over ? over.resumeSessionId : target.resumeSessionId;
         const result = await runner.runTurn({ text, resumeSessionId });
@@ -372,7 +374,9 @@ export class ClaudeRunnerManager {
             // Idle when the turn ends, whatever happened above, so the card accepts input again rather
             // than sticking on Working after an error. This is the guarantee the old straight-line code
             // only intended: here it is enforced by the finally, not merely by reaching the last line.
-            this.#setState(hireId, AGENT_STATES.IDLE);
+            // The state write itself is isolated: if setState or its roster signal throws, that must not
+            // escape the finally and re-strand the colleague, so it is reported rather than propagated.
+            this.#safely(hireId, 'set-idle', () => this.#setState(hireId, AGENT_STATES.IDLE));
         }
 
         return result;

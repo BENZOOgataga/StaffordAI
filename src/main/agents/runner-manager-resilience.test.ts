@@ -81,3 +81,38 @@ test('one failing write does not skip the others: a bad tool write still leaves 
     assert.ok(errors.some((e) => e.stage === 'record-tool'), 'the tool write failure is surfaced');
     assert.ok(errors.every((e) => e.stage !== 'record-reply'), 'the reply write itself did not fail');
 });
+
+test('a throwing opening live push does not strand the colleague before the turn runs', async () => {
+    const { deps, states, errors } = baseDeps({
+        // The very first (empty, working-indicator) push throws; the turn must still run and end idle.
+        onLive: () => { throw new Error('live push failed'); }
+    });
+    const manager = new ClaudeRunnerManager(deps);
+    await manager.submit('hireA', 'hello');
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.deepEqual(states, [AGENT_STATES.WORKING, AGENT_STATES.IDLE], 'the turn still went Working then Idle');
+    assert.ok(errors.some((e) => e.stage === 'live-open'), 'the opening push failure is surfaced');
+});
+
+test('a throwing idle write is reported and does not escape the finally to re-strand the turn', async () => {
+    const errors: Array<{ stage: string }> = [];
+    let sawIdleAttempt = false;
+    const deps: RunnerManagerDeps = {
+        claudePath: '/fake', claudeConfigDir: '/m', parentEnv: {},
+        resolveTarget: (h) => ({ cwd: '/p/' + h, projectId: 'p', resumeSessionId: null }),
+        seedManagedConfig: () => {}, bindSession: () => {}, recordReply: () => {},
+        setState: (_h, s) => { if (s === AGENT_STATES.IDLE) { sawIdleAttempt = true; throw new Error('roster write failed'); } },
+        onStateChanged: () => {},
+        onError: (_h, stage) => { errors.push({ stage }); },
+        spawn: responder(), timeoutMs: 5000
+    };
+    const manager = new ClaudeRunnerManager(deps);
+
+    // Must not reject: the throwing idle write is caught inside the finally, not propagated.
+    await manager.submit('hireA', 'hello');
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(sawIdleAttempt, true, 'the idle write was attempted');
+    assert.ok(errors.some((e) => e.stage === 'set-idle'), 'its failure is surfaced rather than swallowed or escaping');
+});
