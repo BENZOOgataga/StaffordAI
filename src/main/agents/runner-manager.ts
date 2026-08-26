@@ -57,8 +57,12 @@ export interface RunnerManagerDeps {
     readonly seedManagedConfig: (cwd: string) => void;
     /** Persists the harvested session id for this colleague/project (the resume key). */
     readonly bindSession: (hireId: string, projectId: string, sessionId: string) => void;
-    /** Records Claude's reply into the #62 conversation store, keyed by hireId. */
-    readonly recordReply: (hireId: string, projectId: string, text: string) => void;
+    /**
+     * Records Claude's reply into the #62 conversation store, keyed by hireId. `blocks` is the chat
+     * turn's rich snapshot, persisted alongside the text so the turn re-renders its thinking, tools,
+     * diffs, and todos on reopen; undefined for a task turn, which persists no rich events.
+     */
+    readonly recordReply: (hireId: string, projectId: string, text: string, blocks?: readonly LiveBlock[]) => void;
     /**
      * Streams the colleague's turn as it arrives, for the live Conversation tab: the reply text
      * and the tool calls it makes, in order, as a block snapshot. Called with an empty snapshot the
@@ -318,8 +322,12 @@ export class ClaudeRunnerManager {
 
         // Record Claude's reply into the conversation, both sides now visible. Only a
         // clean turn with text is recorded; a timeout or a dead process records nothing.
+        // A chat turn also carries its rich block snapshot, so the turn re-renders its
+        // thinking, tool calls, diffs, and todos when the colleague is reopened. A task turn
+        // has no live builder, so it passes no blocks and persists no rich events, unchanged.
         if ((result.status === 'completed' || result.status === 'interrupted') && result.assistantText.trim() !== '') {
-            this.#deps.recordReply(hireId, target.projectId, result.assistantText);
+            const blocks = liveBuilder ? liveBuilder.snapshot() : undefined;
+            this.#deps.recordReply(hireId, target.projectId, result.assistantText, blocks);
         }
 
         // Record the tools the colleague used this turn, for the Activity feed and the

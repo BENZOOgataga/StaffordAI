@@ -15,6 +15,12 @@ export interface DetailData {
      * in-flight turn looks.
      */
     readonly streaming: readonly LiveBlock[] | null;
+    /**
+     * The persisted rich blocks for the colleague's past turns, keyed by message id, so a reopened
+     * conversation re-renders their thinking, tools, diffs, and todos. A message with no entry renders
+     * its plain text, which is the pre-feature case and the fallback for a turn that did not persist.
+     */
+    readonly turnEvents: Readonly<Record<string, readonly LiveBlock[]>>;
 }
 
 /**
@@ -33,11 +39,13 @@ export function useDetailData(hireId: string | null): DetailData {
     const [actRows, setActRows] = useState<readonly ActivityRow[]>([]);
     const [loading, setLoading] = useState<boolean>(hireId !== null);
     const [streaming, setStreaming] = useState<readonly LiveBlock[] | null>(null);
+    const [turnEvents, setTurnEvents] = useState<Readonly<Record<string, readonly LiveBlock[]>>>({});
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         // A colleague switch starts with no in-flight stream; the previous one's is discarded.
         setStreaming(null);
+        setTurnEvents({});
         if (!hireId) {
             setConvRows([]);
             setActRows([]);
@@ -48,9 +56,16 @@ export function useDetailData(hireId: string | null): DetailData {
         setLoading(true);
 
         const loadConversation = async (): Promise<void> => {
-            const page = await window.stafford.channel.conversation(hireId, LIMIT);
+            // The messages and their persisted rich turns are read together, so a message and its
+            // blocks land in the same render: the reopen shows the full rich turn with no flash of
+            // plain text first, and a finished live turn hands off to the persisted blocks cleanly.
+            const [page, rich] = await Promise.all([
+                window.stafford.channel.conversation(hireId, LIMIT),
+                window.stafford.channel.turnEvents(hireId)
+            ]);
             if (!active) return;
             setConvRows(page.rows);
+            setTurnEvents(rich.byMessage);
             // Drop a provisional content bubble now that its persisted row covers it, but keep a bare
             // working indicator: the person's own message triggers this re-read during the gap before
             // the colleague replies, and clearing here is what blanked the indicator mid-gap.
@@ -98,5 +113,5 @@ export function useDetailData(hireId: string | null): DetailData {
         };
     }, [hireId]);
 
-    return { convRows, actRows, loading, streaming };
+    return { convRows, actRows, loading, streaming, turnEvents };
 }

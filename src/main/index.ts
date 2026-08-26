@@ -67,7 +67,7 @@ import type {
     PermissionAdd, PermissionUpdate, TaskRow, TaskWriteReply, TaskDiffReply
 } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
-import type { LiveBlock } from '../shared/ipc.ts';
+import type { LiveBlock, TurnEventsReply } from '../shared/ipc.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
@@ -646,6 +646,53 @@ function notifyConversationDelta(hireId: string, blocks: readonly LiveBlock[], d
     if (window && !window.isDestroyed()) window.webContents.send('conversation:delta', { hireId, blocks, done });
 }
 
+/**
+ * The overall cap on a persisted turn snapshot, in bytes. The individual pieces are already capped at
+ * capture (shell output at 20 KB, a created file's diff, todos at 100 rows), and a real heavy turn
+ * measured about 1.8 KB, so this is a backstop against pathological accumulation, not the primary
+ * bound. A snapshot over this is not persisted, and the turn falls back to its plain text.
+ */
+const MAX_TURN_EVENTS_BYTES = 256 * 1024;
+
+/**
+ * Persists a chat turn's rich block snapshot, best-effort. A turn with no blocks (a task turn), an
+ * empty snapshot, or one over the size cap persists nothing and re-renders from its final text.
+ * Never throws into the reply path: the message is already stored, so a persistence failure only
+ * costs the rich re-render, never the reply.
+ */
+function persistTurnEvents(messageId: string, hireId: string, blocks: readonly LiveBlock[] | undefined, at: string): void {
+    if (!repositories || !blocks || blocks.length === 0) return;
+    try {
+        const json = JSON.stringify(blocks);
+        if (json.length > MAX_TURN_EVENTS_BYTES) {
+            smoke('turn_events: snapshot for ' + hireId + ' exceeds the cap, storing text only');
+            return;
+        }
+        repositories.turnEvents.append({ messageId, hireId, blocks: json, at });
+    } catch (error) {
+        process.stderr.write('[turn-events] persist failed: ' +
+            (error instanceof Error ? error.message : String(error)) + '\n');
+    }
+}
+
+/**
+ * The persisted rich turns for one colleague, keyed by message id, for the reopen re-render. A row
+ * whose JSON is corrupt is skipped, not fatal, so one bad row never blanks the whole history.
+ */
+function turnEventsFor(hireId: string): TurnEventsReply {
+    const byMessage: Record<string, readonly LiveBlock[]> = {};
+    if (!repositories) return { byMessage };
+    for (const row of repositories.turnEvents.byHire(hireId, 500)) {
+        try {
+            const blocks = JSON.parse(row.blocks) as unknown;
+            if (Array.isArray(blocks)) byMessage[row.messageId] = blocks as readonly LiveBlock[];
+        } catch {
+            // A corrupt snapshot loses its rich re-render; the message still shows its plain text.
+        }
+    }
+    return { byMessage };
+}
+
 function notifyTasksChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('tasks:changed');
     refreshTray();
@@ -1002,12 +1049,19 @@ function buildDelivery(store: HireStore): void {
         // Claude's reply, recorded into the colleague's own conversation thread: a
         // message whose sender is the hire and whose target is null, the shape the
         // Conversation renders as the colleague rather than as "You".
-        recordReply: (hireId, projectId, text) => {
+        recordReply: (hireId, projectId, text, blocks) => {
             if (!repositories) return;
+            const messageId = randomUUID();
+            const at = new Date().toISOString();
             repositories.channel.append({
-                id: randomUUID(), projectId, senderId: hireId, targetHireId: null,
-                kind: 'message', body: text, reference: null, at: new Date().toISOString()
+                id: messageId, projectId, senderId: hireId, targetHireId: null,
+                kind: 'message', body: text, reference: null, at
             });
+            // Persist the turn's rich block snapshot alongside the message, so reopening the
+            // colleague re-renders its thinking, tools, diffs, and todos. Best-effort: a failure
+            // to persist rich events must never lose the reply, which is already stored above, so
+            // the turn falls back to its final text. A pathological snapshot is skipped by size.
+            persistTurnEvents(messageId, hireId, blocks, at);
             notifyChannelChanged();
         },
         // The colleague's turn streaming live during a chat turn: reply text and tool-call islands
@@ -1821,6 +1875,9 @@ app.whenReady().then(async () => {
         channelConversation: (hireId, limit) => (repositories
             ? repositories.channel.conversationFor(hireId, limit)
             : []),
+        // The persisted rich turns for a colleague, so a reopened conversation re-renders past
+        // thinking, tools, diffs, and todos from storage, keyed by message id.
+        channelTurnEvents: (hireId) => turnEventsFor(hireId),
         // One colleague's persisted activity history, mapped to the renderer's row. The
         // stored rows are the durable accomplishments; live is false because a reload
         // is the reopen case, where only the persisted history remains.

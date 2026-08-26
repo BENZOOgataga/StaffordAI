@@ -5,7 +5,9 @@ import { referenceLabel, type Lang } from '../channel-view.ts';
 import { activityTime } from '../activity-view.ts';
 import { runSend } from './send-message.ts';
 import { Markdown } from './markdown.tsx';
+import { TurnBlocks } from './turn-blocks.tsx';
 import type { ThreadItem } from './conversation-model.ts';
+import type { LiveBlock } from '../../shared/ipc.ts';
 
 /**
  * The shared grouped, two-sided message rendering, used by both the per-colleague
@@ -65,11 +67,18 @@ function InlineReply({ target, lang, onReply }: {
     );
 }
 
-export function ConversationThread({ items, now, lang, onReply }: {
+export function ConversationThread({ items, now, lang, onReply, richFor }: {
     items: readonly ThreadItem[];
     now: number;
     lang: Lang;
     onReply?: (target: string, text: string) => Promise<void>;
+    /**
+     * The persisted rich blocks for a colleague message, or null for one that has none. A message
+     * with rich blocks re-renders its full turn (thinking, tools, diffs, todos, text) in place of the
+     * plain text bubble, so a reopened conversation looks like it did live. Omitted by the Channel
+     * timeline, which only ever shows text.
+     */
+    richFor?: (messageId: string) => readonly LiveBlock[] | null;
 }): React.JSX.Element {
     return (
         <div className="flex flex-col gap-3">
@@ -87,20 +96,28 @@ export function ConversationThread({ items, now, lang, onReply }: {
                             <span className="font-medium">{item.sender}</span>
                             <span className="tabular-nums">{activityTime(item.at, now, lang)}</span>
                         </div>
-                        {item.messages.map((m) => (
-                            <div key={m.id}
-                                className={cn(
-                                    'max-w-[78%] rounded-lg px-3 py-1.5 text-sm break-words',
-                                    item.side === 'you' ? 'bg-secondary text-secondary-foreground whitespace-pre-wrap' : 'bg-card border border-border'
-                                )}>
-                                {/* The colleague's replies are markdown; the person's own messages stay
-                                    plain, so what they typed is never reinterpreted as formatting. */}
-                                {item.side === 'them' ? <Markdown text={m.body} /> : m.body}
-                                {m.reference ? (
-                                    <span className="text-muted-foreground mt-1 block text-xs">{referenceLabel(m.reference)}</span>
-                                ) : null}
-                            </div>
-                        ))}
+                        {item.messages.map((m) => {
+                            // A colleague message with persisted rich blocks re-renders its whole turn
+                            // (thinking, tools, diffs, todos, text) rather than the plain text bubble.
+                            const rich = item.side === 'them' && richFor ? richFor(m.id) : null;
+                            if (rich && rich.length > 0) {
+                                return <div key={m.id} className="w-full"><TurnBlocks blocks={rich} lang={lang} live={false} /></div>;
+                            }
+                            return (
+                                <div key={m.id}
+                                    className={cn(
+                                        'max-w-[78%] rounded-lg px-3 py-1.5 text-sm break-words',
+                                        item.side === 'you' ? 'bg-secondary text-secondary-foreground whitespace-pre-wrap' : 'bg-card border border-border'
+                                    )}>
+                                    {/* The colleague's replies are markdown; the person's own messages stay
+                                        plain, so what they typed is never reinterpreted as formatting. */}
+                                    {item.side === 'them' ? <Markdown text={m.body} /> : m.body}
+                                    {m.reference ? (
+                                        <span className="text-muted-foreground mt-1 block text-xs">{referenceLabel(m.reference)}</span>
+                                    ) : null}
+                                </div>
+                            );
+                        })}
                         {onReply && item.side === 'them' ? (
                             <InlineReply target={item.senderId} lang={lang} onReply={onReply} />
                         ) : null}

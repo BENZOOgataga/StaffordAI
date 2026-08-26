@@ -367,6 +367,43 @@ export class ActivityRepository {
     }
 }
 
+/** One persisted rich turn: the reply's message id, the colleague, and the block snapshot JSON. */
+export interface TurnEventsRecord {
+    readonly messageId: string;
+    readonly hireId: string;
+    readonly blocks: string;
+    readonly at: string;
+}
+
+/**
+ * The append-only store of rich turn snapshots, so a reopened conversation re-renders past thinking,
+ * tool calls, diffs, and todos, not just final text. One row per colleague reply, paired to its
+ * channel_messages row by id. Append and read-by-hire only, the same shape the activity store uses.
+ */
+export class TurnEventsRepository {
+    readonly #append: Statement;
+    readonly #byHire: Statement;
+
+    constructor(db: StorageDatabase) {
+        this.#append = db.prepare(
+            'INSERT INTO turn_events (message_id, hire_id, blocks, at) VALUES (@messageId, @hireId, @blocks, @at)');
+        this.#byHire = db.prepare(
+            'SELECT * FROM turn_events WHERE hire_id = ? ORDER BY at, message_id LIMIT ?');
+    }
+
+    append(record: TurnEventsRecord): void {
+        this.#append.run({ messageId: record.messageId, hireId: record.hireId, blocks: record.blocks, at: record.at });
+    }
+
+    /** One colleague's persisted rich turns, oldest-first, up to `limit`. */
+    byHire(hireId: string, limit: number): TurnEventsRecord[] {
+        return (this.#byHire.all(hireId, limit) as Row[]).map((row) => ({
+            messageId: String(row.message_id), hireId: String(row.hire_id),
+            blocks: String(row.blocks), at: String(row.at)
+        }));
+    }
+}
+
 /**
  * Permission rules. Bounded by how many the user writes by hand per project, so a full
  * read per project is offered. forProject returns the baseline (hire_id null) and every
@@ -476,6 +513,7 @@ export interface Repositories {
     readonly drainReports: DrainReportRepository;
     readonly channel: ChannelRepository;
     readonly activity: ActivityRepository;
+    readonly turnEvents: TurnEventsRepository;
     readonly permissionRules: PermissionRuleRepository;
 }
 
@@ -489,6 +527,7 @@ export function createRepositories(db: StorageDatabase): Repositories {
         drainReports: new DrainReportRepository(db),
         channel: new ChannelRepository(db),
         activity: new ActivityRepository(db),
+        turnEvents: new TurnEventsRepository(db),
         permissionRules: new PermissionRuleRepository(db)
     };
 }

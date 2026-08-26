@@ -20,7 +20,7 @@ import {
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
     type TasksReply, type TaskWriteReply, type TaskDiffReply, type TaskBoardReply,
-    type ConversationStreamDelta
+    type ConversationStreamDelta, type TurnEventsReply
 } from '../shared/ipc.ts';
 
 function invoke(channel: InvokeChannel, payload?: unknown): Promise<unknown> {
@@ -109,6 +109,10 @@ const api = Object.freeze({
             invoke('channel:since', { after, limit }) as Promise<ChannelPageReply>,
         conversation: (hireId: string, limit: number): Promise<ChannelPageReply> =>
             invoke('channel:conversation', { hireId, limit }) as Promise<ChannelPageReply>,
+        // The persisted rich turns for a colleague, keyed by message id, so a reopened conversation
+        // re-renders its past thinking, tools, diffs, and todos from storage. Read-only.
+        turnEvents: (hireId: string): Promise<TurnEventsReply> =>
+            invoke('channel:turn-events', { hireId }) as Promise<TurnEventsReply>,
         reply: (hireId: string, text: string): Promise<void> =>
             invoke('channel:reply', { hireId, text }) as Promise<void>,
         onChanged: (listener: () => void): (() => void) => on('channel:changed', () => listener()),
