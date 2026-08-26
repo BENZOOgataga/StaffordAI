@@ -21,6 +21,8 @@ import { toolCategory, defaultCategoryDefaults, defaultBaselineRules } from '../
 import type { ProjectPolicy, PermissionRuleRecord } from '../../domain/models.ts';
 import type { PermissionDecision, CanUseTool } from './claude-runner.ts';
 import type { AskRequest, AskOutcome } from './approval-registry.ts';
+import type { QuestionRequest, QuestionOutcome } from './question-registry.ts';
+import { ASK_TOOL, parseAskQuestions } from './ask-parse.ts';
 
 export interface TurnContext {
     readonly hireId: string;
@@ -65,6 +67,13 @@ export interface PermissionGateDeps {
      * degrades safely.
      */
     readonly onAsk?: (request: AskRequest) => Promise<AskOutcome>;
+    /**
+     * Handles an AskUserQuestion by pausing the turn on a pending question until the person picks an
+     * answer, then allowing the tool with the selection folded into its input so the CLI delivers it.
+     * When absent, or when the input is not a parseable ask, the tool falls through to the normal gate,
+     * so this degrades safely and never changes the permission decision for anything else.
+     */
+    readonly onQuestion?: (request: QuestionRequest) => Promise<QuestionOutcome>;
 }
 
 interface Resolved {
@@ -313,7 +322,27 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
         return resolved;
     };
 
-    const gate = ((ctx: TurnContext): CanUseTool => (toolName, input) => {
+    const gate = ((ctx: TurnContext): CanUseTool => (toolName, input, toolUseId) => {
+        // AskUserQuestion is a clarifying question, not a permission: route it to the question seam,
+        // which pauses the turn until the person picks, then allows the tool with the answer folded
+        // into its input so the CLI delivers the selection. A malformed input (not a parseable ask)
+        // falls through to the normal gate below, so the permission decision for anything else, and
+        // for an unparseable ask, is untouched.
+        if (toolName === ASK_TOOL && deps.onQuestion) {
+            const questions = parseAskQuestions(input);
+            if (questions) {
+                return deps.onQuestion({ hireId: ctx.hireId, toolUseId: toolUseId ?? '', questions })
+                    .then((outcome): PermissionDecision => ({
+                        behavior: 'allow',
+                        // Fold the selection in as `answers` (the shape the CLI accepts). A cancelled
+                        // ask (null) allows with the input unchanged, so the CLI reports it unanswered.
+                        updatedInput: outcome.answers && typeof input === 'object' && input !== null
+                            ? { ...(input as Record<string, unknown>), answers: outcome.answers }
+                            : input
+                    }));
+            }
+        }
+
         const { rules, defaults, rawRoot } = load(ctx);
         const request: PermissionRequest = {
             action: toolCategory(toolName),

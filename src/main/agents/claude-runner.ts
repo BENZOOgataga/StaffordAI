@@ -99,8 +99,12 @@ export type PermissionDecision =
  * the full tool name and input, so a future policy has what it needs to decide. It is
  * a single named function on purpose: today it returns allow, tomorrow it consults a
  * ProjectPolicy, an allowlist, or a person-facing prompt, without touching the runner.
+ *
+ * `toolUseId` is the id of the tool call this request is for, when the CLI sends one. A
+ * seam that needs to tie a pending prompt to the tool block in the conversation (an
+ * AskUserQuestion answer) uses it; a seam that only allows or denies ignores it.
  */
-export type CanUseTool = (toolName: string, input: unknown) => PermissionDecision | Promise<PermissionDecision>;
+export type CanUseTool = (toolName: string, input: unknown, toolUseId?: string | null) => PermissionDecision | Promise<PermissionDecision>;
 
 /**
  * The v1 permission seam: auto-approve. The same default vibe-kanban ships. It is NOT
@@ -108,7 +112,7 @@ export type CanUseTool = (toolName: string, input: unknown) => PermissionDecisio
  * protocol seam, which is exactly where a real policy will replace it. It echoes the
  * input back unchanged so the tool runs with what the model asked for.
  */
-export const autoApproveTool: CanUseTool = (_toolName, input) => ({ behavior: 'allow', updatedInput: input });
+export const autoApproveTool: CanUseTool = (_toolName, input, _toolUseId) => ({ behavior: 'allow', updatedInput: input });
 
 /** A tool the model asked to run during the turn. */
 export interface ToolUse {
@@ -445,9 +449,10 @@ export class ClaudeRunner {
         if (request.subtype === 'can_use_tool') {
             const toolName = typeof request.tool_name === 'string' ? (request.tool_name as string) : '';
             const input = 'input' in request ? (request as Record<string, unknown>).input : undefined;
+            const toolUseId = typeof request.tool_use_id === 'string' ? (request.tool_use_id as string) : null;
             let decision: PermissionDecision;
             try {
-                decision = await this.#canUseTool(toolName, input);
+                decision = await this.#canUseTool(toolName, input, toolUseId);
             } catch {
                 // A seam that throws is treated as a deny, never as a hang.
                 decision = { behavior: 'deny', message: 'permission check failed' };

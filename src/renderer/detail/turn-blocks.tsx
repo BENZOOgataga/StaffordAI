@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Brain, ChevronRight, ChevronDown, Square, SquareCheckBig, Loader2, ListChecks, CircleHelp } from 'lucide-react';
+import { Brain, ChevronRight, ChevronDown, Square, SquareCheckBig, Loader2, ListChecks, CircleHelp, Circle, CircleDot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Markdown } from './markdown.tsx';
 import { CollapsibleLines } from './collapsible-lines.tsx';
@@ -7,8 +7,9 @@ import { DiffViewer } from '../tasks/diff-viewer.tsx';
 import { FeedIconGlyph } from './feed-icon.tsx';
 import { feedIcon, toolPhrase, toolStatusLabel, type FeedRow } from '../activity-view.ts';
 import { groupTurn } from './group-turn.ts';
+import { usePendingQuestionFor } from './use-questions.ts';
 import { type Lang } from '../channel-view.ts';
-import type { LiveBlock, LiveTodo } from '../../shared/ipc.ts';
+import type { LiveBlock, LiveTodo, AskQuestion, AskOption, AskAnswer } from '../../shared/ipc.ts';
 
 /**
  * The block rendering shared by a live turn and a persisted one, so a reopened conversation shows the
@@ -134,18 +135,194 @@ export function TodoList({ todos, lang }: { todos: readonly LiveTodo[]; lang: La
     );
 }
 
-/** A colleague's clarifying question, from AskUserQuestion, as a visible step so the ask is not lost
- * behind a generic tool one-liner. Not the permission-approval banner, which is a separate flow. */
-function AskIsland({ question, lang }: { question: string; lang: Lang }): React.JSX.Element {
+/** The "Asked a question" header, shared by every state of the ask island. */
+function AskHeader({ lang }: { lang: Lang }): React.JSX.Element {
     return (
-        <div className="border-status-waiting/40 bg-status-waiting/5 w-full max-w-[78%] rounded-md border px-2.5 py-1.5 text-sm">
-            <div className="text-status-waiting flex items-center gap-2 text-xs font-medium">
-                <CircleHelp className="size-3.5 shrink-0" aria-hidden="true" />
-                <span>{lang === 'fr' ? 'A posé une question' : 'Asked a question'}</span>
-            </div>
-            <div className="text-foreground mt-1 whitespace-pre-wrap">{question}</div>
+        <div className="text-status-waiting flex items-center gap-2 text-xs font-medium">
+            <CircleHelp className="size-3.5 shrink-0" aria-hidden="true" />
+            <span>{lang === 'fr' ? 'A posé une question' : 'Asked a question'}</span>
         </div>
     );
+}
+
+/** The labels a person chose for one question that are not one of its listed options (a free-text answer). */
+function customAnswers(chosen: readonly string[], options: readonly AskOption[]): string[] {
+    return chosen.filter((c) => !options.some((o) => o.label === c));
+}
+
+/**
+ * One option row, rendered the same in the live form (clickable) and the answered/read-only view
+ * (locked). `selected` fills it in Stafford's waiting accent; `onPick` present makes it a button, its
+ * absence a static row, so an answered ask shows the pick without being re-clickable.
+ */
+function AskOptionRow({ option, selected, multi, onPick }: {
+    option: AskOption; selected: boolean; multi: boolean; onPick?: () => void;
+}): React.JSX.Element {
+    const Marker = multi
+        ? (selected ? SquareCheckBig : Square)
+        : (selected ? CircleDot : Circle);
+    const body = (
+        <>
+            <Marker className={cn('mt-0.5 size-3.5 shrink-0', selected ? 'text-status-waiting' : 'text-muted-foreground/60')} aria-hidden="true" />
+            <span className="min-w-0 flex-1">
+                <span className={cn('block break-words', selected ? 'text-foreground font-medium' : 'text-foreground')}>{option.label}</span>
+                {option.description !== '' ? <span className="text-muted-foreground block break-words text-xs">{option.description}</span> : null}
+            </span>
+        </>
+    );
+    const cls = cn(
+        'flex w-full items-start gap-2 rounded-md border px-2 py-1.5 text-left text-sm',
+        selected ? 'border-status-waiting/50 bg-status-waiting/10' : 'border-border bg-background/40'
+    );
+    return onPick
+        ? <button type="button" onClick={onPick} className={cn(cls, 'hover:border-status-waiting/40')}>{body}</button>
+        : <div className={cls}>{body}</div>;
+}
+
+/**
+ * The answered or read-only view of an ask: every question with its options, the chosen ones filled in
+ * and locked, plus any free-text answer as its own row. With no answer (a persisted ask that was never
+ * answered, or the Activity tab) the options simply show unselected, never a broken control.
+ */
+function AskAnswered({ questions, answer, lang }: {
+    questions: readonly AskQuestion[]; answer: AskAnswer | undefined; lang: Lang;
+}): React.JSX.Element {
+    return (
+        <div className="border-status-waiting/40 bg-status-waiting/5 w-full max-w-[78%] rounded-md border px-2.5 py-2 text-sm">
+            <AskHeader lang={lang} />
+            <div className="mt-1.5 flex flex-col gap-3">
+                {questions.map((q, qi) => {
+                    const chosen = answer?.[q.question] ?? [];
+                    const customs = customAnswers(chosen, q.options);
+                    return (
+                        <div key={qi} className="flex flex-col gap-1.5">
+                            <div className="text-foreground font-medium whitespace-pre-wrap">{q.question}</div>
+                            {q.options.map((o, oi) => (
+                                <AskOptionRow key={oi} option={o} multi={q.multiSelect} selected={chosen.includes(o.label)} />
+                            ))}
+                            {customs.map((c, ci) => (
+                                <AskOptionRow key={'c' + ci} option={{ label: c, description: '' }} multi={q.multiSelect} selected />
+                            ))}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * The live answer form for an ask that is still waiting: clickable options (a radio per question, or
+ * checkboxes when the question is multi-select), a free-text field for a custom answer, and a Send
+ * button that routes the selection back to the blocked colleague as its tool result. A send failure
+ * keeps the choices answerable and shows the error inline, so the prompt is never lost.
+ */
+function AskAnswerForm({ questions, pendingId, lang }: {
+    questions: readonly AskQuestion[]; pendingId: string; lang: Lang;
+}): React.JSX.Element {
+    const [selections, setSelections] = React.useState<Record<string, string[]>>({});
+    const [freeText, setFreeText] = React.useState<Record<string, string>>({});
+    const [sending, setSending] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
+
+    const pick = (qText: string, label: string, multi: boolean): void => {
+        setSelections((prev) => {
+            const current = prev[qText] ?? [];
+            if (multi) {
+                const next = current.includes(label) ? current.filter((l) => l !== label) : [...current, label];
+                return { ...prev, [qText]: next };
+            }
+            return { ...prev, [qText]: current.length === 1 && current[0] === label ? [] : [label] };
+        });
+    };
+
+    const answersToSend = (): AskAnswer => {
+        const out: Record<string, string[]> = {};
+        for (const q of questions) {
+            const picked = [...(selections[q.question] ?? [])];
+            const typed = (freeText[q.question] ?? '').trim();
+            if (typed !== '') picked.push(typed);
+            if (picked.length > 0) out[q.question] = picked;
+        }
+        return out;
+    };
+
+    const canSend = Object.keys(answersToSend()).length > 0 && !sending;
+
+    const send = (): void => {
+        const answers = answersToSend();
+        if (Object.keys(answers).length === 0) return;
+        setSending(true);
+        setError(null);
+        window.stafford.questions.answer(pendingId, answers).catch(() => {
+            setSending(false);
+            setError(lang === 'fr' ? "L'envoi a échoué. Réessayez." : 'Sending failed. Try again.');
+        });
+    };
+
+    return (
+        <div className="border-status-waiting/50 bg-status-waiting/5 w-full max-w-[78%] rounded-md border px-2.5 py-2 text-sm">
+            <AskHeader lang={lang} />
+            <div className="mt-1.5 flex flex-col gap-3">
+                {questions.map((q, qi) => {
+                    const picked = selections[q.question] ?? [];
+                    return (
+                        <div key={qi} className="flex flex-col gap-1.5">
+                            <div className="text-foreground font-medium whitespace-pre-wrap">{q.question}</div>
+                            {q.options.map((o, oi) => (
+                                <AskOptionRow key={oi} option={o} multi={q.multiSelect}
+                                    selected={picked.includes(o.label)} onPick={() => pick(q.question, o.label, q.multiSelect)} />
+                            ))}
+                            <input
+                                type="text"
+                                value={freeText[q.question] ?? ''}
+                                onChange={(e) => setFreeText((prev) => ({ ...prev, [q.question]: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === 'Enter' && canSend) send(); }}
+                                placeholder={lang === 'fr' ? 'Autre réponse...' : 'Other answer...'}
+                                className="border-border bg-background/60 text-foreground focus:border-status-waiting/50 mt-0.5 w-full rounded-md border px-2 py-1 text-sm outline-none"
+                            />
+                        </div>
+                    );
+                })}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+                <button type="button" onClick={send} disabled={!canSend}
+                    className="bg-status-waiting/90 hover:bg-status-waiting text-background disabled:opacity-40 rounded-md px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed">
+                    {sending ? (lang === 'fr' ? 'Envoi...' : 'Sending...') : (lang === 'fr' ? 'Envoyer' : 'Send answer')}
+                </button>
+                {error ? <span className="text-status-error text-xs">{error}</span> : null}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * A colleague's clarifying question, from AskUserQuestion, as a visible step so the ask is not lost
+ * behind a generic tool one-liner. It shows the choices and, while the colleague is blocked waiting,
+ * lets the person pick an answer that routes back as the tool result. Not the permission-approval
+ * banner, which is a separate flow. The ask is never nested inside collapsed reasoning, so it is
+ * always seen.
+ */
+function AskIsland({ block, lang }: { block: Extract<LiveBlock, { kind: 'tool' }>; lang: Lang }): React.JSX.Element {
+    const pending = usePendingQuestionFor(block.id);
+    const questions = block.ask;
+    const answered = block.answer !== undefined;
+    const active = !answered && pending !== null;
+
+    // No structured choices parsed (malformed input): degrade to the plain question text as before.
+    if (!questions || questions.length === 0) {
+        return (
+            <div className="border-status-waiting/40 bg-status-waiting/5 w-full max-w-[78%] rounded-md border px-2.5 py-1.5 text-sm">
+                <AskHeader lang={lang} />
+                {block.question !== undefined
+                    ? <div className="text-foreground mt-1 whitespace-pre-wrap">{block.question}</div>
+                    : null}
+            </div>
+        );
+    }
+    return active && pending
+        ? <AskAnswerForm questions={questions} pendingId={pending.id} lang={lang} />
+        : <AskAnswered questions={questions} answer={block.answer} lang={lang} />;
 }
 
 /**
@@ -198,8 +375,8 @@ function BlockList({ blocks, lang, live, insideReasoning = false }: {
                     }
                     return <ThinkingIsland key={i} text={block.text} seconds={block.seconds} lang={lang} />;
                 }
-                if (block.name === 'AskUserQuestion' && block.question !== undefined) {
-                    return <AskIsland key={i} question={block.question} lang={lang} />;
+                if (block.name === 'AskUserQuestion' && (block.ask !== undefined || block.question !== undefined)) {
+                    return <AskIsland key={i} block={block} lang={lang} />;
                 }
                 if (block.todos !== undefined) {
                     return i === firstTodoIndex && currentTodos

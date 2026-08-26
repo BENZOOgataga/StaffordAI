@@ -98,6 +98,52 @@ test('AskUserQuestion joins several questions and degrades to no question on a b
     assert.equal(askQuestion(bad), undefined, 'a malformed ask degrades to the tool one-liner');
 });
 
+interface AskOpt { label: string; description: string }
+interface AskQ { question: string; header: string; multiSelect: boolean; options: readonly AskOpt[] }
+const askBlock = (b: LiveTurnBuilder): { ask?: readonly AskQ[]; answer?: Record<string, readonly string[]>; question?: string } =>
+    b.snapshot()[0] as { ask?: readonly AskQ[]; answer?: Record<string, readonly string[]>; question?: string };
+
+/** Drives an AskUserQuestion tool_use through start, input, stop, for the structured-choices tests. */
+function askCall(b: LiveTurnBuilder, input: unknown, id = 't1'): void {
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id, name: 'AskUserQuestion', input: {} } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) } }));
+    b.apply(se({ type: 'content_block_stop', index: 0 }));
+}
+
+test('an AskUserQuestion parses its structured choices, header, and multiSelect onto the block', () => {
+    const b = new LiveTurnBuilder();
+    askCall(b, { questions: [{ question: 'Which color?', header: 'Color', multiSelect: true,
+        options: [{ label: 'Red', description: 'The red one.' }, { label: 'Blue', description: '' }] }] });
+    const blk = askBlock(b);
+    assert.equal(blk.question, 'Which color?', 'the summary text is still there for the collapsed label');
+    assert.ok(blk.ask, 'the structured choices are present');
+    assert.equal(blk.ask![0]!.header, 'Color');
+    assert.equal(blk.ask![0]!.multiSelect, true);
+    assert.deepEqual(blk.ask![0]!.options.map((o) => o.label), ['Red', 'Blue'], 'both options, in order');
+});
+
+test('an ask answer rides back on the tool_use_result and locks onto the block', () => {
+    const b = new LiveTurnBuilder();
+    askCall(b, { questions: [{ question: 'Which color?', header: 'Color', multiSelect: false,
+        options: [{ label: 'Red', description: '' }, { label: 'Blue', description: '' }] }] });
+    // The CLI emits a user message with the tool_result, and the answer sits on the sibling result.
+    b.apply(ev('user', {
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'The user answered: "Which color?"="Red".' }] },
+        tool_use_result: { questions: [{ question: 'Which color?' }], answers: { 'Which color?': ['Red'] } }
+    }));
+    assert.deepEqual(askBlock(b).answer, { 'Which color?': ['Red'] }, 'the pick is captured, so a live and a persisted turn show it');
+});
+
+test('an unanswered ask result leaves no answer, so the choices stay answerable', () => {
+    const b = new LiveTurnBuilder();
+    askCall(b, { questions: [{ question: 'Which color?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: '' }] }] });
+    b.apply(ev('user', {
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'The user did not answer the questions.' }] },
+        tool_use_result: { questions: [{ question: 'Which color?' }], answers: {} }
+    }));
+    assert.equal(askBlock(b).answer, undefined, 'an empty answers map is not an answer');
+});
+
 test('text deltas across a block accumulate into one text block in order', () => {
     const b = new LiveTurnBuilder();
     b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));

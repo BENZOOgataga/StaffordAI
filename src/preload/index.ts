@@ -17,6 +17,7 @@ import {
     type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
     type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals,
+    type PendingQuestions, type AskAnswer,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
     type TasksReply, type TaskWriteReply, type TaskDiffReply, type TaskBoardReply,
@@ -151,6 +152,16 @@ const api = Object.freeze({
         answer: (id: string, approve: boolean, note: string | null): Promise<void> =>
             invoke('approval:answer', { id, approve, note }) as Promise<void>,
         onChanged: (listener: () => void): (() => void) => on('approvals:changed', () => listener())
+    }),
+
+    // The AskUserQuestion prompts. pending lists the asks waiting on the person, answer sends the
+    // selected labels back (which the colleague receives as its tool result), and onChanged fires when
+    // the pending set changes so the conversation re-reads its choices. Separate from approvals above.
+    questions: Object.freeze({
+        pending: (): Promise<PendingQuestions> => invoke('questions:pending') as Promise<PendingQuestions>,
+        answer: (id: string, answers: AskAnswer): Promise<void> =>
+            invoke('question:answer', { id, answers }) as Promise<void>,
+        onChanged: (listener: () => void): (() => void) => on('questions:changed', () => listener())
     }),
 
     /**

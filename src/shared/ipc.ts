@@ -34,6 +34,10 @@ export const INVOKE_CHANNELS = [
     // The pending permission approvals (phase 2 ASK), and the person's answer.
     'approvals:pending',
     'approval:answer',
+    // The pending AskUserQuestion prompts, and the person's selected answer. Distinct from the
+    // approval channels above: answering a question is not granting a permission.
+    'questions:pending',
+    'question:answer',
     // Permission configuration (phase 3). Read the rules for a project, read a colleague's
     // effective policy with its attribution, and write rules.
     //
@@ -82,6 +86,31 @@ export interface LiveTodo {
     readonly text: string;
     readonly status: LiveTodoStatus;
 }
+
+/** One selectable choice in an AskUserQuestion, its label and a short description. */
+export interface AskOption {
+    readonly label: string;
+    readonly description: string;
+}
+
+/**
+ * One question a colleague asked through AskUserQuestion: the prompt, a short header, whether more
+ * than one option may be picked, and the choices. Parsed from the tool input, so the renderer can
+ * show the choices and route a selection back. `header` is what the answer is keyed by on the wire.
+ */
+export interface AskQuestion {
+    readonly question: string;
+    readonly header: string;
+    readonly multiSelect: boolean;
+    readonly options: readonly AskOption[];
+}
+
+/**
+ * The selected answer for an ask, keyed by each question's text, the array being the chosen option
+ * labels (one for single select, several for multi, or a single free-text string the person typed).
+ * This is the exact shape the CLI accepts back as the tool's answer.
+ */
+export type AskAnswer = Readonly<Record<string, readonly string[]>>;
 
 /**
  * One block of a colleague's turn as it streams: a run of reply text, or a tool call paired with
@@ -139,6 +168,18 @@ export type LiveBlock =
          * one-liner. Absent for every other tool and for a malformed input.
          */
         readonly question?: string;
+        /**
+         * The structured questions and their choices, when the tool is AskUserQuestion and its input
+         * parsed. It carries what `question` summarises plus the options and multi-select flag, so the
+         * renderer shows clickable choices. Absent for every other tool and for a malformed input.
+         */
+        readonly ask?: readonly AskQuestion[];
+        /**
+         * The answer the person gave to the ask, once they picked, keyed by question text. It arrives
+         * on the stream's tool_result after the selection routes back, so a live and a persisted turn
+         * both show what was chosen and lock the choice in. Absent until answered.
+         */
+        readonly answer?: AskAnswer;
     };
 
 /**
@@ -177,6 +218,8 @@ export const EVENT_CHANNELS = [
     'activity:appended',
     // A pending approval was added or resolved, so the renderer re-reads the list.
     'approvals:changed',
+    // A pending question was added or resolved, so the conversation re-reads its choices.
+    'questions:changed',
     // A permission rule was added, edited or removed, so any open config view re-reads.
     'permissions:changed',
     // A task was assigned, moved, or reviewed, so any open task view re-reads.
@@ -454,6 +497,31 @@ export interface ApprovalAnswer {
     readonly id: string;
     readonly approve: boolean;
     readonly note: string | null;
+}
+
+/**
+ * One AskUserQuestion waiting on the person. A colleague's turn is paused at the tool call until the
+ * person picks an answer. `toolUseId` ties it to the ask block in the conversation, so the choices
+ * render on that block and the selection resolves this exact pending ask. Distinct from a permission
+ * approval: answering a question is not granting a permission, and the two never share a record.
+ */
+export interface PendingQuestion {
+    readonly id: string;
+    readonly hireId: string;
+    readonly toolUseId: string;
+    readonly questions: readonly AskQuestion[];
+    readonly at: string;
+}
+
+/** The current pending questions, for the conversation to render choices against. */
+export interface PendingQuestions {
+    readonly pending: readonly PendingQuestion[];
+}
+
+/** The person's answer to one pending question: the selected labels keyed by question text. */
+export interface QuestionAnswer {
+    readonly id: string;
+    readonly answers: AskAnswer;
 }
 
 
