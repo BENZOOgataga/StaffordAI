@@ -71,6 +71,15 @@ export const INVOKE_CHANNELS = [
 /** How a live tool call is doing: still running, finished ok, or failed. */
 export type LiveToolStatus = 'running' | 'ok' | 'error';
 
+/** A todo item's state. `other` is the safe default for a value this version does not model. */
+export type LiveTodoStatus = 'pending' | 'in-progress' | 'done' | 'other';
+
+/** One row of a colleague's live checklist, from a TodoWrite call. Text plus its state, nothing else. */
+export interface LiveTodo {
+    readonly text: string;
+    readonly status: LiveTodoStatus;
+}
+
 /**
  * One block of a colleague's turn as it streams: a run of reply text, or a tool call paired with
  * its result. The blocks are in message order, so text and tool calls interleave the way they
@@ -114,6 +123,13 @@ export type LiveBlock =
          * degrades to the one-line "edited path".
          */
         readonly edit?: TaskDiffFile;
+        /**
+         * The parsed checklist from a TodoWrite call, when the tool is TodoWrite and its input parsed.
+         * Present only on a TodoWrite whose todos array parsed; a malformed one leaves it absent and
+         * degrades to the generic tool one-liner. The renderer shows the latest one per turn as a
+         * single evolving checklist rather than one island per call.
+         */
+        readonly todos?: readonly LiveTodo[];
     };
 
 /**

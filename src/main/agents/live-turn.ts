@@ -15,15 +15,20 @@
  */
 
 import type { ClaudeStreamEvent } from './claude-runner.ts';
-import type { LiveBlock, LiveToolStatus, TaskDiffFile, TaskDiffLine } from '../../shared/ipc.ts';
+import type { LiveBlock, LiveToolStatus, LiveTodo, LiveTodoStatus, TaskDiffFile, TaskDiffLine } from '../../shared/ipc.ts';
 
 interface TextBlockM { kind: 'text'; text: string }
 interface ThinkingBlockM { kind: 'thinking'; text: string; seconds: number | null; startMs: number }
 interface ToolBlockM {
     kind: 'tool'; id: string; name: string; target: string | null; status: LiveToolStatus;
-    partial: string; output?: string; edit?: TaskDiffFile;
+    partial: string; output?: string; edit?: TaskDiffFile; todos?: readonly LiveTodo[];
 }
 type BlockM = TextBlockM | ThinkingBlockM | ToolBlockM;
+
+/** The planning tool whose input is a checklist rather than a command or an edit. */
+const TODO_TOOL = 'TodoWrite';
+/** A bound on how many todo rows cross the bridge, so a runaway list cannot bloat the payload. */
+const MAX_TODOS = 100;
 
 /** The command-running tools whose output the Conversation renders. Matched by name, the identity the
  * stream gives, never guessed from the output shape. (PowerShell is not a shell in the bash sense, so
@@ -60,7 +65,8 @@ export class LiveTurnBuilder {
             return {
                 kind: 'tool', id: b.id, name: b.name, target: b.target, status: b.status,
                 ...(b.output !== undefined ? { output: b.output } : {}),
-                ...(b.edit !== undefined ? { edit: b.edit } : {})
+                ...(b.edit !== undefined ? { edit: b.edit } : {}),
+                ...(b.todos !== undefined ? { todos: b.todos } : {})
             };
         });
     }
@@ -167,6 +173,12 @@ export class LiveTurnBuilder {
             if (block && block.kind === 'tool' && block.partial !== '') {
                 const target = parseTarget(block.partial);
                 if (target !== null && target !== block.target) { block.target = target; return true; }
+            }
+            // A TodoWrite's checklist, parsed from its now-complete input. A malformed one leaves
+            // todos absent, so it degrades to the generic tool one-liner rather than crashing.
+            if (block && block.kind === 'tool' && block.name === TODO_TOOL && block.todos === undefined && block.partial !== '') {
+                const todos = parseTodos(block.partial);
+                if (todos !== null) { block.todos = todos; return true; }
             }
             if (block && block.kind === 'thinking' && block.seconds === null) {
                 // The thinking finished: stamp how long it took, so the island reads "Thought for Ns"
@@ -311,6 +323,47 @@ function parseTarget(partialJson: string): string | null {
     } catch {
         return null;
     }
+}
+
+/**
+ * Parses a TodoWrite input into checklist rows, or null when it is not a todo list at all (so the
+ * caller degrades to the generic one-liner). An empty array is a valid empty checklist, not null.
+ *
+ * The shape is Claude Code's TodoWrite: `{ todos: [{ content, status, activeForm }] }`, with status
+ * one of pending / in_progress / completed. Read defensively, since it is a tool-input schema this
+ * code does not own: the text falls back across a couple of field names, an unknown status becomes
+ * `other` rather than throwing, and the list is capped so a runaway plan cannot bloat the payload.
+ */
+function parseTodos(partialJson: string): LiveTodo[] | null {
+    let input: unknown;
+    try { input = JSON.parse(partialJson); } catch { return null; }
+    if (!isRecord(input) || !Array.isArray(input.todos)) return null;
+    const out: LiveTodo[] = [];
+    for (const raw of input.todos.slice(0, MAX_TODOS)) {
+        if (!isRecord(raw)) continue;
+        const status = mapTodoStatus(raw.status);
+        // The active form ("Running tests") reads better than the imperative ("Run tests") while a
+        // step is in progress; otherwise the plain content is the row.
+        const content = firstString(raw.content, raw.text, raw.title);
+        const active = firstString(raw.activeForm);
+        const text = (status === 'in-progress' && active !== '') ? active : content;
+        out.push({ text: text.length > 200 ? text.slice(0, 200) + '...' : text, status });
+    }
+    return out;
+}
+
+function mapTodoStatus(value: unknown): LiveTodoStatus {
+    switch (value) {
+        case 'pending': return 'pending';
+        case 'in_progress': case 'in-progress': return 'in-progress';
+        case 'completed': case 'complete': case 'done': return 'done';
+        default: return 'other';
+    }
+}
+
+function firstString(...values: unknown[]): string {
+    for (const v of values) if (typeof v === 'string' && v !== '') return v;
+    return '';
 }
 
 /**
