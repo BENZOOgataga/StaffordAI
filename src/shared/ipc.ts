@@ -133,6 +133,12 @@ export type LiveBlock =
          * single evolving checklist rather than one island per call.
          */
         readonly todos?: readonly LiveTodo[];
+        /**
+         * The question a colleague asked, when the tool is AskUserQuestion and its input parsed. It
+         * makes the ask a visible step showing what was asked, rather than a bare "used AskUserQuestion"
+         * one-liner. Absent for every other tool and for a malformed input.
+         */
+        readonly question?: string;
     };
 
 /**
