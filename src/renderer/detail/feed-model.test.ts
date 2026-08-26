@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildActivityFeed, buildTranscript } from './feed-model.ts';
-import { CHANNEL_SELF_SENDER, type ChannelMessageRow, type ActivityRow } from '../../shared/ipc.ts';
+import { buildActivityActions } from './feed-model.ts';
+import { CHANNEL_SELF_SENDER, type ChannelMessageRow, type LiveBlock } from '../../shared/ipc.ts';
 
 function msg(id: string, senderId: string, body: string, at: string): ChannelMessageRow {
     return { id, projectId: 'p', senderId, kind: 'message', body, reference: null, at };
@@ -9,43 +9,53 @@ function msg(id: string, senderId: string, body: string, at: string): ChannelMes
 function event(id: string, senderId: string, state: string, at: string): ChannelMessageRow {
     return { id, projectId: 'p', senderId, kind: 'event', body: state, reference: null, at };
 }
-function act(id: string, hireId: string, tool: string, at: string): ActivityRow {
-    return { id, hireId, tool, target: 'f.ts', status: 'ok', at, live: false };
-}
+const tool = (name: string, target: string): LiveBlock => ({ kind: 'tool', id: 't', name, target, status: 'ok' });
+const text = (t: string): LiveBlock => ({ kind: 'text', text: t });
+const think = (): LiveBlock => ({ kind: 'thinking', text: 'because', seconds: 3 });
 
-test('buildActivityFeed merges the colleague state events and its tool actions in time order', () => {
+test('Activity flattens a turn\'s non-text blocks into actions, dropping the reply text', () => {
     const conv = [
-        msg('m1', CHANNEL_SELF_SENDER, 'hi', '2026-08-21T10:00:00'),
-        event('e1', 'h1', 'waiting_for_you', '2026-08-21T10:00:02')
+        msg('u1', CHANNEL_SELF_SENDER, 'do X', '2026-08-21T10:00:00'),
+        msg('m1', 'h1', 'done', '2026-08-21T10:00:05')
     ];
-    const activity = [act('a1', 'h1', 'Edit', '2026-08-21T10:00:01')];
-    const feed = buildActivityFeed(conv, activity, 'h1');
-    // The person's own message is not activity; the state event and the tool are, ordered by time.
-    assert.deepEqual(feed.map((r) => r.id), ['a1', 'e1']);
-    assert.equal(feed[0]!.kind, 'tool');
-    assert.equal(feed[1]!.kind, 'state');
+    const turnEvents = { m1: [think(), tool('Read', 'a.ts'), tool('Edit', 'a.ts'), text('done')] };
+    const actions = buildActivityActions(conv, turnEvents, 'h1');
+    assert.equal(actions.length, 3, 'the three non-text blocks are actions; the reply text is not');
+    assert.deepEqual(actions.map((a) => a.block.kind), ['thinking', 'tool', 'tool']);
+    assert.ok(actions.every((a) => a.at === '2026-08-21T10:00:05'), 'each action carries its turn time');
 });
 
-test('buildActivityFeed ignores another colleague\'s events', () => {
-    const conv = [event('e1', 'h2', 'crashed', '2026-08-21T10:00:00')];
-    assert.deepEqual(buildActivityFeed(conv, [], 'h1'), []);
-});
-
-test('buildTranscript interleaves the colleague\'s own text with its tool calls, in order', () => {
+test('Activity is chronological across turns', () => {
     const conv = [
-        msg('m1', CHANNEL_SELF_SENDER, 'do X', '2026-08-21T10:00:00'),
-        msg('m2', 'h1', 'on it', '2026-08-21T10:00:01'),
-        event('e1', 'h1', 'waiting_for_you', '2026-08-21T10:00:03')
+        msg('m1', 'h1', 'first', '2026-08-21T10:00:00'),
+        msg('m2', 'h1', 'second', '2026-08-21T10:05:00')
     ];
-    const activity = [act('a1', 'h1', 'Bash', '2026-08-21T10:00:02')];
-    const items = buildTranscript(conv, activity, 'h1');
-    // Only the colleague's text (m2) and its tool (a1); the person's message and the event are excluded.
-    assert.deepEqual(items.map((i) => i.id), ['m2', 'a1']);
-    assert.equal(items[0]!.kind, 'text');
-    assert.equal(items[1]!.kind, 'tool');
+    const turnEvents = { m2: [tool('Bash', 'ls')], m1: [tool('Read', 'a.ts')] };
+    const actions = buildActivityActions(conv, turnEvents, 'h1');
+    assert.deepEqual(actions.map((a) => (a.block as { name: string }).name), ['Read', 'Bash'], 'ordered by turn time');
 });
 
-test('buildTranscript is empty when the colleague has said and done nothing', () => {
-    const conv = [msg('m1', CHANNEL_SELF_SENDER, 'hello', '2026-08-21T10:00:00')];
-    assert.deepEqual(buildTranscript(conv, [], 'h1'), []);
+test('Activity has no messages: neither the person\'s prompts nor the colleague\'s prose', () => {
+    const conv = [
+        msg('u1', CHANNEL_SELF_SENDER, 'a prompt', '2026-08-21T10:00:00'),
+        msg('m1', 'h1', 'a prose reply', '2026-08-21T10:00:05')
+    ];
+    // The colleague's turn was pure text (no tools); nothing lands in Activity.
+    const actions = buildActivityActions(conv, { m1: [text('a prose reply')] }, 'h1');
+    assert.deepEqual(actions, []);
+});
+
+test('a turn with no persisted blocks (pre-feature) contributes no actions, no crash', () => {
+    const conv = [msg('m1', 'h1', 'old reply', '2026-08-21T10:00:00')];
+    assert.deepEqual(buildActivityActions(conv, {}, 'h1'), []);
+});
+
+test('another colleague\'s turns are not in this colleague\'s Activity', () => {
+    const conv = [msg('m1', 'h2', 'reply', '2026-08-21T10:00:00')];
+    assert.deepEqual(buildActivityActions(conv, { m1: [tool('Edit', 'x')] }, 'h1'), []);
+});
+
+test('a state event is not an action, so it does not appear in Activity', () => {
+    const conv = [event('e1', 'h1', 'waiting_for_you', '2026-08-21T10:00:00')];
+    assert.deepEqual(buildActivityActions(conv, {}, 'h1'), []);
 });

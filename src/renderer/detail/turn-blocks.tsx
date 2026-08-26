@@ -103,8 +103,8 @@ function TodoGlyph({ status }: { status: LiveTodo['status'] }): React.JSX.Elemen
 }
 
 /** A colleague's plan, from TodoWrite, as a checklist island: shadcn checkbox-style rows with a state
- * glyph per item. An empty list renders just the header, never a crash. */
-function TodoList({ todos, lang }: { todos: readonly LiveTodo[]; lang: Lang }): React.JSX.Element {
+ * glyph per item. An empty list renders just the header, never a crash. Reused by the Activity tab. */
+export function TodoList({ todos, lang }: { todos: readonly LiveTodo[]; lang: Lang }): React.JSX.Element {
     const doneCount = todos.filter((t) => t.status === 'done').length;
     return (
         <div className="bg-muted/40 border-border w-full max-w-[78%] overflow-hidden rounded-md border">
