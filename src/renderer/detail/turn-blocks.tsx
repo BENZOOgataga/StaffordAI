@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Brain, ChevronRight, ChevronDown, Square, SquareCheckBig, Loader2, ListChecks } from 'lucide-react';
+import { Brain, ChevronRight, ChevronDown, Square, SquareCheckBig, Loader2, ListChecks, CircleHelp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Markdown } from './markdown.tsx';
 import { CollapsibleLines } from './collapsible-lines.tsx';
 import { DiffViewer } from '../tasks/diff-viewer.tsx';
 import { FeedIconGlyph } from './feed-icon.tsx';
 import { feedIcon, toolPhrase, toolStatusLabel, type FeedRow } from '../activity-view.ts';
+import { groupTurn } from './group-turn.ts';
 import { type Lang } from '../channel-view.ts';
 import type { LiveBlock, LiveTodo } from '../../shared/ipc.ts';
 
@@ -133,17 +134,30 @@ export function TodoList({ todos, lang }: { todos: readonly LiveTodo[]; lang: La
     );
 }
 
+/** A colleague's clarifying question, from AskUserQuestion, as a visible step so the ask is not lost
+ * behind a generic tool one-liner. Not the permission-approval banner, which is a separate flow. */
+function AskIsland({ question, lang }: { question: string; lang: Lang }): React.JSX.Element {
+    return (
+        <div className="border-status-waiting/40 bg-status-waiting/5 w-full max-w-[78%] rounded-md border px-2.5 py-1.5 text-sm">
+            <div className="text-status-waiting flex items-center gap-2 text-xs font-medium">
+                <CircleHelp className="size-3.5 shrink-0" aria-hidden="true" />
+                <span>{lang === 'fr' ? 'A posé une question' : 'Asked a question'}</span>
+            </div>
+            <div className="text-foreground mt-1 whitespace-pre-wrap">{question}</div>
+        </div>
+    );
+}
+
 /**
- * The ordered blocks of one turn: thinking, tool calls, shell output, diffs, todos, and reply text,
- * each in its own island or bubble, interleaved as they happened. `live` puts a caret on the last
- * text run for a streaming turn; a persisted turn passes false. TodoWrite is collapsed to one
- * evolving checklist (latest list at the first TodoWrite's spot). Rendered the same live or persisted,
- * so a reopened turn looks like it did while it streamed.
+ * A flat run of blocks, rendered as islands and bubbles. Used both at the top level of a turn and,
+ * with `insideReasoning`, inside the reasoning container, where a thinking block renders as plain
+ * reasoning text rather than another collapsed island. `live` puts a caret on the last text run.
  */
-export function TurnBlocks({ blocks, lang, live }: {
+function BlockList({ blocks, lang, live, insideReasoning = false }: {
     blocks: readonly LiveBlock[];
     lang: Lang;
     live: boolean;
+    insideReasoning?: boolean;
 }): React.JSX.Element {
     let lastTextIndex = -1;
     blocks.forEach((b, i) => { if (b.kind === 'text' && b.text !== '') lastTextIndex = i; });
@@ -157,32 +171,110 @@ export function TurnBlocks({ blocks, lang, live }: {
     });
     return (
         <div className="flex w-full flex-col items-start gap-1.5">
-            {blocks.map((block, i) =>
-                block.kind === 'text' ? (
-                    block.text !== '' ? (
+            {blocks.map((block, i) => {
+                if (block.kind === 'text') {
+                    if (block.text === '') return null;
+                    return (
                         <div key={i} className="bg-card border-border max-w-[78%] rounded-lg border px-3 py-1.5 text-sm break-words">
                             <Markdown text={block.text} />
-                            {live && i === lastTextIndex ? (
+                            {live && !insideReasoning && i === lastTextIndex ? (
                                 <span className="bg-muted-foreground/60 ml-0.5 inline-block h-3.5 w-1.5 translate-y-0.5 animate-pulse rounded-[1px] align-middle" />
                             ) : null}
                         </div>
-                    ) : null
-                ) : block.kind === 'thinking' ? (
-                    block.text !== '' || block.seconds !== null
-                        ? <ThinkingIsland key={i} text={block.text} seconds={block.seconds} lang={lang} />
-                        : null
-                ) : block.kind === 'tool' && block.todos !== undefined ? (
-                    i === firstTodoIndex && currentTodos
+                    );
+                }
+                if (block.kind === 'thinking') {
+                    if (block.text === '' && block.seconds === null) return null;
+                    // Inside the reasoning container the thinking is the reasoning, shown as plain text.
+                    // At the top level (a lone thinking with no actions), it keeps its own island.
+                    if (insideReasoning) {
+                        return (
+                            <div key={i} className="text-muted-foreground w-full max-w-[78%] text-xs leading-relaxed whitespace-pre-wrap">
+                                {block.text !== ''
+                                    ? block.text
+                                    : <span className="italic">{lang === 'fr' ? '(raisonnement non affiché)' : '(reasoning not shown)'}</span>}
+                            </div>
+                        );
+                    }
+                    return <ThinkingIsland key={i} text={block.text} seconds={block.seconds} lang={lang} />;
+                }
+                if (block.name === 'AskUserQuestion' && block.question !== undefined) {
+                    return <AskIsland key={i} question={block.question} lang={lang} />;
+                }
+                if (block.todos !== undefined) {
+                    return i === firstTodoIndex && currentTodos
                         ? <TodoList key="todos" todos={currentTodos} lang={lang} />
-                        : null
-                ) : block.edit ? (
-                    <div key={i} className="w-full max-w-[78%]">
-                        <DiffViewer files={[block.edit]} defaultOpen />
-                    </div>
-                ) : (
-                    <ToolIsland key={i} block={block} lang={lang} />
-                )
-            )}
+                        : null;
+                }
+                if (block.edit) {
+                    return <div key={i} className="w-full max-w-[78%]"><DiffViewer files={[block.edit]} defaultOpen /></div>;
+                }
+                return <ToolIsland key={i} block={block} lang={lang} />;
+            })}
         </div>
     );
+}
+
+/**
+ * The collapsed reasoning container: it wraps the thinking and the actions the colleague took while
+ * reasoning, so even redacted reasoning has real content (the tool calls). Collapsed by default, a
+ * click reveals the reasoning text and the nested action islands. The final reply renders after it.
+ */
+function ReasoningBlock({ blocks, seconds, lang }: {
+    blocks: readonly LiveBlock[];
+    seconds: number | null;
+    lang: Lang;
+}): React.JSX.Element {
+    const [open, setOpen] = React.useState(false);
+    const label = seconds === null
+        ? (lang === 'fr' ? 'Réflexion...' : 'Reasoning...')
+        : (lang === 'fr' ? 'A travaillé ' + seconds + ' s' : 'Worked for ' + seconds + 's');
+    return (
+        <div className="bg-muted/40 border-border w-full max-w-[78%] overflow-hidden rounded-md border">
+            <button type="button" data-reasoning aria-expanded={open}
+                onClick={() => setOpen((v) => !v)}
+                className="hover:bg-accent/30 flex w-full items-center gap-2 px-2.5 py-1.5 text-left">
+                {open
+                    ? <ChevronDown className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+                    : <ChevronRight className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />}
+                <Brain className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+                <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">{label}</span>
+            </button>
+            {open ? (
+                <div className="border-border border-t px-2.5 py-2">
+                    <BlockList blocks={blocks} lang={lang} live={false} insideReasoning />
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
+/**
+ * The layout of one turn: a collapsed reasoning block wrapping the thinking and the actions taken
+ * while reasoning, then the final reply after it, with any blocks outside the reasoning span kept at
+ * the top level. The reasoning span is inferred from block order (see groupTurn). A turn with no
+ * thinking has no reasoning block and renders flat, as before. `live` puts the streaming caret on the
+ * final reply. Reuses the same block renderers live and persisted, so a reopened turn nests the same.
+ */
+export function TurnBlocks({ blocks, lang, live }: {
+    blocks: readonly LiveBlock[];
+    lang: Lang;
+    live: boolean;
+}): React.JSX.Element {
+    const items = groupTurn(blocks);
+    const parts: React.JSX.Element[] = [];
+    let buffer: LiveBlock[] = [];
+    let key = 0;
+    const flush = (): void => {
+        if (buffer.length === 0) return;
+        parts.push(<BlockList key={'b' + key++} blocks={buffer} lang={lang} live={live} />);
+        buffer = [];
+    };
+    for (const item of items) {
+        if (item.kind === 'block') { buffer.push(item.block); continue; }
+        flush();
+        parts.push(<ReasoningBlock key={'r' + key++} blocks={item.blocks} seconds={item.seconds} lang={lang} />);
+    }
+    flush();
+    return <div className="flex w-full flex-col items-start gap-1.5">{parts}</div>;
 }

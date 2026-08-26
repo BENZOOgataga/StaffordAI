@@ -71,6 +71,33 @@ test('a non-TodoWrite tool never carries todos', () => {
     assert.equal((b.snapshot()[0] as { todos?: unknown }).todos, undefined);
 });
 
+// --- AskUserQuestion (part of the interleaving work) ------------------------
+
+const askQuestion = (b: LiveTurnBuilder): string | undefined =>
+    (b.snapshot()[0] as { question?: string }).question;
+
+test('an AskUserQuestion parses its question, so the ask renders as a visible step', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'AskUserQuestion', input: {} } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ questions: [{ question: 'Plan first, or just build it?', header: 'Approach', options: [] }] }) } }));
+    b.apply(se({ type: 'content_block_stop', index: 0 }));
+    assert.equal(askQuestion(b), 'Plan first, or just build it?');
+});
+
+test('AskUserQuestion joins several questions and degrades to no question on a bad input', () => {
+    const b = new LiveTurnBuilder();
+    b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'AskUserQuestion', input: {} } }));
+    b.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ questions: [{ question: 'A?' }, { question: 'B?' }] }) } }));
+    b.apply(se({ type: 'content_block_stop', index: 0 }));
+    assert.equal(askQuestion(b), 'A?\nB?');
+
+    const bad = new LiveTurnBuilder();
+    bad.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'AskUserQuestion', input: {} } }));
+    bad.apply(se({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{not json' } }));
+    assert.doesNotThrow(() => bad.apply(se({ type: 'content_block_stop', index: 0 })));
+    assert.equal(askQuestion(bad), undefined, 'a malformed ask degrades to the tool one-liner');
+});
+
 test('text deltas across a block accumulate into one text block in order', () => {
     const b = new LiveTurnBuilder();
     b.apply(se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
