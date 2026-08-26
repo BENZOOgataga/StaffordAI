@@ -2,11 +2,10 @@ import * as React from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ConversationPanel } from './conversation-panel.tsx';
 import { ActivityPanel } from './activity-panel.tsx';
-import { TranscriptPanel } from './transcript-panel.tsx';
 import { ColleaguePermissionsPanel } from '../permissions/colleague-permissions-panel.tsx';
 import { TasksPanel } from '../tasks/tasks-panel.tsx';
 import { useDetailData } from './use-detail-data.ts';
-import { buildActivityFeed, buildTranscript } from './feed-model.ts';
+import { buildActivityActions } from './feed-model.ts';
 import { tabLabels, isTabId, DEFAULT_TAB, type TabId } from '../detail-tabs.ts';
 import type { Lang } from '../channel-view.ts';
 import { CHANNEL_SELF_SENDER, type RosterCard } from '../../shared/ipc.ts';
@@ -28,7 +27,7 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
     openTabNonce?: number;
 }): React.JSX.Element {
     const hireId = selected?.id ?? null;
-    const { convRows, actRows, streaming, turnEvents } = useDetailData(hireId);
+    const { convRows, streaming, turnEvents } = useDetailData(hireId);
     const [tab, setTab] = React.useState<TabId>(DEFAULT_TAB);
 
     // A fresh colleague opens on the front tab, the conversation, unless something asked for
@@ -59,7 +58,7 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
             {!selected || !hireId ? (
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-10 text-center">
                     <p className="text-lg font-medium">Select a colleague</p>
-                    <p className="text-muted-foreground text-sm">Pick a card to see their conversation, activity, and transcript.</p>
+                    <p className="text-muted-foreground text-sm">Pick a card to see their conversation, tasks, and activity.</p>
                 </div>
             ) : (
                 <>
@@ -74,7 +73,6 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
                                 <TabsTrigger value="conversation" data-tab="conversation">{tabLabels(lang).conversation}</TabsTrigger>
                                 <TabsTrigger value="tasks" data-tab="tasks">{tabLabels(lang).tasks}</TabsTrigger>
                                 <TabsTrigger value="activity" data-tab="activity">{tabLabels(lang).activity}</TabsTrigger>
-                                <TabsTrigger value="transcript" data-tab="transcript">{tabLabels(lang).transcript}</TabsTrigger>
                                 <TabsTrigger value="permissions" data-tab="permissions">{tabLabels(lang).permissions}</TabsTrigger>
                             </TabsList>
                         </div>
@@ -89,10 +87,7 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
                             <TasksPanel hireId={hireId} hireName={selected.name} lang={lang} />
                         </TabsContent>
                         <TabsContent value="activity" className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 py-3">
-                            <ActivityPanel feed={buildActivityFeed(convRows, actRows, hireId)} nameOf={nameOf} lang={lang} />
-                        </TabsContent>
-                        <TabsContent value="transcript" className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 py-3">
-                            <TranscriptPanel items={buildTranscript(convRows, actRows, hireId)} lang={lang} />
+                            <ActivityPanel actions={buildActivityActions(convRows, turnEvents, hireId)} lang={lang} />
                         </TabsContent>
                         {/* What this colleague may actually do, and its own exceptions. The
                             project's baseline rules live on the Permissions screen, since

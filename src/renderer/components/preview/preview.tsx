@@ -1,6 +1,6 @@
 import * as React from 'react';
 import {
-    Users, MessageSquare, Activity, FileText, Play, Check, X, Settings, Plus, Search
+    Users, MessageSquare, Activity, Play, Check, X, Settings, Plus, Search
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -54,7 +54,6 @@ export function Preview(): React.JSX.Element {
                     <SidebarItem active><Users /> Roster</SidebarItem>
                     <SidebarItem><MessageSquare /> Conversations</SidebarItem>
                     <SidebarItem><Activity /> Activity</SidebarItem>
-                    <SidebarItem><FileText /> Transcript</SidebarItem>
                     <div className="mt-auto" />
                     <SidebarItem><Settings /> Settings</SidebarItem>
                 </Sidebar>
@@ -128,11 +127,9 @@ export function Preview(): React.JSX.Element {
                                 <TabsList>
                                     <TabsTrigger value="conversation">Conversation</TabsTrigger>
                                     <TabsTrigger value="activity">Activity</TabsTrigger>
-                                    <TabsTrigger value="transcript">Transcript</TabsTrigger>
                                 </TabsList>
                                 <TabsContent value="conversation" className="text-muted-foreground text-sm">The message exchange.</TabsContent>
                                 <TabsContent value="activity" className="text-muted-foreground text-sm">What the colleague did.</TabsContent>
-                                <TabsContent value="transcript" className="text-muted-foreground text-sm">Replies and tool calls.</TabsContent>
                             </Tabs>
                         </Section>
 
