@@ -1057,6 +1057,15 @@ function buildDelivery(store: HireStore): void {
         bindSession: (hireId, projectId, sessionId) => store.bindSession(hireId, projectId, sessionId),
         setState: (hireId, state) => store.setState(hireId, state),
         onStateChanged: () => notifyRosterChanged(),
+        // A completion-path failure (a failed reply or tool write, a live-push throw). The turn still
+        // ends and the colleague still returns to idle; this makes the failure visible rather than
+        // letting it vanish, the exact silence that once left a colleague stuck on Working with its
+        // reply and actions lost and no trace of why.
+        onError: (hireId, stage, error) => {
+            const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+            process.stderr.write('[turn] ' + stage + ' failed for ' + hireId + ': ' + detail + '\n');
+            smoke('turn error: ' + stage + ' for ' + hireId);
+        },
         // Claude's reply, recorded into the colleague's own conversation thread: a
         // message whose sender is the hire and whose target is null, the shape the
         // Conversation renders as the colleague rather than as "You".
@@ -1780,6 +1789,17 @@ function readIfPresent(cwd: string, name: string): string {
         return '(not present)';
     }
 }
+
+// A last-resort net for anything that still escapes a local guard. The main process must never take a
+// swallowed throw silently again: a turn's completion path once rejected with no handler and no log,
+// leaving a colleague stuck with lost output and nothing to diagnose. These log and keep the process
+// alive rather than crash, since one bad turn should not take the whole app down.
+process.on('uncaughtException', (error) => {
+    process.stderr.write('[uncaught] ' + (error instanceof Error ? (error.stack ?? error.message) : String(error)) + '\n');
+});
+process.on('unhandledRejection', (reason) => {
+    process.stderr.write('[unhandled-rejection] ' + (reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)) + '\n');
+});
 
 app.whenReady().then(async () => {
     applySessionSecurity(session.defaultSession);
