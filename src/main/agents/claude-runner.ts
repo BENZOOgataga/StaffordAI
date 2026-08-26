@@ -72,6 +72,16 @@ export const PERMISSION_PROMPT_TOOL = 'stdio';
  * and `auto` actively defeats this flag: measured with both set, `can_use_tool` was never
  * sent because auto approves before anything is asked. Adding a mode later, for any reason,
  * silently disables the gate again.
+ *
+ * **`--setting-sources user` is an isolation flag.** It loads only the managed user settings
+ * (the ones under CLAUDE_CONFIG_DIR, carrying claudeMdExcludes and Stafford's own hooks) and
+ * ignores a project's `.claude/settings.json` and `.claude/settings.local.json`. Those are read
+ * relative to the working directory, not CLAUDE_CONFIG_DIR, so the #61 isolation did not cover
+ * them: a repo's `settings.local.json` `permissions.additionalDirectories` leaked Benzoo's other
+ * repos into a colleague's "additional working directories" (measured 2026-08-26: a colleague on
+ * one repo saw two unrelated sibling repos listed). Loading only the user source cuts that leak,
+ * and as a bonus a repo can no longer inject settings or hooks into a colleague session. The
+ * project's CLAUDE.md still loads (a separate mechanism), so project instructions are unaffected.
  */
 export const HEADLESS_ARGS = [
     '-p',
@@ -80,7 +90,8 @@ export const HEADLESS_ARGS = [
     '--verbose',
     '--include-partial-messages',
     '--replay-user-messages',
-    '--permission-prompt-tool', PERMISSION_PROMPT_TOOL
+    '--permission-prompt-tool', PERMISSION_PROMPT_TOOL,
+    '--setting-sources', 'user'
 ] as const;
 
 /** Overall per-turn cap. No turn waits longer than this for its `result`. */

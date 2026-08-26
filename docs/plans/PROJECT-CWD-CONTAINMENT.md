@@ -149,6 +149,26 @@ child with `HOME`/`USERPROFILE` redirected so it cannot read the real `~/.claude
 need a short probe first to pin the exact field this version reads, since it is undocumented. This is
 a follow-up, not part of the containment guard below.
 
+### Resolution (probed and fixed on Claude Code 2.1.246)
+
+The probe corrected the inference above. The extra directories do NOT come from `~/.claude.json`.
+Running a colleague with the exact managed-config isolation and a clean environment, the source is
+Claude Code's settings files: `permissions.additionalDirectories` in a project's
+`.claude/settings.json` and `.claude/settings.local.json`. These are read relative to the working
+directory, not `CLAUDE_CONFIG_DIR`, so the #61 isolation never covered them. Reproduced: a colleague
+on one repo whose `.claude/settings.local.json` listed two unrelated sibling repos reported exactly
+those two as additional working directories; `~/.claude.json` `githubRepoPaths` and project-history
+did not feed the list at all (a colleague in an unrelated cwd reported none).
+
+The fix is `--setting-sources user` in `HEADLESS_ARGS`: load only the managed user settings (the ones
+under `CLAUDE_CONFIG_DIR`, which already carry `claudeMdExcludes` and Stafford's hooks) and ignore the
+project and local sources. Empirically, before: two extra dirs; after: none, only the project folder.
+The colleague still reads its project files and still honours the project's `CLAUDE.md` (a separate
+mechanism, unaffected). As a bonus it hardens #61: a repo can no longer inject settings or hooks into
+a colleague session through a checked-in or local `.claude/settings*.json`. Field-blanking the managed
+`.claude.json` was not needed, since that file was never the source; the `HOME`/`USERPROFILE` redirect
+was not pursued, since the setting-source scope is the supported, surgical control.
+
 ## Proposed fix
 
 The principle is fail closed against Stafford's own directories, at both ends, so neither a new bad

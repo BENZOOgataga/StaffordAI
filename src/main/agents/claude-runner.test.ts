@@ -501,6 +501,19 @@ test('no --permission-mode is passed, because a mode defeats the prompt tool', (
         'The default mode is the one that asks, so no mode is the correct answer.');
 });
 
+test('only the managed user settings are loaded, so a project cannot leak its extra directories in', () => {
+    const i = HEADLESS_ARGS.indexOf('--setting-sources');
+    assert.ok(i >= 0,
+        'without --setting-sources a colleague reads the repo\'s .claude/settings.local.json, whose ' +
+        'permissions.additionalDirectories leaked Benzoo\'s other repos into the session (measured ' +
+        '2026-08-26). The project + local settings are read relative to cwd, outside CLAUDE_CONFIG_DIR, ' +
+        'so the #61 isolation did not cover them.');
+    assert.equal(HEADLESS_ARGS[i + 1], 'user',
+        'user loads only the managed settings under CLAUDE_CONFIG_DIR (claudeMdExcludes, Stafford\'s ' +
+        'hooks) and drops the project and local sources, cutting the additional-directories leak and ' +
+        'blocking a repo from injecting settings or hooks into a colleague.');
+});
+
 test('the real spawn carries the permission flag, not just the constant', async () => {
     const fake = makeFakeSpawn();
     const runner = new ClaudeRunner(baseDeps(fake));
