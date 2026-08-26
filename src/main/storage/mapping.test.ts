@@ -30,7 +30,7 @@ const POLICY: ProjectPolicy = {
 const HIRE: HiredAgent = {
     id: 'h1', name: 'Marion', type: 'lead-developer', title: 'Lead developer', seniority: 2,
     ownerId: 'owner-1', sessions: { 'p1': 's1', 'p2': 's2' }, activeProjectId: 'p1',
-    state: 'working', hiredAt: '2026-08-10T00:00:00Z', firedAt: null
+    state: 'working', hiredAt: '2026-08-10T00:00:00Z', activeSince: '2026-08-10T00:00:00Z', firedAt: null
 };
 
 const PROJECT: Project = {

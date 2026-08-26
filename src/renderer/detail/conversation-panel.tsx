@@ -104,12 +104,18 @@ function WorkingIndicator({ sender, lang }: { sender: string; lang: Lang }): Rea
  * The composer keeps the existing behaviour exactly: Enter sends, Shift-Enter adds a
  * line, and the send goes through window.stafford.channel.reply unchanged.
  */
-export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming, turnEvents }: {
+export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming, turnEvents, parked = false }: {
     hireId: string;
     rows: readonly ChannelMessageRow[];
     nameOf: (senderId: string) => string;
     self: string;
     lang: Lang;
+    /**
+     * The colleague is bound to no project. It cannot resolve a working directory, so a message would
+     * be a silent no-op. The composer is disabled with a clear "rebind to use" note instead, so a send
+     * never vanishes without a reason.
+     */
+    parked?: boolean;
     /**
      * The colleague's turn as it streams, its reply text and tool-call islands in order, or
      * null/empty when nothing is streaming. It renders provisionally below the thread and is dropped
@@ -194,13 +200,22 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming,
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!parked) void send(); }
                     }}
                     rows={2}
-                    placeholder="Type a message. Enter sends, Shift-Enter adds a line."
-                    className="max-h-40 resize-none"
+                    disabled={parked}
+                    placeholder={parked
+                        ? (lang === 'fr' ? 'Sans projet. Réaffectez ce collègue dans Projets pour lui écrire.' : 'Parked. Rebind this colleague in Projects to message it.')
+                        : 'Type a message. Enter sends, Shift-Enter adds a line.'}
+                    className="max-h-40 resize-none disabled:opacity-60"
                 />
-                {error ? (
+                {parked ? (
+                    <p className="text-status-waiting text-xs">
+                        {lang === 'fr'
+                            ? 'Ce collègue est sans projet. Réaffectez-le dans l\'onglet Projets pour le remettre au travail.'
+                            : 'This colleague is parked. Rebind it in the Projects tab to put it back to work.'}
+                    </p>
+                ) : error ? (
                     <p role="alert" className="text-status-error text-xs">{error}</p>
                 ) : (
                     <p className="text-muted-foreground text-xs">Enter sends. Shift-Enter adds a line.</p>

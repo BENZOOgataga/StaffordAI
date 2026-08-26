@@ -39,9 +39,9 @@ test('buildRosterGroups maps each row to a dot status and a plain state line wit
     assert.equal(row.stateText, 'Working on Stafford');
 });
 
-test('buildRosterGroups omits the project suffix when a colleague has no project', () => {
+test('buildRosterGroups marks a colleague on no project as parked, so it does not read as a bare state', () => {
     const groups = buildRosterGroups([card('a', 'idle', { project: null })], 'en', NOW, new Set(), null);
-    assert.equal(groups[0]!.rows[0]!.stateText, 'Idle');
+    assert.equal(groups[0]!.rows[0]!.stateText, 'Idle · parked');
 });
 
 test('buildRosterGroups carries the unseen badge and the selection through to the row', () => {

@@ -16,6 +16,7 @@ import {
     INVOKE_CHANNELS, type InvokeChannel, type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
     type ProjectCreated, type HireCreated, type ActivityRow, type ActivityByHireReply,
+    type ProjectsManageReply, type ProjectUpdate, type ProjectDelete, type ColleagueRebind, type ProjectWriteReply,
     type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
@@ -23,7 +24,7 @@ import {
     type TurnEventsReply, type PendingQuestions, type AskAnswer
 } from '../../shared/ipc.ts';
 import {
-    isChannelPage, isChannelSince, isChannelConversation, isChannelTurnEvents, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
+    isChannelPage, isChannelSince, isChannelConversation, isChannelTurnEvents, isChannelReply, isProjectCreate, isProjectUpdate, isProjectDelete, isColleagueRebind, isHireCreate, isActivityByHire, isCheckpointAck,
     isApprovalAnswer, parseQuestionAnswer,
     isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove,
     isTasksByHire, isTaskAssign, isTaskStart, isTaskReview, isTaskDiff, isTaskBoard
@@ -47,6 +48,14 @@ export interface HandlerDeps {
      * invoke. Ids and names cross back, never a path.
      */
     readonly createProject: (payload: { name: string; repoPaths: readonly string[] }) => ProjectCreated;
+    /** The Projects management tab's whole state: every project with its colleagues, plus parked ones. */
+    readonly projectsManageView: () => ProjectsManageReply;
+    /** Edits a project's name and folder, validated as a create is. */
+    readonly updateProject: (payload: ProjectUpdate) => ProjectWriteReply;
+    /** Deletes a project, parking its colleagues. A busy colleague is a soft refusal, not a strand. */
+    readonly deleteProject: (payload: ProjectDelete) => ProjectWriteReply;
+    /** Rebinds a colleague to a project as a fresh session. */
+    readonly rebindColleague: (payload: ColleagueRebind) => ProjectWriteReply;
     /** Opens a native folder picker, returning the chosen directory or null if cancelled. */
     readonly pickFolder: () => Promise<string | null>;
     /**
@@ -150,6 +159,21 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         // create logic refuses any that is not a real directory, so a bad path
         // fails here rather than as a dead terminal after a first message. Only an
         // id and a name cross back.
+        // The Projects management tab. Read the whole tab, edit a project, delete it (parking its
+        // colleagues), rebind a parked colleague. Each write validates its shape, then delegates.
+        'projects:manage-view': (): ProjectsManageReply => deps.projectsManageView(),
+        'project:update': (payload: unknown): ProjectWriteReply => {
+            if (!isProjectUpdate(payload)) throw new Error('project:update requires {id,name,repoPaths}');
+            return deps.updateProject(payload);
+        },
+        'project:delete': (payload: unknown): ProjectWriteReply => {
+            if (!isProjectDelete(payload)) throw new Error('project:delete requires {id}');
+            return deps.deleteProject(payload);
+        },
+        'colleague:rebind': (payload: unknown): ProjectWriteReply => {
+            if (!isColleagueRebind(payload)) throw new Error('colleague:rebind requires {hireId,projectId}');
+            return deps.rebindColleague(payload);
+        },
         'project:create': (payload: unknown): ProjectCreated => {
             if (!isProjectCreate(payload)) {
                 throw new Error('project:create requires {name,repoPaths}');

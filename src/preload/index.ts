@@ -16,6 +16,7 @@ import {
     type InvokeChannel, type EventChannel, type WindowInvokeChannel, type WindowEventChannel,
     type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
+    type ProjectsManageReply, type ProjectWriteReply,
     type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals,
     type PendingQuestions, type AskAnswer,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
@@ -83,7 +84,18 @@ const api = Object.freeze({
         create: (name: string, repoPaths: readonly string[]): Promise<ProjectCreated> =>
             invoke('project:create', { name, repoPaths }) as Promise<ProjectCreated>,
         // Opens the native folder picker for the create form. Returns the chosen directory or null.
-        pickFolder: (): Promise<string | null> => invoke('dialog:pick-folder') as Promise<string | null>
+        pickFolder: (): Promise<string | null> => invoke('dialog:pick-folder') as Promise<string | null>,
+        // The Projects management tab: read every project with its colleagues (folders included, for
+        // Benzoo's own UI), edit a project's name and folder, delete it (parking its colleagues), and
+        // rebind a parked colleague to a project as a fresh session. onChanged re-reads on a change.
+        manageView: (): Promise<ProjectsManageReply> => invoke('projects:manage-view') as Promise<ProjectsManageReply>,
+        update: (id: string, name: string, repoPaths: readonly string[]): Promise<ProjectWriteReply> =>
+            invoke('project:update', { id, name, repoPaths }) as Promise<ProjectWriteReply>,
+        remove: (id: string): Promise<ProjectWriteReply> =>
+            invoke('project:delete', { id }) as Promise<ProjectWriteReply>,
+        rebind: (hireId: string, projectId: string): Promise<ProjectWriteReply> =>
+            invoke('colleague:rebind', { hireId, projectId }) as Promise<ProjectWriteReply>,
+        onChanged: (listener: () => void): (() => void) => on('projects:changed', () => listener())
     }),
 
     // Hiring a colleague into a project. Returns the created hire's id and safe

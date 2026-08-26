@@ -35,6 +35,10 @@ import { openDatabase, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
+import {
+    updateProject as updateProjectService, deleteProject as deleteProjectService, rebindHire as rebindHireService,
+    ProjectBusyError, type ManageDeps
+} from './create/project-manage.ts';
 import { drawName, NAME_POOL } from './create/name-pool.ts';
 import { seedManagedConfig, type ManagedFs } from './agents/managed-config.ts';
 import { hitsSelfPath } from './create/containment.ts';
@@ -69,6 +73,9 @@ import type {
 } from '../shared/ipc.ts';
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 import type { LiveBlock, TurnEventsReply } from '../shared/ipc.ts';
+import type {
+    ProjectsManageReply, ProjectManageView, ColleagueRef, ProjectUpdate, ColleagueRebind, ProjectWriteReply
+} from '../shared/ipc.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const STARTED_AT = new Date().toISOString();
@@ -246,6 +253,22 @@ function createDeps(repositories: Repositories): CreateDeps {
         now: () => new Date().toISOString(),
         ownerId: 'owner',
         labelFor: (p) => path.basename(p) || p
+    };
+}
+
+/** The deps for the Projects management flow (edit, delete, rebind), over the same repositories. */
+function manageDeps(repositories: Repositories): ManageDeps {
+    return {
+        dirExists,
+        isSelfPath: hitsSelf,
+        getProject: (id) => repositories.projects.get(id),
+        updateProject: (project) => repositories.projects.update(project),
+        deleteProject: (id) => repositories.projects.deleteById(id),
+        allHires: () => repositories.hires.all(),
+        getHire: (id) => repositories.hires.get(id),
+        updateHire: (hire) => repositories.hires.update(hire),
+        labelFor: (p) => path.basename(p) || p,
+        now: () => new Date().toISOString()
     };
 }
 
@@ -497,6 +520,68 @@ function notifyPermissionsChanged(): void {
     if (window && !window.isDestroyed()) window.webContents.send('permissions:changed');
 }
 
+/** Tells any open Projects tab that a project or a binding changed, so it re-reads. */
+function notifyProjectsChanged(): void {
+    if (window && !window.isDestroyed()) window.webContents.send('projects:changed');
+}
+
+/**
+ * The Projects management tab's whole state in one read: every project with its full values, whether
+ * its folder still exists, and the colleagues bound to it; plus the parked colleagues (bound to no
+ * project). A parked colleague is marked so the UI can show it cannot work until rebound.
+ */
+function projectsManageView(repositories: Repositories): ProjectsManageReply {
+    const hires = repositories.hires.all().filter((h) => h.firedAt === null);
+    const refOf = (h: (typeof hires)[number]): ColleagueRef => ({
+        id: h.id, name: h.name, title: h.title, state: h.state, parked: h.activeProjectId === null
+    });
+    const projects = repositories.projects.all().map((p): ProjectManageView => {
+        const cwd = p.repos[0]?.path ?? '';
+        return {
+            id: p.id, name: p.name,
+            repos: p.repos.map((r) => ({ path: r.path, label: r.label })),
+            folderValid: cwd !== '' && dirExists(cwd) && !hitsSelf(cwd),
+            colleagues: hires.filter((h) => h.activeProjectId === p.id).map(refOf)
+        };
+    });
+    const parked = hires.filter((h) => h.activeProjectId === null).map(refOf);
+    return { projects, parked };
+}
+
+/** Edits a project's name and folder, then signals the tab. Validation throws become the invoke reject. */
+function updateProjectManaged(repositories: Repositories, input: ProjectUpdate): ProjectWriteReply {
+    updateProjectService(manageDeps(repositories), input);
+    notifyProjectsChanged();
+    permissionGate?.invalidate();
+    return { ok: true, warning: null };
+}
+
+/**
+ * Deletes a project, parking its colleagues. A colleague still working is a soft refusal (ok:false with
+ * a warning), never a strand: the person waits for it to go idle, then deletes. Any other validation
+ * error rejects the invoke.
+ */
+function deleteProjectManaged(repositories: Repositories, id: string): ProjectWriteReply {
+    try {
+        deleteProjectService(manageDeps(repositories), id);
+    } catch (error) {
+        if (error instanceof ProjectBusyError) return { ok: false, warning: error.message };
+        throw error;
+    }
+    notifyProjectsChanged();
+    notifyRosterChanged();
+    permissionGate?.invalidate();
+    return { ok: true, warning: null };
+}
+
+/** Rebinds a colleague to a project as a fresh session, then signals the tab and the roster. */
+function rebindColleagueManaged(repositories: Repositories, input: ColleagueRebind): ProjectWriteReply {
+    rebindHireService(manageDeps(repositories), input);
+    notifyProjectsChanged();
+    notifyRosterChanged();
+    return { ok: true, warning: null };
+}
+
 
 // --- permission configuration (phase 3) ------------------------------------
 //
@@ -686,7 +771,10 @@ function persistTurnEvents(messageId: string, hireId: string, blocks: readonly L
 function turnEventsFor(hireId: string): TurnEventsReply {
     const byMessage: Record<string, readonly LiveBlock[]> = {};
     if (!repositories) return { byMessage };
-    for (const row of repositories.turnEvents.byHire(hireId, 500)) {
+    // Bounded to the colleague's current binding, so a rebound colleague's reopen shows only the new
+    // project's turns, not the project it was unbound from.
+    const since = repositories.hires.get(hireId)?.activeSince ?? null;
+    for (const row of repositories.turnEvents.byHire(hireId, 500, since)) {
         try {
             const blocks = JSON.parse(row.blocks) as unknown;
             if (Array.isArray(blocks)) byMessage[row.messageId] = blocks as readonly LiveBlock[];
@@ -1254,7 +1342,7 @@ async function runDeliverySmoke(): Promise<void> {
     for (const [id, name] of [[A, 'Ada'], [B, 'Boris']] as const) {
         repositories.hires.insert({
             id, name, type: 'lead-developer', title: 'Lead developer', seniority: 2, ownerId: 'owner',
-            sessions: {}, activeProjectId: projectId, state: 'idle', hiredAt: started, firedAt: null
+            sessions: {}, activeProjectId: projectId, state: 'idle', hiredAt: started, activeSince: started, firedAt: null
         });
     }
 
@@ -1331,7 +1419,7 @@ async function runTaskSmoke(): Promise<void> {
     repositories.hires.insert({
         id: hireId, name: 'Ada', type: 'lead-developer', title: 'Lead developer', seniority: 2,
         ownerId: 'owner', sessions: {}, activeProjectId: projectId, state: 'idle',
-        hiredAt: started, firedAt: null
+        hiredAt: started, activeSince: started, firedAt: null
     });
 
     const show = (label: string, id: string): void => {
@@ -1495,7 +1583,7 @@ async function runTaskUiSmoke(): Promise<void> {
     repositories.hires.insert({
         id: hireId, name: 'Ada', type: 'lead-developer', title: 'Lead developer', seniority: 2,
         ownerId: 'owner', sessions: {}, activeProjectId: projectId, state: 'idle',
-        hiredAt: started, firedAt: null
+        hiredAt: started, activeSince: started, firedAt: null
     });
 
     openWindow();
@@ -1651,7 +1739,7 @@ async function runTaskUiSmoke(): Promise<void> {
     repositories.hires.insert({
         id: otherId, name: 'Boris', type: 'lead-developer', title: 'Lead developer', seniority: 2,
         ownerId: 'owner', sessions: {}, activeProjectId: projectId, state: 'idle',
-        hiredAt: started, firedAt: null
+        hiredAt: started, activeSince: started, firedAt: null
     });
     // And one of Ada's left unreviewed, so the waiting column has to hold two people's work.
     // Every earlier scenario closed its task, which would otherwise make this prove nothing.
@@ -1892,7 +1980,24 @@ app.whenReady().then(async () => {
         // handler turns into a rejected invoke.
         createProject: (payload) => {
             if (!repositories) throw new Error('project:create: the store is not open');
-            return createProjectService(createDeps(repositories), payload);
+            const created = createProjectService(createDeps(repositories), payload);
+            notifyProjectsChanged();
+            return created;
+        },
+        // The Projects management tab: read the whole tab, edit, delete, and rebind. Renderer-to-main
+        // only; a colleague has no preload and no channel, the same boundary as permissions.
+        projectsManageView: () => (repositories ? projectsManageView(repositories) : { projects: [], parked: [] }),
+        updateProject: (payload) => {
+            if (!repositories) throw new Error('project:update: the store is not open');
+            return updateProjectManaged(repositories, payload);
+        },
+        deleteProject: (payload) => {
+            if (!repositories) throw new Error('project:delete: the store is not open');
+            return deleteProjectManaged(repositories, payload.id);
+        },
+        rebindColleague: (payload) => {
+            if (!repositories) throw new Error('colleague:rebind: the store is not open');
+            return rebindColleagueManaged(repositories, payload);
         },
         pickFolder: async () => {
             // Modal to the main window so the pick belongs to it. openDirectory only, single
@@ -1922,7 +2027,7 @@ app.whenReady().then(async () => {
         // One colleague's own conversation, keyed by hire id, so the Conversation tab
         // reads only its thread rather than the whole timeline filtered client-side.
         channelConversation: (hireId, limit) => (repositories
-            ? repositories.channel.conversationFor(hireId, limit)
+            ? repositories.channel.conversationFor(hireId, limit, repositories.hires.get(hireId)?.activeSince ?? null)
             : []),
         // The persisted rich turns for a colleague, so a reopened conversation re-renders past
         // thinking, tools, diffs, and todos from storage, keyed by message id.
@@ -1931,7 +2036,7 @@ app.whenReady().then(async () => {
         // stored rows are the durable accomplishments; live is false because a reload
         // is the reopen case, where only the persisted history remains.
         activityByHire: (hireId, limit) => (repositories
-            ? repositories.activity.byHire(hireId, limit).map((r): ActivityRow => ({
+            ? repositories.activity.byHire(hireId, limit, repositories.hires.get(hireId)?.activeSince ?? null).map((r): ActivityRow => ({
                 id: r.id, hireId: r.hireId, tool: r.tool, target: r.target, status: r.status, at: r.at, live: false
             }))
             : []),
@@ -2071,7 +2176,7 @@ app.whenReady().then(async () => {
         repositories.hires.insert({
             id: 'smoke-hire-' + STARTED_AT, name: 'Marion', type: 'lead-developer',
             title: 'Lead developer', seniority: 2, ownerId: 'owner', sessions: {},
-            activeProjectId: project.id, state: 'waiting_for_you', hiredAt: STARTED_AT, firedAt: null
+            activeProjectId: project.id, state: 'waiting_for_you', hiredAt: STARTED_AT, activeSince: STARTED_AT, firedAt: null
         });
         smoke('roster snapshot cards = ' + rosterSnapshot().cards.length);
     }

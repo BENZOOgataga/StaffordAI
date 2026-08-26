@@ -33,7 +33,7 @@ function hire(id: string, at: string): HiredAgent {
     return {
         id, name: 'Marion', type: 'lead-developer', title: 'Lead developer', seniority: 2,
         ownerId: 'owner-1', sessions: { p1: 's1' }, activeProjectId: 'p1', state: 'working',
-        hiredAt: at, firedAt: null
+        hiredAt: at, activeSince: at, firedAt: null
     };
 }
 

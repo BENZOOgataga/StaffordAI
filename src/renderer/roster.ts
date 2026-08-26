@@ -37,11 +37,13 @@ function main(): void {
     const channelView = document.getElementById('channel-react') as HTMLElement;
     const permissionsView = document.getElementById('permissions-react') as HTMLElement;
     const boardView = document.getElementById('board-react') as HTMLElement;
+    const projectsView = document.getElementById('projects-react') as HTMLElement;
     let dashboardMounted = false;
     let rosterMounted = false;
     let channelMounted = false;
     let permissionsMounted = false;
     let boardMounted = false;
+    let projectsMounted = false;
 
     const showView = (view: string): void => {
         const isHome = view === 'home';
@@ -49,11 +51,13 @@ function main(): void {
         const isChannel = view === 'channel';
         const isPermissions = view === 'permissions';
         const isBoard = view === 'board';
+        const isProjects = view === 'projects';
         homeView.hidden = !isHome;
         rosterView.hidden = !isRoster;
         channelView.hidden = !isChannel;
         permissionsView.hidden = !isPermissions;
         boardView.hidden = !isBoard;
+        projectsView.hidden = !isProjects;
 
         if (isHome && !dashboardMounted) {
             dashboardMounted = true;
@@ -105,6 +109,16 @@ function main(): void {
                     console.error('[permissions] mount failed:', error);
                 });
         }
+        if (isProjects && !projectsMounted) {
+            projectsMounted = true;
+            import('./projects/mount.tsx')
+                .then((m) => m.mountProjects(projectsView, lang, showView))
+                .catch((error: unknown) => {
+                    projectsMounted = false;
+                    projectsView.textContent = 'Projects could not load.';
+                    console.error('[projects] mount failed:', error);
+                });
+        }
     };
 
     // The create forms stay vanilla sheets, opened from the React roster. A successful
@@ -129,7 +143,7 @@ function main(): void {
     // Main can ask the shell to switch views: the tray routes a click to the board when
     // something is waiting, so tapping the tray while the badge is up lands on the waiting
     // work. Only known views are honored, so a stray payload cannot break navigation.
-    const KNOWN_VIEWS = new Set(['home', 'roster', 'board', 'channel', 'permissions']);
+    const KNOWN_VIEWS = new Set(['home', 'roster', 'board', 'channel', 'permissions', 'projects']);
     window.stafford.shell.onNavigate((view) => { if (KNOWN_VIEWS.has(view)) showView(view); });
 
     // The hidden dev trigger panel, in a dev build only. Code-split so its chunk never loads in

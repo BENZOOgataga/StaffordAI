@@ -12,7 +12,7 @@ function hire(over: Partial<HiredAgent> = {}): HiredAgent {
     return {
         id: 'h1', name: 'Marion', type: 'lead-developer', title: 'Lead developer', seniority: 2,
         ownerId: 'owner', sessions: {}, activeProjectId: 'p1', state: 'working',
-        hiredAt: '2026-08-10T00:00:00Z', firedAt: null, ...over
+        hiredAt: '2026-08-10T00:00:00Z', activeSince: '2026-08-10T00:00:00Z', firedAt: null, ...over
     };
 }
 
