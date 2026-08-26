@@ -83,6 +83,14 @@ export interface RunnerManagerDeps {
     readonly setState: (hireId: string, state: AgentState) => void;
     /** Signals the roster changed, so the renderer re-reads. */
     readonly onStateChanged: () => void;
+    /**
+     * Reports a non-fatal error from a turn's completion path (a failed reply or tool write, a
+     * live-push throw). The turn still ends and the colleague still returns to idle; this surfaces the
+     * failure so it is never swallowed. When absent, the manager writes it to stderr. It exists because
+     * a throw on this path used to skip the idle reset and be swallowed silently, leaving a colleague
+     * stuck on Working with its reply and actions lost and no trace of why.
+     */
+    readonly onError?: (hireId: string, stage: string, error: unknown) => void;
     /** The git checkpoint, for the drain. Same executor the registry uses. */
     readonly checkpointRunner?: (cwd: string, hireId: string) => Promise<CheckpointResult>;
     /** The raw wire tap, env-gated by the caller. Both directions, verbatim. */
@@ -144,9 +152,13 @@ export class ClaudeRunnerManager {
      */
     submit(hireId: string, text: string): Promise<void> {
         const live = this.#liveFor(hireId);
-        // Chain onto the tail so turns run one at a time, in order. A failed turn does
-        // not break the chain: the catch keeps the queue flowing for the next message.
-        const next = live.tail.then(async () => { await this.#runTurn(hireId, text); }).catch(() => {});
+        // Chain onto the tail so turns run one at a time, in order. A failed turn does not break the
+        // chain: the catch keeps the queue flowing for the next message. #runTurn now returns the
+        // colleague to idle in its own finally, so a rejection here is a genuine unexpected failure of
+        // the turn itself, reported rather than swallowed silently as it used to be.
+        const next = live.tail.then(async () => { await this.#runTurn(hireId, text); }).catch((error) => {
+            this.#report(hireId, 'turn', error);
+        });
         live.tail = next;
         return next;
     }
@@ -291,8 +303,15 @@ export class ClaudeRunnerManager {
                     // The builder folds text and tool events into ordered blocks; a thinking block
                     // and every unhandled event are ignored, never fatal, per the stream's defensive
                     // posture. A push carries the whole turn so far, so the renderer always has a
-                    // correct snapshot even if a push is dropped.
-                    if (liveBuilder.apply(event)) emitLive(hireId, liveBuilder.snapshot(), false);
+                    // correct snapshot even if a push is dropped. Guarded: this runs inside the runner's
+                    // stdout handler, so a throw here (in apply, snapshot, or the push) would break the
+                    // stream and the turn would never see its result. Reported and swallowed instead, so
+                    // a bad push costs one frame, never the whole turn.
+                    try {
+                        if (liveBuilder.apply(event)) emitLive(hireId, liveBuilder.snapshot(), false);
+                    } catch (error) {
+                        this.#report(hireId, 'live-push', error);
+                    }
                 } }
                 : {})
         });
@@ -309,42 +328,73 @@ export class ClaudeRunnerManager {
         const result = await runner.runTurn({ text, resumeSessionId });
 
         live.runner = null;
-        // Close the live stream for this turn. `done` lets the tab drop a working indicator for a
-        // turn that produced no output at all; a turn that did produce output is replaced by its
-        // persisted message instead, so this never blanks real content.
-        if (emitLive) emitLive(hireId, [], true);
 
-        // Persist the session id so the next turn resumes, and so it survives a restart. A
-        // task turn skips this: its session belongs to the task row, not to the chat thread.
-        if (result.sessionId && (over?.bindSession ?? true)) {
-            this.#deps.bindSession(hireId, target.projectId, result.sessionId);
-        }
+        // Everything from here to the idle reset must be exception-safe. Each write is isolated and
+        // the idle reset is in a finally, so a single failing write (a transient store error, a bad
+        // snapshot) can never skip the others or leave the colleague stuck on Working with a swallowed
+        // error, the regression this structure exists to prevent. The turn is over; recording its
+        // result is best-effort, but returning the card to a usable state is not.
+        try {
+            // Close the live stream for this turn. `done` lets the tab drop a working indicator for a
+            // turn that produced no output at all; a turn that did produce output is replaced by its
+            // persisted message instead, so this never blanks real content.
+            if (emitLive) this.#safely(hireId, 'live-close', () => emitLive(hireId, [], true));
 
-        // Record Claude's reply into the conversation, both sides now visible. Only a
-        // clean turn with text is recorded; a timeout or a dead process records nothing.
-        // A chat turn also carries its rich block snapshot, so the turn re-renders its
-        // thinking, tool calls, diffs, and todos when the colleague is reopened. A task turn
-        // has no live builder, so it passes no blocks and persists no rich events, unchanged.
-        if ((result.status === 'completed' || result.status === 'interrupted') && result.assistantText.trim() !== '') {
-            const blocks = liveBuilder ? liveBuilder.snapshot() : undefined;
-            this.#deps.recordReply(hireId, target.projectId, result.assistantText, blocks);
-        }
-
-        // Record the tools the colleague used this turn, for the Activity feed and the
-        // Transcript view. The runner sees the tool_use blocks but not each tool's own
-        // result, so status is the turn's: ok on a clean turn, incomplete otherwise.
-        if (this.#deps.recordToolUse && result.toolUses.length > 0) {
-            const status = result.status === 'completed' ? 'ok' : 'incomplete';
-            for (const use of result.toolUses) {
-                this.#deps.recordToolUse(hireId, result.sessionId, use.name, toolTarget(use.input), status);
+            // Persist the session id so the next turn resumes, and so it survives a restart. A
+            // task turn skips this: its session belongs to the task row, not to the chat thread.
+            const sessionId = result.sessionId;
+            if (sessionId && (over?.bindSession ?? true)) {
+                this.#safely(hireId, 'bind-session', () => this.#deps.bindSession(hireId, target.projectId, sessionId));
             }
-        }
 
-        // Idle when the turn ends, whatever the outcome, so the card accepts input
-        // again rather than sticking on working after an error.
-        this.#setState(hireId, AGENT_STATES.IDLE);
+            // Record Claude's reply into the conversation, both sides now visible. Only a clean turn
+            // with text is recorded; a timeout or a dead process records nothing. A chat turn also
+            // carries its rich block snapshot, so the turn re-renders its thinking, tool calls, diffs,
+            // and todos when the colleague is reopened. A task turn has no live builder, so it passes
+            // no blocks and persists no rich events, unchanged.
+            if ((result.status === 'completed' || result.status === 'interrupted') && result.assistantText.trim() !== '') {
+                let blocks: readonly LiveBlock[] | undefined;
+                this.#safely(hireId, 'snapshot', () => { blocks = liveBuilder ? liveBuilder.snapshot() : undefined; });
+                this.#safely(hireId, 'record-reply', () => this.#deps.recordReply(hireId, target.projectId, result.assistantText, blocks));
+            }
+
+            // Record the tools the colleague used this turn, for the Activity feed. The runner sees the
+            // tool_use blocks but not each tool's own result, so status is the turn's: ok on a clean
+            // turn, incomplete otherwise. Each row is isolated, so one failing insert loses only its row.
+            if (this.#deps.recordToolUse && result.toolUses.length > 0) {
+                const status = result.status === 'completed' ? 'ok' : 'incomplete';
+                for (const use of result.toolUses) {
+                    this.#safely(hireId, 'record-tool', () =>
+                        this.#deps.recordToolUse!(hireId, result.sessionId, use.name, toolTarget(use.input), status));
+                }
+            }
+        } finally {
+            // Idle when the turn ends, whatever happened above, so the card accepts input again rather
+            // than sticking on Working after an error. This is the guarantee the old straight-line code
+            // only intended: here it is enforced by the finally, not merely by reaching the last line.
+            this.#setState(hireId, AGENT_STATES.IDLE);
+        }
 
         return result;
+    }
+
+    /** Surfaces a completion-path failure. Reporting must never itself throw, so it is guarded. */
+    #report(hireId: string, stage: string, error: unknown): void {
+        if (this.#deps.onError) {
+            try { this.#deps.onError(hireId, stage, error); } catch { /* reporting must never break a turn */ }
+            return;
+        }
+        const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        process.stderr.write('[runner-manager] ' + stage + ' failed for ' + hireId + ': ' + detail + '\n');
+    }
+
+    /**
+     * Runs one completion-path side effect in isolation: a throw is reported, never propagated. So one
+     * failing write cannot skip the other writes or the idle reset, and a bad turn can no longer leave
+     * the colleague stuck on Working with a silently swallowed error.
+     */
+    #safely(hireId: string, stage: string, fn: () => void): void {
+        try { fn(); } catch (error) { this.#report(hireId, stage, error); }
     }
 
     #setState(hireId: string, state: AgentState): void {

@@ -330,7 +330,16 @@ export class ClaudeRunner {
                 }
 
                 const type = typeof obj.type === 'string' ? (obj.type as string) : '';
-                this.#deps.onEvent?.({ type, raw: obj });
+                // A consumer throw must never break the stdout stream: this runs inside the 'data'
+                // handler, so an uncaught throw here would stop parsing before the turn's `result`
+                // line and hang the turn to timeout. The runner is defensive by construction; a
+                // faulty observer costs its own event, not the whole turn.
+                try {
+                    this.#deps.onEvent?.({ type, raw: obj });
+                } catch {
+                    // Swallowed on purpose: onEvent is an observer, and the manager reports its own
+                    // failures. The stream must keep flowing to the result.
+                }
 
                 switch (type) {
                     case 'system': {
