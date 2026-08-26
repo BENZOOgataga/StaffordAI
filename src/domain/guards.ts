@@ -13,7 +13,7 @@
 
 import type {
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
-    ProjectCreate, HireCreate, ApprovalAnswer,
+    ProjectCreate, HireCreate, ApprovalAnswer, QuestionAnswer,
     PermissionRulesRequest, PermissionEffectiveRequest, PermissionAdd, PermissionUpdate, PermissionRemove,
     TasksByHireRequest, TaskAssign, TaskStart, TaskReview, TaskDiffRequest, TaskBoardRequest
 } from '../shared/ipc.ts';
@@ -42,6 +42,29 @@ export function isApprovalAnswer(value: unknown): value is ApprovalAnswer {
     if (!isHireId(value.id)) return false;
     if (typeof value.approve !== 'boolean') return false;
     return value.note === null || (typeof value.note === 'string' && value.note.length <= 4096);
+}
+
+/**
+ * The person's answer to a pending question, validated and sanitised: this crosses the bridge into a
+ * running colleague's tool result, so it is bounded hard. Returns a clean answer or null. `answers` is
+ * kept to bounded question keys, each mapping to a bounded, non-empty array of bounded label strings;
+ * an empty or malformed shape is refused rather than coerced. The counts cap what one answer can carry.
+ */
+export function parseQuestionAnswer(value: unknown): QuestionAnswer | null {
+    if (!isObject(value) || !isHireId(value.id) || !isObject(value.answers)) return null;
+    const answers: Record<string, readonly string[]> = {};
+    let questions = 0;
+    for (const [key, raw] of Object.entries(value.answers)) {
+        if (questions >= 20) break;
+        if (typeof key !== 'string' || key.length === 0 || key.length > 500 || !Array.isArray(raw)) continue;
+        const labels: string[] = [];
+        for (const label of raw.slice(0, 40)) {
+            if (typeof label === 'string' && label.length > 0 && label.length <= 4096) labels.push(label);
+        }
+        if (labels.length > 0) { answers[key] = labels; questions += 1; }
+    }
+    if (Object.keys(answers).length === 0) return null;
+    return { id: value.id, answers };
 }
 
 /** A page read. `before` is null for the newest page, or a cursor for scroll-back. */

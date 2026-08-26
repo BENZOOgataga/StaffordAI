@@ -20,11 +20,11 @@ import {
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
     type TasksReply, type TaskWriteReply, type TaskAssign, type TaskReview, type TaskDiffReply, type TaskBoardReply,
-    type TurnEventsReply
+    type TurnEventsReply, type PendingQuestions, type AskAnswer
 } from '../../shared/ipc.ts';
 import {
     isChannelPage, isChannelSince, isChannelConversation, isChannelTurnEvents, isChannelReply, isProjectCreate, isHireCreate, isActivityByHire, isCheckpointAck,
-    isApprovalAnswer,
+    isApprovalAnswer, parseQuestionAnswer,
     isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove,
     isTasksByHire, isTaskAssign, isTaskStart, isTaskReview, isTaskDiff, isTaskBoard
 } from '../../domain/guards.ts';
@@ -99,6 +99,10 @@ export interface HandlerDeps {
     readonly pendingApprovals: () => PendingApprovals;
     /** The person's answer to a pending ask, which resolves that turn's paused seam. */
     readonly answerApproval: (id: string, approve: boolean, note: string | null) => void;
+    /** The AskUserQuestion prompts currently waiting on the person. */
+    readonly pendingQuestions: () => PendingQuestions;
+    /** The person's selected answer to a pending question, which resolves that paused ask. */
+    readonly answerQuestion: (id: string, answers: AskAnswer) => void;
     /** One colleague's tasks, newest first, capped. */
     readonly tasksByHire: (hireId: string, limit: number) => TasksReply;
     /** Creates a task for a colleague, in assigned. Does not start it. */
@@ -230,6 +234,15 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'approval:answer': (payload: unknown): void => {
             if (!isApprovalAnswer(payload)) throw new Error('approval:answer requires {id,approve,note}');
             deps.answerApproval(payload.id, payload.approve, payload.note);
+        },
+
+        // The pending AskUserQuestion prompts, read-only, and the person's selected answer. The answer
+        // resolves exactly the pending question named by its id, so the colleague receives that choice.
+        'questions:pending': (): PendingQuestions => deps.pendingQuestions(),
+        'question:answer': (payload: unknown): void => {
+            const answer = parseQuestionAnswer(payload);
+            if (!answer) throw new Error('question:answer requires {id,answers}');
+            deps.answerQuestion(answer.id, answer.answers);
         },
 
         // Permission configuration (phase 3). Reads are bounded and carry no filesystem path

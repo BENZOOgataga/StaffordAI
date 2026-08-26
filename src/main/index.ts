@@ -56,6 +56,7 @@ import { defaultBaselineRules, defaultCategoryDefaults } from '../domain/permiss
 import type { PermissionRule, PermissionAction, PermissionEffect } from '../domain/permissions.ts';
 import type { PermissionRuleRecord, Task } from '../domain/models.ts';
 import { ApprovalRegistry } from './agents/approval-registry.ts';
+import { QuestionRegistry } from './agents/question-registry.ts';
 import { TaskService, TaskTransitionError } from './tasks/task-service.ts';
 import { locateClaude } from './agents/claude-locator.ts';
 import { savedNoticeFor } from './checkpoints/saved-work.ts';
@@ -81,6 +82,9 @@ let repositories: Repositories | null = null;
 // The pending permission approvals (phase 2). Created once the store is open, so a paused
 // tool call can set the colleague's waiting state; denyAll runs on quit.
 let approvalRegistry: ApprovalRegistry | null = null;
+// The pending AskUserQuestion prompts. Created once the store is open, so a paused ask sets the
+// colleague's waiting state and its choices render in the conversation; cancelAll runs on quit.
+let questionRegistry: QuestionRegistry | null = null;
 // The headless delivery path (the stream-json runner). It is the only path that
 // handles messages now; the old pty/hook/lifecycle stack was removed in phase 4.
 let runnerManager: ClaudeRunnerManager | null = null;
@@ -730,7 +734,9 @@ function devInert<T>(inert: T, realValue: () => T): T {
 function trayCounts(): { review: number; paused: number } {
     return devOr(() => {
         const review = repositories ? repositories.tasks.open().filter((t) => t.state === 'needs-you').length : 0;
-        const paused = approvalRegistry ? approvalRegistry.list().length : 0;
+        // A turn paused on an approval or on a question both need the person, so both count.
+        const paused = (approvalRegistry ? approvalRegistry.list().length : 0)
+            + (questionRegistry ? questionRegistry.list().length : 0);
         return { review, paused };
     }, (fake) => fake.trayCount);
 }
@@ -977,7 +983,12 @@ function buildDelivery(store: HireStore): void {
         // registry (should not happen once the store is open) it falls back to deny.
         onAsk: (request) => approvalRegistry
             ? approvalRegistry.ask(request)
-            : Promise.resolve({ approve: false, note: null })
+            : Promise.resolve({ approve: false, note: null }),
+        // An AskUserQuestion pauses the turn on a pending question until the person picks; without a
+        // registry it resolves unanswered, so the colleague continues rather than hanging.
+        onQuestion: (request) => questionRegistry
+            ? questionRegistry.ask(request)
+            : Promise.resolve({ answers: null })
     });
 
     // The headless delivery path. It routes a colleague's messages through the
@@ -1159,7 +1170,8 @@ function buildDelivery(store: HireStore): void {
         // A colleague paused on an ask has stopped working, so the attempt ends and the task
         // lands in review rather than the loop spending its bound against a blocked turn.
         isAwaitingApproval: (hireId) =>
-            (approvalRegistry?.list() ?? []).some((a) => a.hireId === hireId),
+            (approvalRegistry?.list() ?? []).some((a) => a.hireId === hireId)
+            || (questionRegistry?.list() ?? []).some((q) => q.hireId === hireId),
         onChanged: () => { notifyTasksChanged(); }
     });
     smoke('task service ready');
@@ -1173,6 +1185,8 @@ async function quit(): Promise<void> {
     // action I did not approve and nothing is left awaiting a promise that would block the
     // quit or the drain below.
     approvalRegistry?.denyAll('Stafford is closing, so this action was not approved.');
+    // Resolve any turn paused on an AskUserQuestion as unanswered, for the same reason.
+    questionRegistry?.cancelAll();
 
     // Drain the colleagues the runner served: checkpoint, bounded wait, force-kill what
     // remains, one durable report row per agent. Bounded by its own total cap, so a stuck
@@ -1811,6 +1825,21 @@ app.whenReady().then(async () => {
                 notifyRosterChanged();
             }
         });
+        // The question registry: a paused AskUserQuestion sets the colleague to waiting_for_you (the
+        // same roster state an approval uses) and pushes a questions:changed signal so the conversation
+        // re-reads its choices. Answering folds the selection into the tool and clears the state.
+        questionRegistry = new QuestionRegistry({
+            now: () => new Date().toISOString(),
+            uuid: () => randomUUID(),
+            onChange: () => {
+                if (window && !window.isDestroyed()) window.webContents.send('questions:changed');
+                refreshTray();
+            },
+            onPending: (hireId, pending) => {
+                store.setState(hireId, pending ? 'waiting_for_you' : 'working');
+                notifyRosterChanged();
+            }
+        });
         buildDelivery(store);
     }
 
@@ -1917,6 +1946,14 @@ app.whenReady().then(async () => {
             (f) => f.approvals
         ),
         answerApproval: (id, approve, note) => devInert<void>(undefined, () => { approvalRegistry?.answer(id, approve, note); }),
+
+        // The pending AskUserQuestion prompts, and the person's selected answer, which resolves the
+        // paused ask for exactly that tool call so the colleague receives the choice and continues.
+        pendingQuestions: () => devOr(
+            () => ({ pending: questionRegistry ? questionRegistry.list() : [] }),
+            () => ({ pending: [] })
+        ),
+        answerQuestion: (id, answers) => devInert<void>(undefined, () => { questionRegistry?.answer(id, answers); }),
 
         // Tasks. The three writes go through the service, which is the only thing in the app
         // that writes a task state and which names the actor itself on every write.

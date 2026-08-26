@@ -89,6 +89,20 @@ contextBridge.exposeInMainWorld('stafford', {
         answer: async () => {},
         onChanged: unsub
     },
+    // The AskUserQuestion prompts. Harness-injectable: __test.setPending seeds a pending ask and
+    // fires the renderer's onChanged, so the live answer form renders against a real pending entry.
+    questions: (() => {
+        let pending = [];
+        const listeners = [];
+        return {
+            pending: async () => ({ pending }),
+            answer: async (id, answers) => { console.log('[stub] question:answer', id, JSON.stringify(answers)); },
+            onChanged: (l) => { listeners.push(l); return () => {}; },
+            __test: {
+                setPending: (list) => { pending = list; for (const l of listeners) l(); }
+            }
+        };
+    })(),
     // Tasks. Sample rows covering the cases the review panel exists for: one waiting for me
     // with a result branch, declared new files and a refusal (so a refused deliverable is
     // visibly not silent), one still working, and one already approved.

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { makePermissionGate } from './permission-gate.ts';
 import { protectedConfigPaths } from './protected-config-paths.ts';
 import type { AskRequest, AskOutcome } from './approval-registry.ts';
+import type { QuestionRequest, QuestionOutcome } from './question-registry.ts';
 import type { ProjectPolicy, PermissionRuleRecord } from '../../domain/models.ts';
 import type { PermissionDecision } from './claude-runner.ts';
 
@@ -22,13 +23,18 @@ function policy(over: Partial<ProjectPolicy> = {}): ProjectPolicy {
  * what they always asserted: the resolver's own behaviour, unchanged by the case fix. The
  * platform-specific folding is covered separately at the bottom of this file.
  */
-function gateFor(p: ProjectPolicy, onAsk?: (r: AskRequest) => Promise<AskOutcome>) {
+function gateFor(
+    p: ProjectPolicy,
+    onAsk?: (r: AskRequest) => Promise<AskOutcome>,
+    onQuestion?: (r: QuestionRequest) => Promise<QuestionOutcome>
+) {
     const g = makePermissionGate({
         getPolicy: () => p,
         getStoredRules: () => [],
         protectedPaths: [USERDATA],
         normalisePath: (v: string) => v,
-        ...(onAsk ? { onAsk } : {})
+        ...(onAsk ? { onAsk } : {}),
+        ...(onQuestion ? { onQuestion } : {})
     });
     return g({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
 }
@@ -61,6 +67,46 @@ test('the security invariant: reading or writing the config store is denied', as
     assert.equal(await behavior(tool('Read', { file_path: configDb })), 'deny');
     assert.equal(await behavior(tool('Write', { file_path: configDb })), 'deny');
     assert.equal(await behavior(tool('Edit', { file_path: path.resolve('/userdata/claude-config/.claude.json') })), 'deny');
+});
+
+const ASK_INPUT = {
+    questions: [{ question: 'Which color?', header: 'Color', multiSelect: false,
+        options: [{ label: 'Red', description: '' }, { label: 'Blue', description: '' }] }]
+};
+
+test('AskUserQuestion routes to the question seam and folds the selection into the tool input', async () => {
+    let seen: QuestionRequest | null = null;
+    const onQuestion = (r: QuestionRequest): Promise<QuestionOutcome> => {
+        seen = r;
+        return Promise.resolve({ answers: { 'Which color?': ['Red'] } });
+    };
+    const tool = gateFor(policy(), undefined, onQuestion);
+    const decision = await Promise.resolve(tool('AskUserQuestion', ASK_INPUT, 'tool-1'));
+    assert.equal(seen!.toolUseId, 'tool-1', 'the tool_use_id reaches the registry so the UI can match it');
+    assert.deepEqual(seen!.questions.map((q) => q.header), ['Color']);
+    assert.equal(decision.behavior, 'allow', 'the tool is allowed once answered');
+    assert.deepEqual(
+        (decision as { behavior: 'allow'; updatedInput: { answers?: unknown } }).updatedInput.answers,
+        { 'Which color?': ['Red'] },
+        'the selection is folded in as answers, the shape the CLI accepts'
+    );
+});
+
+test('a cancelled question allows the tool with the input unchanged, so the colleague continues unanswered', async () => {
+    const onQuestion = (): Promise<QuestionOutcome> => Promise.resolve({ answers: null });
+    const tool = gateFor(policy(), undefined, onQuestion);
+    const decision = await Promise.resolve(tool('AskUserQuestion', ASK_INPUT, 'tool-1'));
+    assert.equal(decision.behavior, 'allow');
+    assert.equal((decision as { updatedInput: { answers?: unknown } }).updatedInput.answers, undefined, 'no answers added');
+});
+
+test('a malformed AskUserQuestion input falls through to the normal gate, never the question seam', async () => {
+    let called = false;
+    const onQuestion = (): Promise<QuestionOutcome> => { called = true; return Promise.resolve({ answers: null }); };
+    // No parseable questions: the ask is not routed to onQuestion; it falls to the category default.
+    const tool = gateFor(policy(), undefined, onQuestion);
+    await Promise.resolve(tool('AskUserQuestion', { not: 'an ask' }, 'tool-1'));
+    assert.equal(called, false, 'the question seam is not invoked for an unparseable ask');
 });
 
 test('without an ask handler, an ask resolves as deny (the phase-1 fallback)', async () => {

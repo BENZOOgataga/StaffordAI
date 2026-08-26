@@ -3,6 +3,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { buildThread } from './conversation-model.ts';
 import { ConversationThread } from './conversation-thread.tsx';
 import { TurnBlocks } from './turn-blocks.tsx';
+import { usePendingQuestions, PendingQuestionsContext } from './use-questions.ts';
 import { type Lang } from '../channel-view.ts';
 import { runSend } from './send-message.ts';
 import type { ChannelMessageRow, LiveBlock } from '../../shared/ipc.ts';
@@ -13,13 +14,19 @@ import type { ChannelMessageRow, LiveBlock } from '../../shared/ipc.ts';
  * once) and marked live (a caret on the last text run). When the turn ends, the persisted turn renders
  * the identical blocks, so there is no jump.
  */
-function LiveTurn({ blocks, sender, lang }: {
+function LiveTurn({ blocks, sender, lang, interactive }: {
     blocks: readonly LiveBlock[];
     sender: string;
     lang: Lang;
+    /**
+     * True when the turn holds a pending question the person can answer. The streaming turn is normally
+     * aria-hidden so the screen reader is not read every token; a pending ask carries an interactive
+     * form, so the turn is made reachable then, and hidden again once nothing is waiting.
+     */
+    interactive: boolean;
 }): React.JSX.Element {
     return (
-        <div className="flex flex-col items-start gap-1.5" aria-hidden="true">
+        <div className="flex flex-col items-start gap-1.5" aria-hidden={interactive ? undefined : true}>
             <div className="text-muted-foreground flex items-center gap-2 px-1 text-xs">
                 <span className="font-medium">{sender}</span>
             </div>
@@ -117,6 +124,10 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming,
         (messageId: string): readonly LiveBlock[] | null => turnEvents?.[messageId] ?? null,
         [turnEvents]
     );
+    // The AskUserQuestion prompts waiting on the person, narrowed to this colleague, so a live ask
+    // renders its answer form and the streaming turn is made reachable while one is pending.
+    const allPending = usePendingQuestions();
+    const pendingForHire = React.useMemo(() => allPending.filter((q) => q.hireId === hireId), [allPending, hireId]);
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const stick = React.useRef(true);
     const [text, setText] = React.useState('');
@@ -161,6 +172,7 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming,
     };
 
     return (
+        <PendingQuestionsContext.Provider value={pendingForHire}>
         <div className="flex min-h-0 flex-1 flex-col">
             <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
                 {items.length === 0 && !turnActive ? (
@@ -169,7 +181,7 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming,
                     <div className="flex flex-col gap-3">
                         {items.length > 0 ? <ConversationThread items={items} now={now} lang={lang} richFor={richFor} /> : null}
                         {streamingBlocks
-                            ? <LiveTurn blocks={streamingBlocks} sender={nameOf(hireId)} lang={lang} />
+                            ? <LiveTurn blocks={streamingBlocks} sender={nameOf(hireId)} lang={lang} interactive={pendingForHire.length > 0} />
                             : turnActive
                                 ? <WorkingIndicator sender={nameOf(hireId)} lang={lang} />
                                 : null}
@@ -195,5 +207,6 @@ export function ConversationPanel({ hireId, rows, nameOf, self, lang, streaming,
                 )}
             </div>
         </div>
+        </PendingQuestionsContext.Provider>
     );
 }

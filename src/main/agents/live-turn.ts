@@ -15,20 +15,22 @@
  */
 
 import type { ClaudeStreamEvent } from './claude-runner.ts';
-import type { LiveBlock, LiveToolStatus, LiveTodo, LiveTodoStatus, TaskDiffFile, TaskDiffLine } from '../../shared/ipc.ts';
+import type {
+    AskAnswer, AskQuestion, LiveBlock, LiveToolStatus, LiveTodo, LiveTodoStatus, TaskDiffFile, TaskDiffLine
+} from '../../shared/ipc.ts';
+import { ASK_TOOL, parseAskQuestions, parseAskAnswers, summariseAsk } from './ask-parse.ts';
 
 interface TextBlockM { kind: 'text'; text: string }
 interface ThinkingBlockM { kind: 'thinking'; text: string; seconds: number | null; startMs: number }
 interface ToolBlockM {
     kind: 'tool'; id: string; name: string; target: string | null; status: LiveToolStatus;
-    partial: string; output?: string; edit?: TaskDiffFile; todos?: readonly LiveTodo[]; question?: string;
+    partial: string; output?: string; edit?: TaskDiffFile; todos?: readonly LiveTodo[];
+    question?: string; ask?: readonly AskQuestion[]; answer?: AskAnswer;
 }
 type BlockM = TextBlockM | ThinkingBlockM | ToolBlockM;
 
 /** The planning tool whose input is a checklist rather than a command or an edit. */
 const TODO_TOOL = 'TodoWrite';
-/** The tool a colleague uses to ask the person a clarifying question. */
-const ASK_TOOL = 'AskUserQuestion';
 /** A bound on how many todo rows cross the bridge, so a runaway list cannot bloat the payload. */
 const MAX_TODOS = 100;
 
@@ -69,7 +71,9 @@ export class LiveTurnBuilder {
                 ...(b.output !== undefined ? { output: b.output } : {}),
                 ...(b.edit !== undefined ? { edit: b.edit } : {}),
                 ...(b.todos !== undefined ? { todos: b.todos } : {}),
-                ...(b.question !== undefined ? { question: b.question } : {})
+                ...(b.question !== undefined ? { question: b.question } : {}),
+                ...(b.ask !== undefined ? { ask: b.ask } : {}),
+                ...(b.answer !== undefined ? { answer: b.answer } : {})
             };
         });
     }
@@ -183,11 +187,18 @@ export class LiveTurnBuilder {
                 const todos = parseTodos(block.partial);
                 if (todos !== null) { block.todos = todos; return true; }
             }
-            // An AskUserQuestion's question text, parsed from its input, so the ask renders as a
-            // visible step rather than a bare "used AskUserQuestion" one-liner.
-            if (block && block.kind === 'tool' && block.name === ASK_TOOL && block.question === undefined && block.partial !== '') {
-                const question = parseQuestion(block.partial);
-                if (question !== null) { block.question = question; return true; }
+            // An AskUserQuestion's questions and choices, parsed from its input, so the ask renders as
+            // a visible step with clickable options rather than a bare "used AskUserQuestion" one-liner.
+            // A malformed input leaves both absent and degrades to the generic tool row.
+            if (block && block.kind === 'tool' && block.name === ASK_TOOL && block.ask === undefined && block.partial !== '') {
+                let parsed: unknown;
+                try { parsed = JSON.parse(block.partial); } catch { parsed = null; }
+                const questions = parseAskQuestions(parsed);
+                if (questions !== null) {
+                    block.ask = questions;
+                    block.question = summariseAsk(questions);
+                    return true;
+                }
             }
             if (block && block.kind === 'thinking' && block.seconds === null) {
                 // The thinking finished: stamp how long it took, so the island reads "Thought for Ns"
@@ -232,6 +243,13 @@ export class LiveTurnBuilder {
                 if (EDIT_TOOLS.has(block.name) && block.edit === undefined && status !== 'error') {
                     const edit = editDiff(toolUseResult, block.target);
                     if (edit !== null) { block.edit = edit; changed = true; }
+                }
+                // An AskUserQuestion's answer, once the person picked: the selection rides back on the
+                // tool_use_result after the choice routes through the CLI, so a live and a persisted
+                // turn both show what was chosen. An empty (unanswered) result leaves it absent.
+                if (block.name === ASK_TOOL && block.answer === undefined) {
+                    const answer = parseAskAnswers(toolUseResult);
+                    if (answer !== null) { block.answer = answer; changed = true; }
                 }
             }
         }
@@ -359,32 +377,6 @@ function parseTodos(partialJson: string): LiveTodo[] | null {
         out.push({ text: text.length > 200 ? text.slice(0, 200) + '...' : text, status });
     }
     return out;
-}
-
-/**
- * Parses an AskUserQuestion input into the question text, or null when it is not that shape. Claude
- * Code's schema is `{ questions: [{ question, header, options, ... }] }`; the questions are joined so
- * a multi-question ask reads as one step. Bounded, and defensive since this code does not own the
- * schema: a plain `{ question: "..." }` fallback is read too, and anything else returns null so the
- * tool degrades to its one-liner.
- */
-function parseQuestion(partialJson: string): string | null {
-    let input: unknown;
-    try { input = JSON.parse(partialJson); } catch { return null; }
-    if (!isRecord(input)) return null;
-    const parts: string[] = [];
-    if (Array.isArray(input.questions)) {
-        for (const q of input.questions.slice(0, 10)) {
-            if (isRecord(q) && typeof q.question === 'string' && q.question !== '') parts.push(q.question);
-        }
-    }
-    if (parts.length === 0) {
-        const single = firstString(input.question, input.prompt);
-        if (single !== '') parts.push(single);
-    }
-    if (parts.length === 0) return null;
-    const joined = parts.join('\n');
-    return joined.length > 500 ? joined.slice(0, 500) + '...' : joined;
 }
 
 function mapTodoStatus(value: unknown): LiveTodoStatus {

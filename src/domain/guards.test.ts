@@ -1,8 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    isChannelPage, isChannelSince, isProjectCreate, isHireCreate, isPermissionEffectiveRequest
+    isChannelPage, isChannelSince, isProjectCreate, isHireCreate, isPermissionEffectiveRequest, parseQuestionAnswer
 } from './guards.ts';
+
+test('question:answer validates and sanitises the selection crossing into the agent', () => {
+    assert.deepEqual(
+        parseQuestionAnswer({ id: 'q1', answers: { 'Which color?': ['Red'] } }),
+        { id: 'q1', answers: { 'Which color?': ['Red'] } },
+        'a well-formed answer passes through'
+    );
+    assert.equal(parseQuestionAnswer({ id: '', answers: { q: ['x'] } }), null, 'empty id refused');
+    assert.equal(parseQuestionAnswer({ id: 'q1', answers: {} }), null, 'an empty answer set is refused, not coerced');
+    assert.equal(parseQuestionAnswer({ id: 'q1', answers: { q: [] } }), null, 'a question with no labels is dropped, leaving nothing');
+    assert.equal(parseQuestionAnswer({ id: 'q1' }), null, 'answers is required');
+    assert.equal(parseQuestionAnswer('nope'), null);
+    // Non-string labels are dropped; a too-long key is skipped, so only clean data survives.
+    assert.deepEqual(
+        parseQuestionAnswer({ id: 'q1', answers: { good: ['a', 42, ''], ['x'.repeat(600)]: ['b'] } }),
+        { id: 'q1', answers: { good: ['a'] } },
+        'malformed labels and an over-long key are stripped'
+    );
+});
 
 test('permissions:effective takes a project and a hire id, or null for the project level', () => {
     assert.equal(isPermissionEffectiveRequest({ projectId: 'p1', hireId: 'h1' }), true, 'a colleague');

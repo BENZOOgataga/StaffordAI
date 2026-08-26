@@ -75,6 +75,8 @@ function deps(
         channelReply: over.channelReply ?? (() => Promise.resolve()),
         pendingApprovals: () => ({ pending: [] }),
         answerApproval: () => { /* noop */ },
+        pendingQuestions: () => ({ pending: [] }),
+        answerQuestion: () => { /* noop */ },
         permissionRules: over.permissionRules ?? (() => ({ baseline: [], overrides: [] })),
         effectivePolicy: over.effectivePolicy ?? (() => ({ rules: [] })),
         addPermissionRule: over.addPermissionRule ?? (() => ({ ok: true, warning: null })),
