@@ -14,9 +14,10 @@ PRs. Because this is a personal project with a direction I hold in my head, a PR
 declined even when it is correct, if it does not fit where I am taking Stafford. That is not a judgement on the
 work. If you want to be sure a change is wanted before you build it, open an issue first and ask.
 
-This is enforced, not just stated. The `main` branch requires a review approval before any pull request can
-merge, and my own account is the only bypass. So my branches still merge once CI is green, and a pull request
-from a fork stays blocked until I review and approve it.
+This is enforced, not just stated. The `main` branch ruleset is active and requires one review approval and
+green required checks before any pull request can merge. The only bypass is the repository admin role, which
+is mine, so my own branches merge once CI is green, while a pull request from a fork, which carries no admin
+role, stays blocked until I review and approve it.
 
 ## Build and run
 
@@ -48,7 +49,31 @@ npm test           # the full suite
 - Conventional Commits for messages (`feat:`, `fix:`, `docs:`, and so on).
 - Keep dependencies minimal and pinned, and commit the lockfile.
 - Never commit secrets.
-- Open a PR into `main`. CI has to be green: typecheck, the test suite on macOS and Windows, a packaged build
-  per platform, and a secret scan. A red leg is a real signal, not a flake to rerun.
+- Open a PR into `main`. CI has to be green: the test suite (with typecheck) on macOS and Windows, a packaged
+  build per platform, a secret scan over the history and the diff, and CodeQL. Treat a red leg as a real
+  failure by default. The only exceptions are a short named list of known environmental flakes, and a rerun
+  is only ever for a leg on that list, never a way past any other red leg. The list today is the
+  `database.test.ts` WAL-timing flake and the `killTree` detached-grandchild reaping test, both timing
+  sensitive on the shared CI runner and neither one something a normal diff can cause. When a leg starts
+  flaking, it goes on this list as its own deliberate change, so a rerun is always against a documented
+  name rather than a judgement call in the moment.
 
 External PRs are reviewed and merged at my discretion, as above.
+
+## Tests and types
+
+`npm test` runs the whole suite and reports a count; a run that reports zero tests is a failure, not a pass.
+`npm run typecheck` runs `tsc` across the node, preload, and web configs. Both have to be clean before a PR is
+ready, and tests for non-trivial logic are part of the change, not a follow-up.
+
+## Secrets and screenshots
+
+Never commit a secret. There are no environment secrets to set: `.env.example` documents only optional,
+non-secret development knobs, and `.env` is gitignored.
+
+The repository contains screenshots under `docs/images/`. They come from the screenshot harness, which renders
+the real renderer in a sandboxed window fed only by a synthetic stub bridge with demo data, so no real machine
+state can reach the frame. If you add another screenshot, it has to come from a clean demo environment the same
+way: a demo account, a neutral demo path (something like `C:\Users\you\Projects\demo`, never a real home
+directory), no real repository, and crop anything that still leaks. This is the same reason a public release
+must be built on a clean machine rather than a work one.

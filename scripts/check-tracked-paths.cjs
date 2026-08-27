@@ -94,7 +94,10 @@ const ALLOWED_EXTENSIONS = {
     // .md added for PULL_REQUEST_TEMPLATE.md, the GitHub-conventional location.
     '.github': ['.cjs', '.md', '.yml'],
     data: ['.json', '.md'],
-    docs: ['.md', '.svg'],
+    // .png for the README screenshots under docs/images. They are captured through the screenshot
+    // harness on demo data (a demo user, demo project names, pool colleague names), so no real
+    // identifier reaches an image. Any image added here must follow the CONTRIBUTING screenshot rule.
+    docs: ['.md', '.png', '.svg'],
     hooks: ['.cjs', '.md', '.ps1'],
     runner: ['.js'],
     scripts: ['.cjs', '.js', '.json'],
