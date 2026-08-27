@@ -62,7 +62,16 @@ file action, and you can hand out tasks and manage projects. Still Windows only 
 
 ### Security
 
-- Every tool decision now routes through the gate. Some tool calls did not reach it before.
+- Secret files inside a project cannot be read. A `.env` and its variants, private keys, `.npmrc`,
+  `.netrc`, and `credentials.json` are denied before the read runs, so they cannot be pulled into a
+  model's context, while ordinary project files stay readable and a colleague can still work. The
+  no-secret templates (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`) stay readable. This
+  is new: v0.1.0 had no file gate at all, and a read inside the project folder needed enforcing that
+  the tool-call gate alone did not provide, because Claude Code allows its read-only tools inside the
+  working directory without asking.
+- Writes, the actions that pause for your approval, and reads outside the project folder go through the
+  permission gate, which resolves them against the project rules and the colleague's overrides. Reads
+  inside the project folder are handled by the rule above instead, since they do not reach the gate.
 - File paths are resolved to their real absolute form, with case folded through the platform and
   symlinks followed, before any comparison, so a path cannot reach a protected directory through a case
   difference or a symlink.
@@ -79,9 +88,9 @@ file action, and you can hand out tasks and manage projects. Still Windows only 
 
 ## [0.1.0] - 2026-08-13
 
-First public release. Pre-release and unsigned, cut by hand as zipped directory builds for macOS
-(darwin-arm64) and Windows (win-x64), with install steps for the Gatekeeper and SmartScreen warnings in the
-README.
+First public release. Pre-release and unsigned, Windows only, cut by hand as a zipped directory build
+for win-x64, with install steps for the SmartScreen warning in the README. The macOS build was written
+and compiled but not shipped.
 
 The working core:
 
