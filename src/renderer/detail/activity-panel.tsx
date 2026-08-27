@@ -40,7 +40,7 @@ function summarise(block: ActivityBlock, lang: Lang): { icon: React.JSX.Element;
     };
     return {
         icon: <FeedIconGlyph icon={feedIcon(row)} className="size-4 shrink-0 translate-y-0.5" />,
-        phrase: toolPhrase(block.name || 'a tool', block.target, lang),
+        phrase: toolPhrase(block.name || 'a tool', block.target, lang, block.status),
         status: block.status === 'error' ? toolStatusLabel('error', lang) : null
     };
 }

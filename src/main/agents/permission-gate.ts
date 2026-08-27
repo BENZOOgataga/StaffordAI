@@ -222,6 +222,30 @@ function requestPath(
     return null;
 }
 
+/**
+ * The path a tool call names in its native, human-facing form: absolute, with the platform's real
+ * separators and the casing the tool used, resolved against the turn's cwd but never case-folded and
+ * never run through the matcher's fold. It exists only for the strings a person reads, the approval
+ * banner and the deny and ask messages, so the path matches what their file explorer shows. The folded
+ * form from requestPath stays the one every decision is made on; this value never feeds a comparison.
+ *
+ * Deliberately not symlink resolved, so it shows the path the tool actually named rather than a
+ * canonicalized target the person never typed. It is carried straight from the tool call, not rebuilt
+ * from the folded path, because the folded path has already lost its casing.
+ */
+function requestDisplayPath(toolName: string, input: unknown, rawRoot: string): string | null {
+    if (typeof input !== 'object' || input === null) return null;
+    const i = input as Record<string, unknown>;
+    const keys = toolName === 'NotebookEdit' || toolName === 'NotebookRead' ? ['notebook_path'] : ['file_path', 'path'];
+    for (const key of keys) {
+        const value = i[key];
+        if (typeof value === 'string' && value.length > 0) {
+            return path.isAbsolute(value) ? path.resolve(value) : path.resolve(rawRoot, value);
+        }
+    }
+    return null;
+}
+
 /** Pulls the command string a shell tool runs. */
 function requestCommand(input: unknown): string | null {
     if (typeof input !== 'object' || input === null) return null;
@@ -283,8 +307,10 @@ function protectedFloorHit(
     return null;
 }
 
-function describe(request: PermissionRequest): string {
-    if (request.path !== null) return request.action + ' on ' + request.path;
+// The path shown to a person is the native display form when one is available, never the folded path.
+function describe(request: PermissionRequest, displayPath: string | null): string {
+    const shownPath = displayPath ?? request.path;
+    if (shownPath !== null) return request.action + ' on ' + shownPath;
     if (request.command !== null) {
         const c = request.command.replace(/\s+/g, ' ').trim();
         return request.action + ' command "' + (c.length > 100 ? c.slice(0, 100) : c) + '"';
@@ -292,19 +318,21 @@ function describe(request: PermissionRequest): string {
     return 'a ' + request.action + ' action';
 }
 
-function decisionFor(effect: 'allow' | 'deny' | 'ask', request: PermissionRequest, input: unknown): PermissionDecision {
+function decisionFor(
+    effect: 'allow' | 'deny' | 'ask', request: PermissionRequest, input: unknown, displayPath: string | null
+): PermissionDecision {
     if (effect === 'allow') return { behavior: 'allow', updatedInput: input };
     if (effect === 'deny') {
         return {
             behavior: 'deny',
-            message: 'The project permission policy does not allow this session to ' + describe(request) +
+            message: 'The project permission policy does not allow this session to ' + describe(request, displayPath) +
                 '. If you need it, ask the user to grant it in Stafford.'
         };
     }
     // ask, phase 1: no interactive approval yet, so block rather than proceed unapproved.
     return {
         behavior: 'deny',
-        message: 'This action (' + describe(request) + ') needs the user\'s approval, which is not available yet, ' +
+        message: 'This action (' + describe(request, displayPath) + ') needs the user\'s approval, which is not available yet, ' +
             'so it is blocked for now. The user can allow it in Stafford.'
     };
 }
@@ -405,6 +433,10 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
             path: requestPath(toolName, input, rawRoot, deps.normalisePath, deps.realPath ?? defaultRealPath),
             command: requestCommand(input)
         };
+        // The native, human-facing form of the same path, for the approval banner and the deny and ask
+        // messages only. The decision above is made on request.path, the folded form; this is never
+        // compared against anything.
+        const displayPath = requestDisplayPath(toolName, input, rawRoot);
 
         // The hard protected/secret floor for an other-category tool. Every mcp__ tool and any
         // unrecognized tool categorizes as 'other', which resolves against the other rules only, and
@@ -432,7 +464,7 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
         // awaits it and resolves to allow on approve or deny on deny. Without a handler it
         // falls to the phase-1 deny below, so the gate never hangs waiting on nothing.
         if (effect === 'ask' && deps.onAsk) {
-            return deps.onAsk({ hireId: ctx.hireId, action: request.action, path: request.path, command: request.command })
+            return deps.onAsk({ hireId: ctx.hireId, action: request.action, path: displayPath ?? request.path, command: request.command })
                 .then((outcome): PermissionDecision => outcome.approve
                     ? { behavior: 'allow', updatedInput: input }
                     : {
@@ -442,7 +474,7 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
                             : 'The user denied this action.'
                     });
         }
-        return decisionFor(effect, request, input);
+        return decisionFor(effect, request, input, displayPath);
     }) as PermissionGate;
 
     // Drops every project's cached rules. Cheap, and correct even though it is broader than
