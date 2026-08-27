@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     toolCategory, defaultCategoryDefaults, defaultBaselineRules,
-    SECRET_FILE_GLOBS, SECRET_FILE_EXCEPTIONS, secretFileScopes, exceptionFileScopes,
+    SECRET_FILE_GLOBS, SECRET_FILE_EXCEPTIONS, secretFileScopes,
     nativeReadFloorDeny, loosensSecretRead
 } from './permission-profile.ts';
 import { resolvePermission, effectiveRules, type PermissionRequest, type PermissionRule } from './permissions.ts';
@@ -136,42 +136,50 @@ test('the native read floor is the secret globs, then the template negations aft
     assert.ok(firstNeg > lastDeny, 'negations come after the deny entries');
 });
 
-test('the read floor, the write floor, and the native floor derive from the same lists, so they cannot diverge', () => {
+test('the secret floor and its template carve-out derive from the shared lists, so they cannot diverge', () => {
     const repoRoot = '/proj';
     const scopes = secretFileScopes(repoRoot);
     assert.deepEqual(scopes, SECRET_FILE_GLOBS.map((g) => repoRoot + '/**/' + g));
 
+    // The gate is a plain floor: read-deny and write-deny cover exactly the secret scopes, and it
+    // carries no template allow. The carve-out lives in the two places that run for an in-cwd read.
     const rules = defaultBaselineRules({ repoRoot, writePaths: null, protectedPaths: [] });
     const gateScopes = (action: 'read' | 'write', effect: 'deny' | 'allow'): string[] =>
         rules.filter((r) => r.action === action && r.effect === effect && r.pathScope !== null)
             .map((r) => r.pathScope as string);
-    // The gate's read-deny and write-deny secret scopes are exactly secretFileScopes.
     for (const s of scopes) {
         assert.ok(gateScopes('read', 'deny').includes(s), 'gate read floor covers ' + s);
         assert.ok(gateScopes('write', 'deny').includes(s), 'gate write floor covers ' + s);
     }
-    // The gate's template allow scopes are exactly exceptionFileScopes, the same list the native
-    // negations and the write-path refusal read, so the carve-out cannot disagree across the four.
-    for (const s of exceptionFileScopes(repoRoot)) {
-        assert.ok(gateScopes('read', 'allow').includes(s), 'gate read exception covers ' + s);
-        assert.ok(gateScopes('write', 'allow').includes(s), 'gate write exception covers ' + s);
-    }
+    // No allow rule anywhere in the profile is scoped to a template. The only write allow is the repo
+    // write scope; the removed template allows must not reappear.
+    const templateAllow = rules.some((r) => r.effect === 'allow' && r.pathScope !== null
+        && SECRET_FILE_EXCEPTIONS.some((n) => (r.pathScope as string).endsWith('/**/' + n)));
+    assert.equal(templateAllow, false, 'the gate carries no template allow rule');
+
+    // Consumer 2, the native floor: the deny globs come from SECRET_FILE_GLOBS, the negations from
+    // SECRET_FILE_EXCEPTIONS. Consumer 3, the write-path refusal, is checked in its own test below.
     const nativeDenyGlobs = nativeReadFloorDeny().filter((d) => !d.startsWith('Read(!')).map((d) => d.slice('Read('.length, -1));
     const nativeNegGlobs = nativeReadFloorDeny().filter((d) => d.startsWith('Read(!')).map((d) => d.slice('Read(!'.length, -1));
     assert.deepEqual(nativeDenyGlobs, [...SECRET_FILE_GLOBS]);
     assert.deepEqual(nativeNegGlobs, [...SECRET_FILE_EXCEPTIONS]);
 });
 
-test('a template file is readable and writable, a real secret is not, at the root and nested', () => {
+test('the gate denies the whole secret family, templates included, since the read carve-out is native', () => {
     const rules = defaultBaselineRules({ repoRoot: '/proj', writePaths: null, protectedPaths: [] });
-    // The templates read and write, at the project root and a level down.
+    // The gate is not consulted for an in-cwd read, so it denies the templates too. Their readability
+    // comes from the native negation (asserted above and proven live by read-floor.probe.ts), not here.
     for (const p of ['/proj/.env.example', '/proj/sub/.env.example', '/proj/.env.sample', '/proj/pkg/.env.dist', '/proj/.env.template']) {
-        assert.equal(resolveWith(rules, 'read', p), 'allow', p + ' template should read');
-        assert.equal(resolveWith(rules, 'write', p), 'allow', p + ' template should write');
+        assert.equal(resolveWith(rules, 'read', p), 'deny', p + ' is denied at the gate; native re-includes it');
     }
-    // The real secrets stay denied, so the carve-out did not widen the family.
+    // The real secrets stay denied at the gate as well, root and nested.
     for (const p of ['/proj/.env', '/proj/.env.production', '/proj/.env.local', '/proj/sub/.env', '/proj/.env.production.local']) {
         assert.equal(resolveWith(rules, 'read', p), 'deny', p + ' secret should stay denied');
+    }
+    // The native floor carries a negation for every template, so the in-cwd read is re-included there.
+    const negations = nativeReadFloorDeny().filter((d) => d.startsWith('Read(!'));
+    for (const n of SECRET_FILE_EXCEPTIONS) {
+        assert.ok(negations.includes('Read(!' + n + ')'), 'native floor re-includes ' + n);
     }
 });
 

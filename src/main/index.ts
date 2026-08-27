@@ -56,7 +56,7 @@ import { ClaudeRunnerManager } from './agents/runner-manager.ts';
 import { makePermissionGate, type PermissionGate } from './agents/permission-gate.ts';
 import { protectedConfigPaths } from './agents/protected-config-paths.ts';
 import { effectivePolicy, ruleKey, widensProtectedAccess } from '../domain/effective-policy.ts';
-import { defaultBaselineRules, defaultCategoryDefaults, nativeReadFloorDeny, loosensSecretRead } from '../domain/permission-profile.ts';
+import { defaultBaselineRules, defaultCategoryDefaults, loosensSecretRead } from '../domain/permission-profile.ts';
 import type { PermissionRule, PermissionAction, PermissionEffect } from '../domain/permissions.ts';
 import type { PermissionRuleRecord, Task } from '../domain/models.ts';
 import { ApprovalRegistry } from './agents/approval-registry.ts';
@@ -1140,20 +1140,12 @@ function buildDelivery(store: HireStore): void {
         // are registered into the managed config any more (the hook stack was removed).
         seedManagedConfig: (cwd) => {
             try {
-                // The native read floor: Claude Code deny rules that refuse an in-cwd read of a secret
-                // file before the tool runs. This is the enforcement point the gate cannot reach,
-                // because Claude Code auto-allows read-only tools inside the working directory and never
-                // emits a can_use_tool request for them. Regenerated per spawn from the shared secret
-                // list, so it cannot be stale or edited into absence, the same property the gate's
-                // default profile has. Fail closed: an empty floor means a colleague would spawn with no
-                // read protection, which is the whole outcome this guards against, so refuse to seed.
-                const readFloorDeny = nativeReadFloorDeny();
-                if (readFloorDeny.length === 0) {
-                    throw new Error('native read floor is empty; refusing to seed a session without it');
-                }
+                // The native read floor (the deny rules that refuse an in-cwd secret read before the
+                // tool runs) is seeded by seedManagedConfig itself, so no spawn path can forget it. This
+                // caller passes no settings; the floor is added there and fails closed if it is empty.
                 const result = seedManagedConfig(
                     { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
-                        settings: { permissions: { deny: readFloorDeny } },
+                        settings: {},
                         readOsCredential: readOsCredential,
                         warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
                     cwd

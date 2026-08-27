@@ -26,7 +26,6 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { ClaudeRunner, type WireDirection, type PermissionDecision } from './claude-runner.ts';
 import { seedManagedConfig, type ManagedFs } from './managed-config.ts';
-import { nativeReadFloorDeny } from '../../domain/permission-profile.ts';
 
 const realFs: ManagedFs = {
     exists: (p) => fs.existsSync(p),
@@ -70,10 +69,11 @@ async function main(): Promise<void> {
     const logPath = path.join(workRoot, 'wire.log');
     const logStream = fs.createWriteStream(logPath, { flags: 'a' });
 
-    // Seed the managed dir exactly as the app does, with the native read floor in the settings.
+    // Seed the managed dir exactly as the app does. The caller passes no permissions: seedManagedConfig
+    // adds the native read floor itself, so this also exercises the first-run seeding path.
     seedManagedConfig({
         fs: realFs, managedDir, realHome: os.homedir(), resolveKey: (d) => path.resolve(d),
-        settings: { permissions: { deny: nativeReadFloorDeny() } }
+        settings: {}
     }, projectDir);
 
     const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CONFIG_DIR: managedDir };

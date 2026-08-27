@@ -119,15 +119,6 @@ export function secretFileScopes(repoRoot: string): string[] {
 }
 
 /**
- * The template-exception scopes anchored to a project root. These become allow rules that beat the
- * `.env.*` deny by specificity in the gate, so a template is readable and writable there. From the same
- * SECRET_FILE_EXCEPTIONS the native floor and the write-path refusal read, so the carve-out is one list.
- */
-export function exceptionFileScopes(repoRoot: string): string[] {
-    return SECRET_FILE_EXCEPTIONS.map((name) => repoRoot + '/**/' + name);
-}
-
-/**
  * The Claude Code `permissions.deny` entries that make the secret files a hard read floor.
  *
  * This is the fix for the defect that read-only tools inside the working directory never reached the
@@ -239,14 +230,10 @@ export function defaultBaselineRules(input: DefaultProfileInputs): PermissionRul
         rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'deny' });
     }
 
-    // Template files carry no secret, so they are allowed back for read and write. A template scope is
-    // more specific than the `.env.*` deny (it names the file, no trailing wildcard), so it wins the
-    // resolver on specificity. This is the gate's half of the same carve-out the native floor makes with
-    // its `!` negations, from the same SECRET_FILE_EXCEPTIONS list, so the two cannot disagree.
-    for (const scope of exceptionFileScopes(input.repoRoot)) {
-        rules.push({ action: 'read', pathScope: scope, commandPattern: null, effect: 'allow' });
-        rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'allow' });
-    }
+    // The gate is a plain floor here: it denies the whole secret family, templates included, with no
+    // carve-out. The template read exception lives only where it runs, the native negation and the
+    // write-path refusal, so a reader of this profile sees exactly which entries are load-bearing rather
+    // than an allow rule that is dead for an in-cwd read (the gate is never consulted for one).
 
     for (const pattern of DESTRUCTIVE_PATTERNS) {
         rules.push({ action: 'shell', pathScope: null, commandPattern: pattern, effect: 'ask' });
