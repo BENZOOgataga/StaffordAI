@@ -19,7 +19,7 @@ handful of autonomous workers legible and under control rather than tracking a l
 > behind a permission gate where you are the approver. Read the Security model and Limitations sections
 > before you point it at anything you care about.
 
-![Stafford showing a colleague's conversation: a roster of colleagues on the left, and on the right a live turn with a file read, a collapsed code diff, test output, and the markdown reply, with an approval banner across the top. All names, projects, and paths shown are demo data.](docs/images/conversation.png)
+<p align="center"><a href="docs/images/conversation.png"><img src="docs/images/conversation.png" width="820" alt="Stafford showing a colleague's conversation: a roster of colleagues on the left, and on the right a live turn with a file read, a collapsed code diff, test output, and the markdown reply, with an approval banner across the top. All names, projects, and paths shown are demo data."></a></p>
 
 ## What it does
 
@@ -47,9 +47,9 @@ handful of autonomous workers legible and under control rather than tracking a l
   and again at spawn. Each session runs against a Stafford-managed config, so your personal Claude Code
   settings, memory, plugins, and your other repositories do not leak into a colleague's context.
 
-<a href="docs/images/tasks.png"><img src="docs/images/tasks.png" width="820" alt="The Tasks board: tasks across colleagues grouped by state, with columns for waiting for you, working, assigned, approved, and failed, each card showing the colleague, the task, and its result branch. Demo data."></a>
+<p align="center"><a href="docs/images/tasks.png"><img src="docs/images/tasks.png" width="820" alt="The Tasks board: tasks across colleagues grouped by state, with columns for waiting for you, working, assigned, approved, and failed, each card showing the colleague, the task, and its result branch. Demo data."></a></p>
 
-<a href="docs/images/projects.png"><img src="docs/images/projects.png" width="820" alt="The Projects tab: two demo projects with their folders, one flagged to repoint a folder that has moved, a colleague bound to the first, and a parked colleague with a control to rebind it to a project. Demo data."></a>
+<p align="center"><a href="docs/images/projects.png"><img src="docs/images/projects.png" width="820" alt="The Projects tab: two demo projects with their folders, one flagged to repoint a folder that has moved, a colleague bound to the first, and a parked colleague with a control to rebind it to a project. Demo data."></a></p>
 
 ## Requirements
 

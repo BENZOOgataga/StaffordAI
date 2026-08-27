@@ -70,7 +70,7 @@ async function main() {
     // so the images read as a shorter window rather than a mostly-empty one. SHOT_H overrides them, and
     // any other view falls back to the full 900. The captured pixel size is this height times the
     // display scaling.
-    const VIEW_CAPTURE_HEIGHTS = { projects: 496, board: 560 };
+    const VIEW_CAPTURE_HEIGHTS = { projects: 420, board: 483 };
     const captureHeight = Number(process.env.SHOT_H || VIEW_CAPTURE_HEIGHTS[VIEW] || 900);
     const win = new BrowserWindow({ width: Number(process.env.SHOT_W||1280), height: captureHeight, show: false, webPreferences: web });
     await win.loadURL('http://127.0.0.1:' + port + '/' + PAGE);
