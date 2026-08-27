@@ -86,20 +86,20 @@ your current branch, and a quiet banner on the next launch tells you what was sa
 
 ## Security model
 
-Stafford runs autonomous agents with real access to your files and your shell, so it is worth being
-plain about what protects you and what does not.
+Stafford runs autonomous agents with real access to your files and your shell, so I will be plain about
+what protects you and what does not.
 
-What holds. File reads, writes, and edits go through the gate, so the path scopes, the protected
-credential and data directories, and the secret-file patterns are enforced on every call that carries a
-path, and the enforcement survives case differences and symlinks. A colleague cannot reach Stafford's
-own database, permission store, or managed credential. It cannot mark its own task done, approve its own
-work, or change its own permissions; those are yours alone, and a colleague has no channel to them, since
-it speaks the stream protocol and never touches the app's internals. On quit, a checkpoint only ever
-commits already-tracked changes, never a new untracked file, so a secret written to disk still cannot be
-swept onto a branch.
+The strong part is the file gate. File reads, writes, and edits go through it, so the path scopes, the
+protected credential and data directories, and the secret-file patterns are enforced on every call that
+carries a path, and the enforcement survives case differences and symlinks. A colleague cannot reach
+Stafford's own database, permission store, or managed credential. It cannot mark its own task done,
+approve its own work, or change its own permissions; those are yours alone, and a colleague has no
+channel to them, since it speaks the stream protocol and never touches the app's internals. On quit, a
+checkpoint only ever commits already-tracked changes, never a new untracked file, so a secret written to
+disk still cannot be swept onto a branch.
 
-What to understand. A denied shell command is best-effort, because Claude Code decides for itself which
-commands are worth asking permission for and does not put every one through the gate; treat a
+The gate also has weak spots, and they matter. A denied shell command is best-effort, because Claude Code
+decides for itself which commands need asking about and does not put every one through the gate; treat a
 shell-category deny as a strong default, not a hard wall, and if you need a hard boundary on what a
 colleague can run, run it against a repository on a machine or in a container where the dangerous thing
 is not reachable. Reads are broad by default: a colleague can read files outside the project folder that
