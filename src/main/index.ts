@@ -56,7 +56,7 @@ import { ClaudeRunnerManager } from './agents/runner-manager.ts';
 import { makePermissionGate, type PermissionGate } from './agents/permission-gate.ts';
 import { protectedConfigPaths } from './agents/protected-config-paths.ts';
 import { effectivePolicy, ruleKey, widensProtectedAccess } from '../domain/effective-policy.ts';
-import { defaultBaselineRules, defaultCategoryDefaults } from '../domain/permission-profile.ts';
+import { defaultBaselineRules, defaultCategoryDefaults, nativeReadFloorDeny, loosensSecretRead } from '../domain/permission-profile.ts';
 import type { PermissionRule, PermissionAction, PermissionEffect } from '../domain/permissions.ts';
 import type { PermissionRuleRecord, Task } from '../domain/models.ts';
 import { ApprovalRegistry } from './agents/approval-registry.ts';
@@ -670,8 +670,27 @@ function widenWarning(rule: { action: PermissionAction; pathScope: string | null
         'read its own policy; one that can write it can change what it is allowed to do.';
 }
 
+/**
+ * The refusal shown when a rule would loosen the secret-file read floor, or null when it does not.
+ *
+ * Unlike widenWarning, this is a block, not advice. The native read floor hard-denies an in-cwd secret
+ * read before the tool runs (nativeReadFloorDeny), so storing a read rule that set one of these to ask
+ * or allow would leave the config screen claiming an effect the floor never honors. Refusing the write
+ * keeps the screen truthful: a secret-file read always reads as denied because it can never be stored
+ * as anything else. The write floor is unaffected, so a secret write can still be loosened.
+ */
+function secretReadFloorRefusal(
+    rule: { action: PermissionAction; pathScope: string | null; effect: PermissionEffect }
+): string | null {
+    if (!loosensSecretRead(rule)) return null;
+    return 'Reading a project secret file is a hard floor, enforced before the tool runs, so it cannot ' +
+        'be loosened. The rule was not saved. You can still adjust the write rule for these files.';
+}
+
 function addPermissionRule(payload: PermissionAdd): PermissionWriteReply {
     if (!repositories) return { ok: false, warning: null };
+    const refusal = secretReadFloorRefusal(payload);
+    if (refusal) return { ok: false, warning: refusal };
     repositories.permissionRules.insert({
         id: randomUUID(),
         projectId: payload.projectId,
@@ -694,6 +713,8 @@ function updatePermissionRule(payload: PermissionUpdate): PermissionWriteReply {
     if (!repositories) return { ok: false, warning: null };
     const existing = repositories.permissionRules.get(payload.id);
     if (!existing) return { ok: false, warning: null };
+    const refusal = secretReadFloorRefusal(payload);
+    if (refusal) return { ok: false, warning: refusal };
     const ok = repositories.permissionRules.update(payload.id, {
         action: payload.action,
         pathScope: payload.pathScope,
@@ -1119,9 +1140,20 @@ function buildDelivery(store: HireStore): void {
         // are registered into the managed config any more (the hook stack was removed).
         seedManagedConfig: (cwd) => {
             try {
+                // The native read floor: Claude Code deny rules that refuse an in-cwd read of a secret
+                // file before the tool runs. This is the enforcement point the gate cannot reach,
+                // because Claude Code auto-allows read-only tools inside the working directory and never
+                // emits a can_use_tool request for them. Regenerated per spawn from the shared secret
+                // list, so it cannot be stale or edited into absence, the same property the gate's
+                // default profile has. Fail closed: an empty floor means a colleague would spawn with no
+                // read protection, which is the whole outcome this guards against, so refuse to seed.
+                const readFloorDeny = nativeReadFloorDeny();
+                if (readFloorDeny.length === 0) {
+                    throw new Error('native read floor is empty; refusing to seed a session without it');
+                }
                 const result = seedManagedConfig(
                     { fs: managedFs, managedDir: managedConfigDir, realHome: home, resolveKey: resolveTrustKey,
-                        settings: {},
+                        settings: { permissions: { deny: readFloorDeny } },
                         readOsCredential: readOsCredential,
                         warn: (m) => process.stderr.write('[managed-config] ' + m + '\n') },
                     cwd

@@ -5,7 +5,7 @@
  * stored. No Electron, no filesystem: the caller passes already-resolved absolute paths.
  */
 
-import type { PermissionRule, PermissionAction, CategoryDefaults } from './permissions.ts';
+import type { PermissionRule, PermissionAction, PermissionEffect, CategoryDefaults } from './permissions.ts';
 
 /**
  * Maps a real Claude Code tool name to a category. The path-bearing tools are read and
@@ -91,6 +91,54 @@ export const SECRET_FILE_GLOBS: readonly string[] = [
 ];
 
 /**
+ * The secret-file scopes anchored to a project root, the form the gate compares against. Both the
+ * gate's read and write deny rules (through `defaultBaselineRules`) and the effective-policy display
+ * come from this one function, so the read floor and the write floor cannot name different files.
+ */
+export function secretFileScopes(repoRoot: string): string[] {
+    return SECRET_FILE_GLOBS.map((glob) => repoRoot + '/**/' + glob);
+}
+
+/**
+ * The Claude Code `permissions.deny` entries that make the secret files a hard read floor.
+ *
+ * This is the fix for the defect that read-only tools inside the working directory never reached the
+ * gate: Claude Code auto-allows Read, Grep, Glob, and the rest inside the cwd and never emits a
+ * can_use_tool request, so the gate's read rules were correct code on a path that never ran for an
+ * in-cwd read. A native deny is enforced by the CLI itself before the tool runs, needs no
+ * can_use_tool, and also removes the files from Grep and Glob discovery.
+ *
+ * A bare filename follows gitignore semantics and matches at any depth under the working directory,
+ * so one entry per glob covers a secret at the project root and nested in a subdirectory both. The
+ * entries come straight from SECRET_FILE_GLOBS, the same constant the gate's deny rules iterate, so
+ * the two floors are one list by construction.
+ *
+ * Scope is deliberately the working directory only. An out-of-cwd read (a credential directory, or a
+ * symlink inside the project aimed at one) already reaches the gate, because the CLI asks about reads
+ * outside the cwd, so the gate still denies those. This floor does not restate them. It does not cover
+ * a shell read either (cat, Get-Content): shell is a separate category and stays best-effort, exactly
+ * as the README documents. This closes the in-cwd file-tool read hole, nothing wider.
+ */
+export function nativeReadFloorDeny(): string[] {
+    return SECRET_FILE_GLOBS.map((glob) => 'Read(' + glob + ')');
+}
+
+/**
+ * Whether a stored rule would loosen the secret-file read floor. The native deny hard-refuses an
+ * in-cwd secret read before the tool runs, so a stored read rule that set one of these to ask or allow
+ * would be shown by the config screen while the binary denied it anyway. The write path refuses such a
+ * rule so the screen never states an effect the floor does not honor. Matched on the anchored scope
+ * suffix, so it holds whatever project root the rule carries.
+ */
+export function loosensSecretRead(
+    rule: { action: PermissionAction; pathScope: string | null; effect: PermissionEffect }
+): boolean {
+    if (rule.action !== 'read' || rule.effect === 'deny' || rule.pathScope === null) return false;
+    const scope = rule.pathScope;
+    return SECRET_FILE_GLOBS.some((glob) => scope.endsWith('/**/' + glob));
+}
+
+/**
  * The fallback effect per category when no rule matches, in phase 1. read is allowed
  * broadly, write denies outside its allowed scope, shell allows ordinary commands, fetch
  * follows the project's allowWebFetch, delegate allows, and an unrecognized tool asks
@@ -145,8 +193,11 @@ export function defaultBaselineRules(input: DefaultProfileInputs): PermissionRul
     // pattern, so a rule that says .env means this project's .env and not every .env on the
     // machine. A glob beats the broad read allow on specificity, and it loses to anything more
     // specific I write later, so overriding one is a normal edit rather than a fight.
-    for (const glob of SECRET_FILE_GLOBS) {
-        const scope = input.repoRoot + '/**/' + glob;
+    //
+    // These are the write floor and the gate's copy of the read floor. The read floor is also
+    // enforced natively (nativeReadFloorDeny), because an in-cwd read never reaches the gate. Both
+    // come from secretFileScopes, i.e. from SECRET_FILE_GLOBS, so the two cannot name different files.
+    for (const scope of secretFileScopes(input.repoRoot)) {
         rules.push({ action: 'read', pathScope: scope, commandPattern: null, effect: 'deny' });
         rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'deny' });
     }

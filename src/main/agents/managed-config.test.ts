@@ -14,6 +14,7 @@ import {
     seedManagedConfig, userMemoryExcludes, MANAGED_DIR_MODE, MANAGED_FILE_MODE,
     type ManagedFs, type SeedManagedConfigDeps
 } from './managed-config.ts';
+import { nativeReadFloorDeny } from '../../domain/permission-profile.ts';
 
 interface Entry { data: string; mode: number; mtime: number; }
 
@@ -338,4 +339,43 @@ test('a failed OS read never puts the underlying reason in the warning', () => {
         assert.ok(!w.includes('secret-bearing failure detail'),
             'an error from a credential read is the most likely place for a token to leak into a log');
     }
+});
+
+// --- the native read floor seeded into settings.json ------------------------
+//
+// Reads inside the working directory never reach the gate, because Claude Code auto-allows
+// read-only tools in the cwd and never emits a can_use_tool request. The floor is enforced
+// natively instead: permissions.deny entries in the managed settings.json, which the CLI honors
+// before the tool runs. The caller injects them; this asserts they are written and that a failure
+// to write them aborts the seed rather than starting a colleague without the floor.
+
+function managedSettings(fs: ReturnType<typeof fakeFs>): Record<string, unknown> {
+    return JSON.parse(fs.readText(MANAGED + '/settings.json')) as Record<string, unknown>;
+}
+
+test('the injected read-floor deny list is written into the managed settings.json', () => {
+    const fs = fakeFs();
+    const deny = nativeReadFloorDeny();
+    seedManagedConfig({ ...deps(fs), settings: { permissions: { deny } } }, CWD);
+    const settings = managedSettings(fs);
+    const perms = settings.permissions as { deny?: unknown } | undefined;
+    assert.deepEqual(perms?.deny, deny, 'permissions.deny carries the native read floor verbatim');
+    // It co-exists with the user-memory exclusion the seed also writes, so neither clobbers the other.
+    assert.ok(Array.isArray(settings.claudeMdExcludes), 'claudeMdExcludes is still present');
+});
+
+test('a settings.json that cannot be written aborts the seed, so no colleague spawns without the floor', () => {
+    const base = fakeFs();
+    const throwing: ManagedFs = {
+        ...base,
+        writeText: (p, data, mode) => {
+            if (p.endsWith('settings.json')) throw new Error('EACCES settings.json');
+            base.writeText(p, data, mode);
+        }
+    };
+    assert.throws(
+        () => seedManagedConfig({ ...deps(base), fs: throwing, settings: { permissions: { deny: nativeReadFloorDeny() } } }, CWD),
+        /settings\.json/,
+        'the seed throws rather than returning, so the runner turn aborts'
+    );
 });

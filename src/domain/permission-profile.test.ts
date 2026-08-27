@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toolCategory, defaultCategoryDefaults, defaultBaselineRules } from './permission-profile.ts';
+import {
+    toolCategory, defaultCategoryDefaults, defaultBaselineRules,
+    SECRET_FILE_GLOBS, secretFileScopes, nativeReadFloorDeny, loosensSecretRead
+} from './permission-profile.ts';
 import { resolvePermission, effectiveRules, type PermissionRequest, type PermissionRule } from './permissions.ts';
 
 test('tool names map to the right categories, unknown tools fall to other', () => {
@@ -116,4 +119,47 @@ test('a stored baseline rule can override a secret deny, since it is my machine'
         'the template case: I can put it back in one edit');
     assert.equal(resolveWith(merged, 'read', '/proj/.env'), 'deny',
         'and overriding the template pattern does not reopen the real one');
+});
+
+test('the native read floor is one bare Read(glob) per secret glob, straight from SECRET_FILE_GLOBS', () => {
+    const deny = nativeReadFloorDeny();
+    // Exactly one entry per glob, in order, nothing else. Bare glob form, so Claude Code matches
+    // it at any depth under the working directory (project root and nested subdirectories both).
+    assert.deepEqual(deny, SECRET_FILE_GLOBS.map((g) => 'Read(' + g + ')'));
+    assert.equal(deny.length, SECRET_FILE_GLOBS.length);
+});
+
+test('the read floor and the write floor derive from the same secret list, so they cannot diverge', () => {
+    const repoRoot = '/proj';
+    const scopes = secretFileScopes(repoRoot);
+    assert.deepEqual(scopes, SECRET_FILE_GLOBS.map((g) => repoRoot + '/**/' + g));
+
+    // The gate's read-deny and write-deny secret scopes are exactly secretFileScopes, so the native
+    // read floor (which comes from the same SECRET_FILE_GLOBS) and the gate floors are one list.
+    const rules = defaultBaselineRules({ repoRoot, writePaths: null, protectedPaths: [] });
+    const gateScopes = (action: 'read' | 'write'): string[] =>
+        rules.filter((r) => r.action === action && r.effect === 'deny' && r.pathScope !== null)
+            .map((r) => r.pathScope as string);
+    for (const s of scopes) {
+        assert.ok(gateScopes('read').includes(s), 'gate read floor covers ' + s);
+        assert.ok(gateScopes('write').includes(s), 'gate write floor covers ' + s);
+    }
+    const nativeGlobs = nativeReadFloorDeny().map((d) => d.slice('Read('.length, -1));
+    assert.deepEqual(nativeGlobs, [...SECRET_FILE_GLOBS]);
+});
+
+test('loosensSecretRead flags a read moving a secret file off deny, and only that', () => {
+    const scope = '/proj/**/.env';
+    assert.equal(loosensSecretRead({ action: 'read', pathScope: scope, effect: 'allow' }), true);
+    assert.equal(loosensSecretRead({ action: 'read', pathScope: scope, effect: 'ask' }), true);
+    // Tightening to deny is fine, so is the write floor, so is an ordinary path or a category rule.
+    assert.equal(loosensSecretRead({ action: 'read', pathScope: scope, effect: 'deny' }), false);
+    assert.equal(loosensSecretRead({ action: 'write', pathScope: scope, effect: 'allow' }), false);
+    assert.equal(loosensSecretRead({ action: 'read', pathScope: '/proj/src', effect: 'allow' }), false);
+    assert.equal(loosensSecretRead({ action: 'read', pathScope: null, effect: 'allow' }), false);
+    // Holds whatever project root the rule carries, including a Windows-style base with a placeholder user.
+    assert.equal(loosensSecretRead({ action: 'read', pathScope: 'C:/Users/you/proj/**/id_rsa', effect: 'ask' }), true);
+    for (const g of SECRET_FILE_GLOBS) {
+        assert.equal(loosensSecretRead({ action: 'read', pathScope: '/p/**/' + g, effect: 'allow' }), true, g);
+    }
 });
