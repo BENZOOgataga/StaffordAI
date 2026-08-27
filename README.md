@@ -133,12 +133,10 @@ Security issues go to `contact@benzoogataga.com`, not to a public issue. See [SE
 
 ## Documentation
 
-The design lives in the repository and I keep it current rather than writing it once. The public entry
-points are this README, [CONTRIBUTING.md](CONTRIBUTING.md) for building and submitting, and
-[SECURITY.md](SECURITY.md). The role definitions a colleague can take are under
-[`docs/agents/`](docs/agents/). The rest of `docs/` is internal design and planning: the plans in
-`docs/plans/`, the handoff notes, the known-issues list, and the release audits. They are honest and
-current, but they are working documents for me, not polished user guides.
+The public entry points are this README, [CONTRIBUTING.md](CONTRIBUTING.md) for building and submitting,
+and [SECURITY.md](SECURITY.md), plus the role definitions a colleague can take under
+[`docs/agents/`](docs/agents/). The rest of `docs/` is internal working material I keep current for
+myself rather than as user documentation.
 
 A user-facing guide beyond this README does not exist yet. If you want one, say so in an issue; it is on
 the list, not done.
@@ -153,7 +151,7 @@ fit the direction. If you want to be sure a change is wanted before you build it
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the build, the branch-and-PR flow, and what CI expects.
 
-## Licence
+## License
 
 Copyright (C) 2026 BENZOOgataga.
 

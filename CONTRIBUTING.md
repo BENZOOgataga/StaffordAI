@@ -14,9 +14,10 @@ PRs. Because this is a personal project with a direction I hold in my head, a PR
 declined even when it is correct, if it does not fit where I am taking Stafford. That is not a judgement on the
 work. If you want to be sure a change is wanted before you build it, open an issue first and ask.
 
-This is enforced, not just stated. The `main` branch requires a review approval before any pull request can
-merge, and my own account is the only bypass. So my branches still merge once CI is green, and a pull request
-from a fork stays blocked until I review and approve it.
+This is enforced, not just stated. The `main` branch ruleset is active and requires one review approval and
+green required checks before any pull request can merge. The only bypass is the repository admin role, which
+is mine, so my own branches merge once CI is green, while a pull request from a fork, which carries no admin
+role, stays blocked until I review and approve it.
 
 ## Build and run
 
@@ -49,8 +50,9 @@ npm test           # the full suite
 - Keep dependencies minimal and pinned, and commit the lockfile.
 - Never commit secrets.
 - Open a PR into `main`. CI has to be green: the test suite (with typecheck) on macOS and Windows, a packaged
-  build per platform, a secret scan over the history and the diff, and CodeQL. A red leg is a real signal, not
-  a flake to rerun.
+  build per platform, a secret scan over the history and the diff, and CodeQL. Treat a red leg as a real
+  failure by default. The one known exception is a `database.test.ts` WAL-timing flake on the CI runner, which
+  I rerun; a rerun is only for that case, never a way past any other red leg.
 
 External PRs are reviewed and merged at my discretion, as above.
 
@@ -65,9 +67,9 @@ ready, and tests for non-trivial logic are part of the change, not a follow-up.
 Never commit a secret. There are no environment secrets to set: `.env.example` documents only optional,
 non-secret development knobs, and `.env` is gitignored.
 
-There are no screenshots in the repository yet. If you add one, it has to come from a clean demo environment.
-A screenshot of a running session can carry the logged-in Claude account, a real home path in a folder field,
-or an employer identifier in a window title or prompt, none of which belong in a public image. Use a demo
-account and a neutral demo path (something like `C:\Users\you\Projects\demo`, never a real home directory),
-and crop anything that still leaks. This is the same reason a public release must be built on a clean machine
-rather than a work one.
+The repository contains screenshots under `docs/images/`. They come from the screenshot harness, which renders
+the real renderer in a sandboxed window fed only by a synthetic stub bridge with demo data, so no real machine
+state can reach the frame. If you add another screenshot, it has to come from a clean demo environment the same
+way: a demo account, a neutral demo path (something like `C:\Users\you\Projects\demo`, never a real home
+directory), no real repository, and crop anything that still leaks. This is the same reason a public release
+must be built on a clean machine rather than a work one.
