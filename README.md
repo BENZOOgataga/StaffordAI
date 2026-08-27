@@ -1,5 +1,11 @@
 # Stafford
 
+[![License](https://img.shields.io/github/license/BENZOOgataga/StaffordAI?color=blue)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/BENZOOgataga/StaffordAI/ci.yml?branch=main&label=CI)](https://github.com/BENZOOgataga/StaffordAI/actions/workflows/ci.yml)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)
+![Built with Electron](https://img.shields.io/badge/Electron-2C2E3B?logo=electron&logoColor=9FEAF9)
+![Built with TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+
 Stafford is a desktop app for running and supervising AI coding agents. You hire Claude Code
 colleagues, give each one a project folder, message it or hand it a task, watch every action it takes
 stream in live, and approve or deny what it does through a permission gate. It turns Claude Code from a
@@ -12,6 +18,8 @@ handful of autonomous workers legible and under control rather than tracking a l
 > warns on first launch. It runs autonomous agents that can read and write files and run commands, held
 > behind a permission gate where you are the approver. Read the Security model and Limitations sections
 > before you point it at anything you care about.
+
+![Stafford showing a colleague's conversation: a roster of colleagues on the left, and on the right a live turn with a file read, a collapsed code diff, test output, and the markdown reply, with an approval banner across the top. All names, projects, and paths shown are demo data.](docs/images/conversation.png)
 
 ## What it does
 
@@ -38,6 +46,10 @@ handful of autonomous workers legible and under control rather than tracking a l
 - Colleagues are contained. A project cannot point at Stafford's own directory, refused when you set it
   and again at spawn. Each session runs against a Stafford-managed config, so your personal Claude Code
   settings, memory, plugins, and your other repositories do not leak into a colleague's context.
+
+![The Tasks board: tasks across colleagues grouped by state, with columns for waiting for you, working, assigned, approved, and failed, each card showing the colleague, the task, and its result branch. Demo data.](docs/images/tasks.png)
+
+![The Projects tab: two demo projects with their folders, one flagged to repoint a folder that has moved, a colleague bound to the first, and a parked colleague with a control to rebind it to a project. Demo data.](docs/images/projects.png)
 
 ## Requirements
 

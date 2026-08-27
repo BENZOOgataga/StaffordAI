@@ -9,25 +9,28 @@
 
 const { contextBridge } = require('electron');
 
+// Demo data only. Neutral names from the built-in pool, a neutral demo user in every path, and demo
+// project names, so a screenshot for the README carries no real identifier of any kind.
 const cards = [
-    { id: 'a', name: 'Marion', role: 'PM assistant', state: 'not_reporting', project: 'test', projectId: 'p1', task: null, apprentices: 0, queued: 0, since: null, contextLost: false },
-    { id: 'b', name: 'Alexi', role: 'PM assistant', state: 'idle', project: 'test', projectId: 'p1', task: null, apprentices: 0, queued: 0, since: null, contextLost: false }
+    { id: 'b', name: 'Alexi', role: 'Developer', state: 'working', project: 'Acme Web', projectId: 'p1', task: null, apprentices: 0, queued: 0, since: '2026-08-25T08:58:00Z', contextLost: false },
+    { id: 'a', name: 'Marion', role: 'PM assistant', state: 'waiting_for_you', project: 'Acme Web', projectId: 'p1', task: null, apprentices: 0, queued: 0, since: null, contextLost: false }
 ];
 const unsub = () => () => {};
 
 contextBridge.exposeInMainWorld('stafford', {
     health: async () => ({ ok: true, platform: 'win32', startedAt: '' }),
     projects: {
-        list: async () => ({ projects: [{ id: 'p1', name: 'test' }] }),
+        list: async () => ({ projects: [{ id: 'p1', name: 'Acme Web' }] }),
         create: async () => ({ id: 'p2', name: 'x' }),
-        pickFolder: async () => '/example/project-folder',
-        // The Projects management tab: two projects (one with a missing folder), a bound colleague, and
-        // a parked colleague, so a screenshot shows every state the tab renders at once.
+        pickFolder: async () => 'C:/Users/dev/Projects/acme-web',
+        // The Projects management tab: two projects (one with a missing folder, to show the repoint
+        // affordance), a bound colleague, and a parked colleague, so a screenshot shows the states the
+        // tab manages at once. Every path uses a neutral demo user, never a real home directory.
         manageView: async () => ({
             projects: [
-                { id: 'p1', name: 'Stafford', repos: [{ path: 'C:/Users/dev/Git/stafford', label: 'stafford' }], folderValid: true,
-                    colleagues: [{ id: 'b', name: 'Alexi', title: 'PM assistant', state: 'idle', parked: false }] },
-                { id: 'p2', name: 'Archive', repos: [{ path: 'C:/Users/dev/Documents/archive', label: 'archive' }], folderValid: false, colleagues: [] }
+                { id: 'p1', name: 'Acme Web', repos: [{ path: 'C:/Users/dev/Projects/acme-web', label: 'acme-web' }], folderValid: true,
+                    colleagues: [{ id: 'b', name: 'Alexi', title: 'Developer', state: 'working', parked: false }] },
+                { id: 'p2', name: 'Design System', repos: [{ path: 'C:/Users/dev/Projects/design-system', label: 'design-system' }], folderValid: false, colleagues: [] }
             ],
             parked: [{ id: 'a', name: 'Marion', title: 'PM assistant', state: 'idle', parked: true }]
         }),
