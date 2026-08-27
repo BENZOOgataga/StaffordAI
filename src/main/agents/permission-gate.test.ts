@@ -266,6 +266,36 @@ test('M1: the case fold does not defeat traversal resolution, which still happen
         'variation would slip through both checks');
 });
 
+test('the approval banner path keeps the tool casing, while the resolver still matches on the folded form', async () => {
+    // The banner is the single most security-critical string in the app. A person compares it to what
+    // their file explorer shows, so it must carry the native casing the tool used, not the gate's
+    // internal lowercased, forward-slashed form. Matching still happens on the folded form.
+    const captured: AskRequest[] = [];
+    const onAsk = async (r: AskRequest): Promise<AskOutcome> => { captured.push(r); return { approve: false, note: null }; };
+    const askWrites: PermissionRuleRecord = {
+        id: 'ask-writes', projectId: 'proj', hireId: null,
+        action: 'write', pathScope: CWD, commandPattern: null, effect: 'ask',
+        createdAt: '2026-01-01T00:00:00Z', createdBy: 'owner'
+    };
+    const gate = makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => [askWrites],
+        protectedPaths: [USERDATA],
+        normalisePath: FOLD_CASE_INSENSITIVE, // the win32 and darwin rule: lowercase
+        onAsk
+    })({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+
+    const target = path.join(CWD, 'Notes', 'Hello2.txt'); // mixed case the person would recognize
+    await behavior(gate('Write', { file_path: target }));
+
+    assert.equal(captured.length, 1, 'the ask fired, so the folded path matched the ask rule');
+    const shown = captured[0]!.path;
+    assert.ok(shown !== null, 'the banner has a path to show');
+    assert.match(shown, /Notes/, 'the original directory casing is preserved for display');
+    assert.match(shown, /Hello2\.txt/, 'the original leaf casing is preserved for display');
+    assert.notEqual(shown, FOLD_CASE_INSENSITIVE(shown), 'the shown path is not the lowercased folded form');
+});
+
 test('M1: folding both sides does not break an ordinary in-scope write', async () => {
     // The failure mode of folding one side only: nothing matches and everything falls to
     // the category default. This proves the normal path still resolves.

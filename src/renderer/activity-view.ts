@@ -149,14 +149,33 @@ const VERB_WORDS: Record<Lang, Record<Verb, string>> = {
 };
 
 /**
+ * The present-tense words, for a call that has not resolved successfully yet: one that is still
+ * running or is paused on an approval, and one that failed. A pending write must not read "wrote",
+ * which claims a thing that has not happened and is the exact moment the wording is load bearing,
+ * since it is what the person decides against. Past tense is earned only by a successful result.
+ */
+const VERB_WORDS_RUNNING: Record<Lang, Record<Verb, string>> = {
+    en: { edited: 'editing', wrote: 'writing', ran: 'running', read: 'reading', searched: 'searching', listed: 'listing', delegated: 'delegating', used: 'using' },
+    fr: { edited: 'modifie', wrote: 'crée', ran: 'exécute', read: 'lit', searched: 'cherche', listed: 'liste', delegated: 'délègue', used: 'utilise' }
+};
+
+/** The tool status a phrase is built for. Only a resolved success reads in the past tense. */
+export type PhraseStatus = 'running' | 'ok' | 'error' | 'incomplete';
+
+/**
  * The plain phrase for a tool action, localized. A known tool reads as its verb plus
  * its target ("edited f.ts"); an unknown tool names itself ("used SomeTool x"), so a
  * new tool still renders rather than vanishing. Built only from the tool and target
  * the event carries, never from a result body.
+ *
+ * The tense follows the status. A successful call reads in the past ("wrote f.ts"); a call that is
+ * running, paused on approval, failed, or interrupted reads in the present ("writing f.ts"), so the
+ * island never claims an action that has not happened. Defaults to the past-tense success form, which
+ * is what a historical row with no live status is.
  */
-export function toolPhrase(tool: string, target: string | null, lang: Lang = 'en'): string {
+export function toolPhrase(tool: string, target: string | null, lang: Lang = 'en', status: PhraseStatus = 'ok'): string {
     const verb = TOOL_VERBS[tool] ?? 'used';
-    const word = VERB_WORDS[lang][verb];
+    const word = (status === 'ok' ? VERB_WORDS : VERB_WORDS_RUNNING)[lang][verb];
     if (verb === 'used') return word + ' ' + tool + (target ? ' ' + target : '');
     return word + (target ? ' ' + target : '');
 }

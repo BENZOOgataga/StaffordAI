@@ -44,7 +44,7 @@ function ToolIsland({ block, lang }: { block: Extract<LiveBlock, { kind: 'tool' 
                 <FeedIconGlyph icon={feedIcon(row)}
                     className={cn('size-3.5 shrink-0', isError ? 'text-status-error' : 'text-muted-foreground')} />
                 <span className={cn('min-w-0 flex-1 truncate', isError ? 'text-status-error' : 'text-muted-foreground')}>
-                    {toolPhrase(block.name || 'a tool', block.target, lang)}
+                    {toolPhrase(block.name || 'a tool', block.target, lang, block.status)}
                 </span>
                 {isRunning ? (
                     <span className="bg-muted-foreground/50 size-1.5 shrink-0 animate-pulse rounded-full" />
