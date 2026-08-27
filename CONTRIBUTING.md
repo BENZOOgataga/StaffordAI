@@ -48,7 +48,26 @@ npm test           # the full suite
 - Conventional Commits for messages (`feat:`, `fix:`, `docs:`, and so on).
 - Keep dependencies minimal and pinned, and commit the lockfile.
 - Never commit secrets.
-- Open a PR into `main`. CI has to be green: typecheck, the test suite on macOS and Windows, a packaged build
-  per platform, and a secret scan. A red leg is a real signal, not a flake to rerun.
+- Open a PR into `main`. CI has to be green: the test suite (with typecheck) on macOS and Windows, a packaged
+  build per platform, a secret scan over the history and the diff, and CodeQL. A red leg is a real signal, not
+  a flake to rerun.
 
 External PRs are reviewed and merged at my discretion, as above.
+
+## Tests and types
+
+`npm test` runs the whole suite and reports a count; a run that reports zero tests is a failure, not a pass.
+`npm run typecheck` runs `tsc` across the node, preload, and web configs. Both have to be clean before a PR is
+ready, and tests for non-trivial logic are part of the change, not a follow-up.
+
+## Secrets and screenshots
+
+Never commit a secret. There are no environment secrets to set: `.env.example` documents only optional,
+non-secret development knobs, and `.env` is gitignored.
+
+There are no screenshots in the repository yet. If you add one, it has to come from a clean demo environment.
+A screenshot of a running session can carry the logged-in Claude account, a real home path in a folder field,
+or an employer identifier in a window title or prompt, none of which belong in a public image. Use a demo
+account and a neutral demo path (something like `C:\Users\you\Projects\demo`, never a real home directory),
+and crop anything that still leaks. This is the same reason a public release must be built on a clean machine
+rather than a work one.
