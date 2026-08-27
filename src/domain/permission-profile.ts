@@ -91,12 +91,40 @@ export const SECRET_FILE_GLOBS: readonly string[] = [
 ];
 
 /**
+ * Template files that carry no secret and are safe to read and write, even though their names match a
+ * secret glob above. `.env.example` matches `.env.*`, and this repository commits one that CONTRIBUTING
+ * points contributors at, so blanket-denying it stopped a colleague working on Stafford from reading a
+ * file our own docs describe. These are the conventional no-secret template names: an example, a sample,
+ * a template, and the PHP-world `.dist`. The set is deliberately small and closed. Denying `.env.*` stays
+ * complete, so no secret suffix slips through; these four names are the only carve-out.
+ *
+ * A file named exactly one of these that a person chose to fill with a real secret would be readable,
+ * which is a naming choice against every convention and a smaller risk than a colleague on Stafford not
+ * being able to read the committed template. That is the trade, stated rather than hidden.
+ */
+export const SECRET_FILE_EXCEPTIONS: readonly string[] = [
+    '.env.example',
+    '.env.sample',
+    '.env.template',
+    '.env.dist'
+];
+
+/**
  * The secret-file scopes anchored to a project root, the form the gate compares against. Both the
  * gate's read and write deny rules (through `defaultBaselineRules`) and the effective-policy display
  * come from this one function, so the read floor and the write floor cannot name different files.
  */
 export function secretFileScopes(repoRoot: string): string[] {
     return SECRET_FILE_GLOBS.map((glob) => repoRoot + '/**/' + glob);
+}
+
+/**
+ * The template-exception scopes anchored to a project root. These become allow rules that beat the
+ * `.env.*` deny by specificity in the gate, so a template is readable and writable there. From the same
+ * SECRET_FILE_EXCEPTIONS the native floor and the write-path refusal read, so the carve-out is one list.
+ */
+export function exceptionFileScopes(repoRoot: string): string[] {
+    return SECRET_FILE_EXCEPTIONS.map((name) => repoRoot + '/**/' + name);
 }
 
 /**
@@ -120,7 +148,14 @@ export function secretFileScopes(repoRoot: string): string[] {
  * as the README documents. This closes the in-cwd file-tool read hole, nothing wider.
  */
 export function nativeReadFloorDeny(): string[] {
-    return SECRET_FILE_GLOBS.map((glob) => 'Read(' + glob + ')');
+    // The deny entries first, then the template negations. Order matters: a gitignore-style `!` entry
+    // re-includes a file an earlier pattern denied, so the negations have to come after the `.env.*`
+    // deny to lift the templates back out of it. Confirmed against real Claude Code: with the negation
+    // after the broad deny, `.env` and `.env.production` stay denied while `.env.example` reads.
+    return [
+        ...SECRET_FILE_GLOBS.map((glob) => 'Read(' + glob + ')'),
+        ...SECRET_FILE_EXCEPTIONS.map((name) => 'Read(!' + name + ')')
+    ];
 }
 
 /**
@@ -135,6 +170,8 @@ export function loosensSecretRead(
 ): boolean {
     if (rule.action !== 'read' || rule.effect === 'deny' || rule.pathScope === null) return false;
     const scope = rule.pathScope;
+    // A template exception is not a secret, so loosening its read is a normal edit, not a floor breach.
+    if (SECRET_FILE_EXCEPTIONS.some((name) => scope.endsWith('/**/' + name))) return false;
     return SECRET_FILE_GLOBS.some((glob) => scope.endsWith('/**/' + glob));
 }
 
@@ -200,6 +237,15 @@ export function defaultBaselineRules(input: DefaultProfileInputs): PermissionRul
     for (const scope of secretFileScopes(input.repoRoot)) {
         rules.push({ action: 'read', pathScope: scope, commandPattern: null, effect: 'deny' });
         rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'deny' });
+    }
+
+    // Template files carry no secret, so they are allowed back for read and write. A template scope is
+    // more specific than the `.env.*` deny (it names the file, no trailing wildcard), so it wins the
+    // resolver on specificity. This is the gate's half of the same carve-out the native floor makes with
+    // its `!` negations, from the same SECRET_FILE_EXCEPTIONS list, so the two cannot disagree.
+    for (const scope of exceptionFileScopes(input.repoRoot)) {
+        rules.push({ action: 'read', pathScope: scope, commandPattern: null, effect: 'allow' });
+        rules.push({ action: 'write', pathScope: scope, commandPattern: null, effect: 'allow' });
     }
 
     for (const pattern of DESTRUCTIVE_PATTERNS) {
