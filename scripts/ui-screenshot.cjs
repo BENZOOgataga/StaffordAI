@@ -64,7 +64,15 @@ async function main() {
     const web = VIEW
         ? { offscreen: true, contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'ui-stub-preload.cjs') }
         : { offscreen: true };
-    const win = new BrowserWindow({ width: Number(process.env.SHOT_W||1280), height: Number(process.env.SHOT_H||900), show: false, webPreferences: web });
+    // Per-view capture heights for the README screenshots. The projects and tasks views fill only the
+    // top of a full-height window, so a default-height capture leaves half a pane of empty dark space
+    // below the content. These heights end the window shortly after the content with normal padding,
+    // so the images read as a shorter window rather than a mostly-empty one. SHOT_H overrides them, and
+    // any other view falls back to the full 900. The captured pixel size is this height times the
+    // display scaling.
+    const VIEW_CAPTURE_HEIGHTS = { projects: 496, board: 560 };
+    const captureHeight = Number(process.env.SHOT_H || VIEW_CAPTURE_HEIGHTS[VIEW] || 900);
+    const win = new BrowserWindow({ width: Number(process.env.SHOT_W||1280), height: captureHeight, show: false, webPreferences: web });
     await win.loadURL('http://127.0.0.1:' + port + '/' + PAGE);
     await new Promise((r) => setTimeout(r, 1200));
     if (VIEW) {
