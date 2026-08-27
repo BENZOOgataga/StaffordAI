@@ -42,6 +42,55 @@ function gateFor(
 const behavior = async (decision: PermissionDecision | Promise<PermissionDecision>): Promise<string> =>
     (await decision).behavior;
 
+/** A gate whose stored rules loosen the whole `other` category to allow, the config that used to let an
+ * MCP tool bypass the protected/secret floor. */
+function gateWithOtherAllowed() {
+    const loosen: PermissionRuleRecord = {
+        id: 'loosen-other', projectId: 'proj', hireId: null,
+        action: 'other', pathScope: null, commandPattern: null, effect: 'allow',
+        createdAt: '2026-01-01T00:00:00Z', createdBy: 'owner'
+    };
+    const g = makePermissionGate({
+        getPolicy: () => policy(),
+        getStoredRules: () => [loosen],
+        protectedPaths: [USERDATA],
+        normalisePath: (v: string) => v
+    });
+    return g({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+}
+
+const PROTECTED_DB = path.join(USERDATA, 'Stafford', 'stafford.db');
+const SECRET_ENV = path.join(CWD, 'config', '.env');
+
+test('THE FLOOR: an other-category (MCP) tool cannot reach a protected path even when other is allowed', async () => {
+    const tool = gateWithOtherAllowed();
+    // Sanity: the loosen is real, an other-category tool with no protected target is allowed.
+    assert.equal(await behavior(tool('mcp__db__query', { sql: 'select 1' })), 'allow', 'other is genuinely loosened');
+    assert.equal(await behavior(tool('mcp__fs__read_file', { path: path.join(CWD, 'src', 'main.ts') })), 'allow', 'a harmless path is unaffected');
+    // The floor: a protected target through an MCP tool is denied regardless of the loosened other.
+    assert.equal(await behavior(tool('mcp__fs__read_file', { path: PROTECTED_DB })), 'deny', 'protected db via MCP is denied');
+    assert.equal(await behavior(tool('mcp__fs__read_text', { absolute_path: PROTECTED_DB })), 'deny', 'a non-standard path key is still caught');
+});
+
+test('THE FLOOR: an other-category tool cannot reach a secret file even when other is allowed, including a nested arg', async () => {
+    const tool = gateWithOtherAllowed();
+    assert.equal(await behavior(tool('mcp__fs__read_file', { path: SECRET_ENV })), 'deny', 'a project .env via MCP is denied');
+    assert.equal(await behavior(tool('mcp__x__op', { args: { files: [SECRET_ENV] } })), 'deny', 'a secret nested in an array arg is caught');
+});
+
+test('the floor does not change the default: an other tool with no protected target still asks', async () => {
+    // No loosen, onAsk denies. An other tool with a harmless path takes the other default (ask -> deny
+    // here), NOT the floor deny, so nothing that was prompted before is short-circuited.
+    let asked = false;
+    const tool = gateFor(policy(), async () => { asked = true; return { approve: false, note: null }; });
+    assert.equal(await behavior(tool('mcp__fs__read_file', { path: path.join(CWD, 'src', 'main.ts') })), 'deny');
+    assert.equal(asked, true, 'the harmless other tool went through the ask flow, not the floor');
+    // A protected target still hits the floor at the default too (never silently allowed).
+    asked = false;
+    assert.equal(await behavior(tool('mcp__fs__read_file', { path: PROTECTED_DB })), 'deny');
+    assert.equal(asked, false, 'the protected target was refused by the floor before the ask flow');
+});
+
 test('an in-scope read and write are allowed; ordinary shell is allowed', async () => {
     const tool = gateFor(policy());
     assert.equal(await behavior(tool('Read', { file_path: 'src/main.ts' })), 'allow');

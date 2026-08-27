@@ -229,6 +229,60 @@ function requestCommand(input: unknown): string | null {
     return typeof command === 'string' && command.length > 0 ? command : null;
 }
 
+/**
+ * The plausible filesystem paths anywhere in a tool's arbitrary input: absolute strings, or strings
+ * carrying a path separator. Recursive so a nested argument is seen, and bounded so a pathological
+ * input cannot spin. Used to apply the protected/secret floor to an other-category (mcp__ or
+ * unrecognized) tool, whose path argument does not go through requestPath's fixed key list. A string
+ * that is not path-shaped is skipped, so a tool that names no path contributes nothing and is
+ * unaffected. Over-collecting is safe: a collected string only ever matters if it resolves to a
+ * protected or secret target, and denying that is the point.
+ */
+function candidatePaths(input: unknown): string[] {
+    const out: string[] = [];
+    const visit = (value: unknown, depth: number): void => {
+        if (out.length >= 64 || depth > 6) return;
+        if (typeof value === 'string') {
+            if (value.length > 0 && value.length <= 4096 && (path.isAbsolute(value) || /[\\/]/.test(value))) {
+                out.push(value);
+            }
+        } else if (Array.isArray(value)) {
+            for (const item of value) visit(item, depth + 1);
+        } else if (value !== null && typeof value === 'object') {
+            for (const val of Object.values(value as Record<string, unknown>)) visit(val, depth + 1);
+        }
+    };
+    visit(input, 0);
+    return out;
+}
+
+/**
+ * The hard protected/secret floor for an other-category tool. Returns the first path in the tool's
+ * input that a plain read would be denied on, or null when the tool names no protected or secret
+ * target. It resolves each candidate through the same pipeline requestPath uses, then asks the same
+ * rules what a read of it resolves to: read defaults to allow, so a read-deny can only come from a
+ * protected-path or secret-file deny, which is exactly the floor. Using the read resolution means the
+ * floor is never stricter than a read (an explicit user loosen of a protected read is still honored)
+ * and it cannot be bypassed by how the other category is configured, since it runs before that
+ * resolution and independently of it.
+ */
+function protectedFloorHit(
+    input: unknown,
+    rules: readonly PermissionRule[],
+    defaults: CategoryDefaults,
+    rawRoot: string,
+    normalise: (value: string) => string,
+    realpath: (value: string) => string
+): string | null {
+    for (const raw of candidatePaths(input)) {
+        const resolved = resolveForCompare(normalise, realpath, rawRoot, raw);
+        if (resolvePermission(rules, { action: 'read', path: resolved, command: null }, defaults) === 'deny') {
+            return resolved;
+        }
+    }
+    return null;
+}
+
 function describe(request: PermissionRequest): string {
     if (request.path !== null) return request.action + ' on ' + request.path;
     if (request.command !== null) {
@@ -351,6 +405,27 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
             path: requestPath(toolName, input, rawRoot, deps.normalisePath, deps.realPath ?? defaultRealPath),
             command: requestCommand(input)
         };
+
+        // The hard protected/secret floor for an other-category tool. Every mcp__ tool and any
+        // unrecognized tool categorizes as 'other', which resolves against the other rules only, and
+        // its path argument does not go through requestPath's fixed keys. So a protected path or a
+        // secret file reached through such a tool would otherwise skip the read/write denies entirely,
+        // and be silently allowed the moment 'other' is loosened to allow. This refuses that target
+        // regardless of how 'other' is configured, using the same rules a read uses, so the floor is a
+        // real floor and not a second, divergent copy of the protected set. A tool that names no
+        // protected or secret path is unaffected and still follows the normal other resolution below
+        // (ask by default), so nothing that was prompted before is now denied.
+        if (request.action === 'other') {
+            const blocked = protectedFloorHit(input, rules, defaults, rawRoot, deps.normalisePath, deps.realPath ?? defaultRealPath);
+            if (blocked !== null) {
+                return {
+                    behavior: 'deny',
+                    message: 'The project permission policy protects ' + blocked + ', so this session cannot ' +
+                        'reach it through this tool. If you need it, ask the user to grant it in Stafford.'
+                };
+            }
+        }
+
         const effect = resolvePermission(rules, request, defaults);
 
         // An ask pauses the turn on a pending approval when a handler is wired; the seam
