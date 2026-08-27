@@ -114,9 +114,12 @@ The gate also has weak spots, and they matter. A denied shell command is best-ef
 decides for itself which commands need asking about and does not put every one through the gate; treat a
 shell-category deny as a strong default, not a hard wall, and if you need a hard boundary on what a
 colleague can run, run it against a repository on a machine or in a container where the dangerous thing
-is not reachable. Reads are broad by default: a colleague can read files outside the project folder that
-are not in a protected directory, which is a privacy consideration rather than a way to escape the
-write scope. And you are the approver. The gate makes the risky actions visible and refusable, but it is
+is not reachable. Reads are broad, with two exceptions. A colleague cannot read your protected credential
+directories, and it cannot read the secret files inside the project itself, `.env` and its variants,
+private keys, `credentials.json` and the like, which are denied before the read runs. The no-secret
+templates such as `.env.example` stay readable. Any other file, in the project or outside it, is readable,
+which is a privacy consideration rather than a way to escape the write scope. A shell command can still
+read a file the file tools deny, so that boundary is best-effort too. And you are the approver. The gate makes the risky actions visible and refusable, but it is
 a supervision tool, not a sandbox, and you should understand what you are letting a colleague do.
 
 Security issues go to `contact@benzoogataga.com`, not to a public issue. See [SECURITY.md](SECURITY.md).

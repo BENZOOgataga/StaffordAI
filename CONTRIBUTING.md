@@ -51,8 +51,12 @@ npm test           # the full suite
 - Never commit secrets.
 - Open a PR into `main`. CI has to be green: the test suite (with typecheck) on macOS and Windows, a packaged
   build per platform, a secret scan over the history and the diff, and CodeQL. Treat a red leg as a real
-  failure by default. The one known exception is a `database.test.ts` WAL-timing flake on the CI runner, which
-  I rerun; a rerun is only for that case, never a way past any other red leg.
+  failure by default. The only exceptions are a short named list of known environmental flakes, and a rerun
+  is only ever for a leg on that list, never a way past any other red leg. The list today is the
+  `database.test.ts` WAL-timing flake and the `killTree` detached-grandchild reaping test, both timing
+  sensitive on the shared CI runner and neither one something a normal diff can cause. When a leg starts
+  flaking, it goes on this list as its own deliberate change, so a rerun is always against a documented
+  name rather than a judgement call in the moment.
 
 External PRs are reviewed and merged at my discretion, as above.
 
