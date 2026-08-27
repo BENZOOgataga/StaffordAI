@@ -53,6 +53,8 @@
  * POSIX permission assertions run on any platform the test forces.
  */
 
+import { nativeReadFloorDeny } from '../../domain/permission-profile.ts';
+
 /**
  * The claudeMdExcludes globs that blank a colleague's user-scope memory: Benzoo's personal
  * `~/.claude/CLAUDE.md` and everything under `~/.claude/rules/`.
@@ -76,6 +78,27 @@ export function withUserMemoryExcludes(
 ): Record<string, unknown> {
     const existing = Array.isArray(settings.claudeMdExcludes) ? (settings.claudeMdExcludes as unknown[]) : [];
     return { ...settings, claudeMdExcludes: [...existing, ...userMemoryExcludes(realHome)] };
+}
+
+/**
+ * Writes the native read floor into the settings the seed will write. This is the enforcement point
+ * for an in-cwd secret read, which never reaches the permission gate because Claude Code auto-allows
+ * its read-only tools inside the working directory. Seeding it belongs here, not in a caller, so it is
+ * not something a spawn path can forget: every managed config the seed writes carries the floor, on
+ * every spawn, whatever settings the caller passed.
+ *
+ * Fail closed. An empty floor would mean a colleague session with no read protection, the whole outcome
+ * this guards against, so refuse to build the settings rather than seed a session without it. The seed
+ * throws, and the runner turn aborts, exactly as an unwritable settings file already does.
+ */
+export function withReadFloor(
+    settings: Record<string, unknown>, floor: () => string[] = nativeReadFloorDeny
+): Record<string, unknown> {
+    const deny = floor();
+    if (deny.length === 0) throw new Error('native read floor is empty; refusing to seed a session without it');
+    const existing = (settings.permissions && typeof settings.permissions === 'object' && !Array.isArray(settings.permissions))
+        ? settings.permissions as Record<string, unknown> : {};
+    return { ...settings, permissions: { ...existing, deny } };
 }
 
 /** The one directory mode: owner-only (rwx------). */
@@ -239,7 +262,7 @@ export function seedManagedConfig(deps: SeedManagedConfigDeps, cwd: string): See
     //    tell it to load a skill it cannot reach. Excluding the whole user memory here means
     //    a colleague starts with a blank user slate; project memory (the repo's own CLAUDE.md)
     //    is untouched and still loads.
-    const settings = withUserMemoryExcludes(deps.settings ?? {}, realHome);
+    const settings = withReadFloor(withUserMemoryExcludes(deps.settings ?? {}, realHome));
     fs.writeText(fs.join(managedDir, 'settings.json'), JSON.stringify(settings), MANAGED_FILE_MODE);
 
     return {

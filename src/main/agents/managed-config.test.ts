@@ -11,9 +11,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
-    seedManagedConfig, userMemoryExcludes, MANAGED_DIR_MODE, MANAGED_FILE_MODE,
+    seedManagedConfig, withReadFloor, userMemoryExcludes, MANAGED_DIR_MODE, MANAGED_FILE_MODE,
     type ManagedFs, type SeedManagedConfigDeps
 } from './managed-config.ts';
+import { nativeReadFloorDeny } from '../../domain/permission-profile.ts';
 
 interface Entry { data: string; mode: number; mtime: number; }
 
@@ -338,4 +339,58 @@ test('a failed OS read never puts the underlying reason in the warning', () => {
         assert.ok(!w.includes('secret-bearing failure detail'),
             'an error from a credential read is the most likely place for a token to leak into a log');
     }
+});
+
+// --- the native read floor seeded into settings.json ------------------------
+//
+// Reads inside the working directory never reach the gate, because Claude Code auto-allows
+// read-only tools in the cwd and never emits a can_use_tool request. The floor is enforced
+// natively instead: permissions.deny entries in the managed settings.json, which the CLI honors
+// before the tool runs. The seed writes them itself, so a first run with no prior store creates the
+// floor rather than depending on a caller or a pre-seeded directory. This is the case a shared dev and
+// packaged userData masked in manual testing, so it is covered here from an empty starting state.
+
+function managedSettings(fs: ReturnType<typeof fakeFs>): Record<string, unknown> {
+    return JSON.parse(fs.readText(MANAGED + '/settings.json')) as Record<string, unknown>;
+}
+
+test('first run with no prior store: the seed creates settings.json and writes the full read floor', () => {
+    // Empty userData: nothing seeded, no settings file, no store. The seed has to create the floor.
+    const fs = fakeFs();
+    assert.equal(fs.files.has(MANAGED + '/settings.json'), false, 'starts with no settings file');
+    // The caller passes no permissions; the seed adds the floor itself.
+    seedManagedConfig(deps(fs), CWD);
+    const settings = managedSettings(fs);
+    const perms = settings.permissions as { deny?: unknown } | undefined;
+    // The full deny list plus the template negations, straight from the shared source.
+    assert.deepEqual(perms?.deny, nativeReadFloorDeny(), 'permissions.deny is the full native read floor');
+    assert.ok(Array.isArray(settings.claudeMdExcludes), 'claudeMdExcludes co-exists, neither clobbers the other');
+});
+
+test('first run, fail closed: a settings.json that cannot be written aborts the seed', () => {
+    // Same empty starting state, but the settings write fails. The seed must throw, so the runner turn
+    // aborts rather than spawning a colleague against a managed config with no read floor.
+    const base = fakeFs();
+    const throwing: ManagedFs = {
+        ...base,
+        writeText: (p, data, mode) => {
+            if (p.endsWith('settings.json')) throw new Error('EACCES settings.json');
+            base.writeText(p, data, mode);
+        }
+    };
+    assert.throws(
+        () => seedManagedConfig({ ...deps(base), fs: throwing }, CWD),
+        /settings\.json/,
+        'the seed throws rather than returning, so the runner turn aborts'
+    );
+});
+
+test('withReadFloor sets the deny list and fails closed on an empty floor', () => {
+    // The unit behind the seed. It writes the floor over any caller permissions and refuses an empty one.
+    const out = withReadFloor({ permissions: { deny: ['Read(should-be-replaced)'], allow: ['Read(keep)'] } });
+    const perms = out.permissions as { deny: unknown; allow: unknown };
+    assert.deepEqual(perms.deny, nativeReadFloorDeny(), 'the floor replaces any caller deny');
+    assert.deepEqual(perms.allow, ['Read(keep)'], 'other permission keys are preserved');
+    // A can-not-happen guard, exercised by handing it a floor builder that returns nothing.
+    assert.throws(() => withReadFloor({}, () => []), /empty/, 'an empty floor refuses to build settings');
 });
