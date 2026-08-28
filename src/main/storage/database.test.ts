@@ -35,6 +35,16 @@ test('creates the Stafford directory and the database file under the app data di
     }
 });
 
+test('opens with a busy_timeout so a transient lock waits rather than throwing at once', () => {
+    withDb((open) => {
+        // Asserted, not assumed: a lock touch from an antivirus scan, the Windows indexer, or a
+        // database browser waits up to this long instead of surfacing an immediate SQLITE_BUSY. Read
+        // back from the connection, so this proves the pragma took, not that the call was made.
+        const timeout = open.db.pragma('busy_timeout', { simple: true });
+        assert.equal(timeout, 3000, 'busy_timeout is 3000 ms on open');
+    });
+});
+
 test('an overridden dirName puts the store in its own folder, beside the default not in it', () => {
     // A verification run under a distinct app id passes its id as dirName, so its
     // store sits next to the real Stafford folder rather than sharing it. The default
