@@ -7,7 +7,7 @@ import { CHANNEL_SELF_SENDER, type ChannelMessageRow } from '../../shared/ipc.ts
 // grouping behaviour under many senders: attribution per group, no cross-sender merge.
 
 function msg(id: string, senderId: string, body: string, at = '2026-08-21T10:00:0' + id): ChannelMessageRow {
-    return { id, projectId: 'p', senderId, kind: 'message', body, reference: null, at };
+    return { id, projectId: 'p', senderId, kind: 'message', body, reference: null, at, synthetic: false };
 }
 const cards = [{ id: 'a', name: 'Alexi' }, { id: 'm', name: 'Marion' }];
 const nameOf = (s: string): string =>

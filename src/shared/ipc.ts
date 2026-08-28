@@ -513,6 +513,11 @@ export interface ChannelMessageRow {
     readonly body: string;
     readonly reference: { readonly kind: string; readonly value: string } | null;
     readonly at: string;
+    /**
+     * True when this is a CLI or system response, a slash command's output, not a colleague reply.
+     * The Conversation renders it as a system line. Persisted, so a reopen keeps the distinction.
+     */
+    readonly synthetic: boolean;
 }
 
 /** A coalesced action's outcome, as the renderer sees it. */

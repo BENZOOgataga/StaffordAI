@@ -36,7 +36,31 @@ export interface ThreadEvent {
     readonly waiting: boolean;
 }
 
-export type ThreadItem = ThreadGroup | ThreadEvent;
+/**
+ * A slash command or its CLI response, rendered as a centered system line rather than a chat bubble,
+ * the same treatment an event gets. `command` is the person invoking the tool; `response` is the CLI
+ * answering. Neither is conversation, so neither reads as the person or the colleague talking.
+ */
+export interface ThreadCli {
+    readonly kind: 'cli';
+    readonly id: string;
+    readonly at: string;
+    readonly text: string;
+    readonly role: 'command' | 'response';
+}
+
+export type ThreadItem = ThreadGroup | ThreadEvent | ThreadCli;
+
+/**
+ * Whether a person's message is a slash command rather than a line of conversation. A command is a
+ * single leading-slash word, optionally with arguments: `/compact`, `/model sonnet`. A bare path such
+ * as `/etc/hosts` is not a command, because the first token is followed by another slash, so it stays
+ * an ordinary message. The residual edge is a bare single-segment path like `/tmp`, which reads as a
+ * command; it still delivers correctly, only its line style differs, which is the safe direction.
+ */
+export function isSlashCommand(text: string): boolean {
+    return /^\/[A-Za-z][A-Za-z0-9_-]*(\s|$)/.test(text.trimStart());
+}
 
 /**
  * Builds the grouped thread. Message rows from the same sender in a row fold into one
@@ -63,6 +87,28 @@ export function buildThread(
                 text: eventLabel(row.body, nameOf(row.senderId), lang),
                 waiting: row.body === 'waiting_for_you'
             });
+            continue;
+        }
+        // A synthetic response is a CLI answer, not the colleague talking. An empty one still shows a
+        // line, so a command that ran and returned nothing is not silence. It breaks the grouping.
+        if (row.synthetic) {
+            current = null;
+            const empty = row.body.trim() === '';
+            items.push({
+                kind: 'cli',
+                id: row.id,
+                at: row.at,
+                text: empty ? (lang === 'fr' ? 'Aucune sortie' : 'No output') : row.body,
+                role: 'response'
+            });
+            continue;
+        }
+        // The person's own slash command is an instruction to the tool, not a line of conversation, so
+        // it renders as a command line rather than a user bubble. A message that only looks like a path
+        // is left as an ordinary message.
+        if (row.senderId === self && isSlashCommand(row.body)) {
+            current = null;
+            items.push({ kind: 'cli', id: row.id, at: row.at, text: row.body.trim(), role: 'command' });
             continue;
         }
         const message: ThreadMessage = { id: row.id, body: row.body, at: row.at, reference: row.reference };

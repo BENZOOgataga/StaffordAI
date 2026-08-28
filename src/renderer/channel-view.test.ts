@@ -10,7 +10,7 @@ import { eventLabel, referenceLabel, channelRowClass, resolveReplyTarget, Timeli
 import { CHANNEL_SELF_SENDER, type ChannelMessageRow } from '../shared/ipc.ts';
 
 function row(id: string, at: string): ChannelMessageRow {
-    return { id, projectId: 'p1', senderId: 'h1', kind: 'message', body: 'hi', reference: null, at };
+    return { id, projectId: 'p1', senderId: 'h1', kind: 'message', body: 'hi', reference: null, at, synthetic: false };
 }
 
 test('an event localizes from the enum: the same state renders differently in two languages', () => {
