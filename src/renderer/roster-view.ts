@@ -25,10 +25,11 @@ export function stateLabel(card: RosterCard, now: number): string {
         case 'rate_limited': return 'Rate limited';
         case 'crashed': return 'Crashed';
         case 'needs_trust': return 'Needs trust';
-        // Spawned, cannot be heard from, cause unknown. Not idle (it is not
-        // resting) and not waiting (it is not a summons): the person cannot reach
-        // this one.
-        case 'not_reporting': return 'Not reporting';
+        // A turn that could not start: containment refused the spawn, the config seed failed, or the
+        // process could not launch. The specific reason is recorded in the conversation. Not idle (it
+        // did not rest, it never ran) and not crashed (nothing exited). The state value stays
+        // `not_reporting`, the old hook-era state that nothing sets any more, repurposed here.
+        case 'not_reporting': return 'Blocked';
         default: return elapsedLabel('Idle', card.since, now);
     }
 }
@@ -46,7 +47,7 @@ export interface CardGroup {
  * waiting, since they also need the person, rather than at the bottom below idle.
  */
 export const GROUP_ORDER: readonly string[] = [
-    'waiting_for_you', 'needs_trust', 'crashed', 'rate_limited', 'working', 'idle', 'not_reporting'
+    'waiting_for_you', 'needs_trust', 'crashed', 'not_reporting', 'rate_limited', 'working', 'idle'
 ];
 
 /**
@@ -76,11 +77,11 @@ export function groupCardsByState(cards: readonly RosterCard[]): CardGroup[] {
 export function groupLabel(state: string, lang: 'en' | 'fr'): string {
     const en: Record<string, string> = {
         waiting_for_you: 'Waiting for you', needs_trust: 'Needs trust', crashed: 'Crashed',
-        rate_limited: 'Rate limited', working: 'Working', idle: 'Idle', not_reporting: 'Not reporting'
+        rate_limited: 'Rate limited', working: 'Working', idle: 'Idle', not_reporting: 'Blocked'
     };
     const fr: Record<string, string> = {
         waiting_for_you: 'En attente de vous', needs_trust: 'Confiance requise', crashed: 'Planté',
-        rate_limited: 'Limite atteinte', working: 'Au travail', idle: 'Inactif', not_reporting: 'Sans signal'
+        rate_limited: 'Limite atteinte', working: 'Au travail', idle: 'Inactif', not_reporting: 'Bloqué'
     };
     return (lang === 'fr' ? fr : en)[state] ?? state;
 }

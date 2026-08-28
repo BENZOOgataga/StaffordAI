@@ -21,7 +21,9 @@ test('buildRosterGroups orders groups waiting first, then attention, active, qui
         card('e', 'crashed')
     ];
     const groups = buildRosterGroups(cards, 'en', NOW, new Set(), null);
-    assert.deepEqual(groups.map((g) => g.state), ['waiting_for_you', 'crashed', 'working', 'idle', 'not_reporting']);
+    // not_reporting now means Blocked, an attention state, so it groups with crashed above the active
+    // and quiet states rather than last.
+    assert.deepEqual(groups.map((g) => g.state), ['waiting_for_you', 'crashed', 'not_reporting', 'working', 'idle']);
 });
 
 test('buildRosterGroups drops empty groups and counts the rest', () => {

@@ -21,14 +21,16 @@ function named(id: string, state: string): RosterCard {
         apprentices: 0, queued: 0, since: null, contextLost: false };
 }
 
-test('cards group by state, waiting first, then working, idle, not_reporting', () => {
+test('cards group by state, waiting first, then blocked, working, idle', () => {
     const groups = groupCardsByState([
         named('a', 'idle'), named('b', 'waiting_for_you'), named('c', 'working'),
         named('d', 'not_reporting'), named('e', 'idle')
     ]);
-    assert.deepEqual(groups.map((g) => g.state), ['waiting_for_you', 'working', 'idle', 'not_reporting'],
-        'the order is waiting, working, idle, not_reporting');
-    assert.deepEqual(groups.map((g) => g.cards.length), [1, 1, 2, 1], 'each group carries its own cards');
+    // not_reporting is Blocked now, an attention state, so it sits after waiting and before the active
+    // and quiet states rather than last.
+    assert.deepEqual(groups.map((g) => g.state), ['waiting_for_you', 'not_reporting', 'working', 'idle'],
+        'the order is waiting, blocked, working, idle');
+    assert.deepEqual(groups.map((g) => g.cards.length), [1, 1, 1, 2], 'each group carries its own cards');
 });
 
 test('an empty group shows no header: only states with colleagues appear', () => {
@@ -74,8 +76,8 @@ test('not_reporting carries its own class, distinct from idle and waiting', () =
     assert.notEqual(cardClassName('not_reporting', false), cardClassName('waiting_for_you', false));
 });
 
-test('not_reporting reads as cannot-reach, not resting and not a summons', () => {
-    assert.equal(stateLabel(card('not_reporting'), NOW), 'Not reporting');
+test('not_reporting reads as Blocked, a turn that could not start, not resting and not a summons', () => {
+    assert.equal(stateLabel(card('not_reporting'), NOW), 'Blocked');
     // Distinct from the idle label and the waiting label, in words too.
     assert.notEqual(stateLabel(card('not_reporting'), NOW), stateLabel(card('idle'), NOW));
     assert.notEqual(stateLabel(card('not_reporting'), NOW), stateLabel(card('waiting_for_you'), NOW));

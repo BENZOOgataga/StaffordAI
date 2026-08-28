@@ -233,6 +233,16 @@ function requestPath(
  * canonicalized target the person never typed. It is carried straight from the tool call, not rebuilt
  * from the folded path, because the folded path has already lost its casing.
  */
+/**
+ * The native, human-facing form of one path value: absolute, with the platform separators and the
+ * casing the tool used, resolved against the turn's cwd but never case-folded and never symlink
+ * resolved. Shared by the approval-banner path and the other-category floor message, so a person always
+ * reads the same native form and never the matcher's folded value.
+ */
+function toNativePath(rawRoot: string, value: string): string {
+    return path.isAbsolute(value) ? path.resolve(value) : path.resolve(rawRoot, value);
+}
+
 function requestDisplayPath(toolName: string, input: unknown, rawRoot: string): string | null {
     if (typeof input !== 'object' || input === null) return null;
     const i = input as Record<string, unknown>;
@@ -240,7 +250,7 @@ function requestDisplayPath(toolName: string, input: unknown, rawRoot: string): 
     for (const key of keys) {
         const value = i[key];
         if (typeof value === 'string' && value.length > 0) {
-            return path.isAbsolute(value) ? path.resolve(value) : path.resolve(rawRoot, value);
+            return toNativePath(rawRoot, value);
         }
     }
     return null;
@@ -301,7 +311,9 @@ function protectedFloorHit(
     for (const raw of candidatePaths(input)) {
         const resolved = resolveForCompare(normalise, realpath, rawRoot, raw);
         if (resolvePermission(rules, { action: 'read', path: resolved, command: null }, defaults) === 'deny') {
-            return resolved;
+            // The decision is made on the folded `resolved`; the message shows the native form of the
+            // same candidate, so a person reads the path their file explorer shows, not the folded one.
+            return toNativePath(rawRoot, raw);
         }
     }
     return null;

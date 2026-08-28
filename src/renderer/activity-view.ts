@@ -149,18 +149,36 @@ const VERB_WORDS: Record<Lang, Record<Verb, string>> = {
 };
 
 /**
- * The present-tense words, for a call that has not resolved successfully yet: one that is still
- * running or is paused on an approval, and one that failed. A pending write must not read "wrote",
- * which claims a thing that has not happened and is the exact moment the wording is load bearing,
- * since it is what the person decides against. Past tense is earned only by a successful result.
+ * The present-continuous words, for a call still in flight or paused on an approval. A pending write
+ * must not read "wrote", which claims a thing that has not happened and is the exact moment the wording
+ * is load bearing, since it is what the person decides against.
  */
 const VERB_WORDS_RUNNING: Record<Lang, Record<Verb, string>> = {
     en: { edited: 'editing', wrote: 'writing', ran: 'running', read: 'reading', searched: 'searching', listed: 'listing', delegated: 'delegating', used: 'using' },
     fr: { edited: 'modifie', wrote: 'crée', ran: 'exécute', read: 'lit', searched: 'cherche', listed: 'liste', delegated: 'délègue', used: 'utilise' }
 };
 
-/** The tool status a phrase is built for. Only a resolved success reads in the past tense. */
+/**
+ * The words for a call that resolved without success, a deny or a failure. It reads as an attempt that
+ * did not happen ("tried to write"), so it is neither the past-tense claim that it did nor the present
+ * that it still might. Past tense stays earned by success alone.
+ */
+const VERB_WORDS_FAILED: Record<Lang, Record<Verb, string>> = {
+    en: { edited: 'tried to edit', wrote: 'tried to write', ran: 'tried to run', read: 'tried to read', searched: 'tried to search', listed: 'tried to list', delegated: 'tried to delegate', used: 'tried to use' },
+    fr: { edited: 'a tenté de modifier', wrote: 'a tenté de créer', ran: "a tenté d'exécuter", read: 'a tenté de lire', searched: 'a tenté de chercher', listed: 'a tenté de lister', delegated: 'a tenté de déléguer', used: "a tenté d'utiliser" }
+};
+
+/**
+ * The tool status a phrase is built for. Three forms: a resolved success reads in the past tense, a
+ * call still in flight reads present continuous, and a deny or failure reads as an attempt.
+ */
 export type PhraseStatus = 'running' | 'ok' | 'error' | 'incomplete';
+
+function verbWords(status: PhraseStatus, lang: Lang): Record<Verb, string> {
+    if (status === 'ok') return VERB_WORDS[lang];
+    if (status === 'running') return VERB_WORDS_RUNNING[lang];
+    return VERB_WORDS_FAILED[lang]; // error, incomplete: resolved, but not a success
+}
 
 /**
  * The plain phrase for a tool action, localized. A known tool reads as its verb plus
@@ -175,7 +193,7 @@ export type PhraseStatus = 'running' | 'ok' | 'error' | 'incomplete';
  */
 export function toolPhrase(tool: string, target: string | null, lang: Lang = 'en', status: PhraseStatus = 'ok'): string {
     const verb = TOOL_VERBS[tool] ?? 'used';
-    const word = (status === 'ok' ? VERB_WORDS : VERB_WORDS_RUNNING)[lang][verb];
+    const word = verbWords(status, lang)[verb];
     if (verb === 'used') return word + ' ' + tool + (target ? ' ' + target : '');
     return word + (target ? ' ' + target : '');
 }

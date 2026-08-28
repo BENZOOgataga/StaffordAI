@@ -145,23 +145,31 @@ test('toolPhrase reads as a localized verb plus target, unknown tool names itsel
     assert.equal(toolPhrase('SomeMcpTool', 'x', 'en'), 'used SomeMcpTool x', 'a new tool still renders');
 });
 
-test('toolPhrase is present tense while a call is unresolved, past tense only on success', () => {
-    // A pending or running call must not claim it happened. This is the exact moment the wording is
-    // load bearing, since it is what the person decides against on the approval banner.
+test('toolPhrase reads three ways: present while running, past on success, an attempt on failure', () => {
+    // Running or paused: present continuous, never a claim it happened. This is the moment the wording
+    // is load bearing, since it is what the person decides against on the approval banner.
     assert.equal(toolPhrase('Write', 'hello2.txt', 'en', 'running'), 'writing hello2.txt');
     assert.equal(toolPhrase('Read', 'a.ts', 'en', 'running'), 'reading a.ts');
     assert.equal(toolPhrase('Bash', 'npm test', 'en', 'running'), 'running npm test');
     assert.equal(toolPhrase('Edit', 'f.ts', 'en', 'running'), 'editing f.ts');
-    // An unknown tool (an MCP or a fetch, which have no verb) still reads present, not past.
     assert.equal(toolPhrase('WebFetch', 'https://x', 'en', 'running'), 'using WebFetch https://x');
-    // A failure is not past tense either, since the action did not succeed.
-    assert.equal(toolPhrase('Write', 'hello2.txt', 'en', 'error'), 'writing hello2.txt');
-    // Only a resolved success earns the past tense. Default with no status is the success form.
+    // Resolved success: past tense. Default with no status is the success form.
     assert.equal(toolPhrase('Write', 'hello2.txt', 'en', 'ok'), 'wrote hello2.txt');
     assert.equal(toolPhrase('Write', 'hello2.txt', 'en'), 'wrote hello2.txt');
-    // Localized present tense.
+    // Deny or failure: an attempt that did not happen, neither past nor present.
+    assert.equal(toolPhrase('Write', 'hello2.txt', 'en', 'error'), 'tried to write hello2.txt');
+    assert.equal(toolPhrase('Read', 'a.ts', 'en', 'error'), 'tried to read a.ts');
+    assert.equal(toolPhrase('Bash', 'rm -rf x', 'en', 'error'), 'tried to run rm -rf x');
+    assert.equal(toolPhrase('WebFetch', 'https://x', 'en', 'error'), 'tried to use WebFetch https://x');
+    assert.equal(toolPhrase('Write', 'f', 'en', 'incomplete'), 'tried to write f');
+    // The three forms are genuinely distinct per category, so a pending and a denied call never read alike.
+    assert.notEqual(toolPhrase('Write', 'f', 'en', 'running'), toolPhrase('Write', 'f', 'en', 'error'));
+    assert.notEqual(toolPhrase('Write', 'f', 'en', 'ok'), toolPhrase('Write', 'f', 'en', 'error'));
+    // Localized, all three.
     assert.equal(toolPhrase('Write', 'f', 'fr', 'running'), 'crée f');
-    assert.equal(toolPhrase('Read', 'f', 'fr', 'running'), 'lit f');
+    assert.equal(toolPhrase('Write', 'f', 'fr', 'ok'), 'a créé f');
+    assert.equal(toolPhrase('Write', 'f', 'fr', 'error'), 'a tenté de créer f');
+    assert.equal(toolPhrase('Bash', 'x', 'fr', 'error'), "a tenté d'exécuter x");
 });
 
 test('toolStatusLabel is quiet for ok, a word for failure or interruption, localized', () => {

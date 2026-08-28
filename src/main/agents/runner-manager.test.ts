@@ -521,3 +521,96 @@ test('a task turn goes through the same permission seam a message does', async (
         { hireId: 'hireA', projectId: 'p-hireA' }
     ], 'a task must not be able to run under a looser policy than a message');
 });
+
+// --- A1: a turn that cannot start must not read Idle, and the reason must reach the app ----------
+
+test('a refused spawn reads Blocked, never Idle, and records the specific reason into the thread', async () => {
+    // The repro: a project pointed at Stafford's own directory. Containment refuses the spawn. The
+    // colleague used to sit on Idle with no trace of why. Now it must read the blocked state and say why.
+    const { spawn, children } = responder();
+    const { deps, rec } = fakeDeps(spawn, {
+        resolveTarget: () => ({
+            refused: true, projectId: 'p-hireA',
+            reason: 'I could not start: my project folder is Stafford\'s own directory. Point it at a real project folder, then message me again.'
+        })
+    });
+    const manager = new ClaudeRunnerManager(deps);
+
+    await manager.submit('hireA', 'do the thing');
+
+    assert.equal(children.length, 0, 'nothing was spawned: the refusal is upheld, not let through');
+    assert.deepEqual(rec.states, [{ h: 'hireA', s: AGENT_STATES.NOT_REPORTING }],
+        'the colleague reads the blocked state, never Working and never Idle');
+    assert.equal(rec.replies.length, 1, 'the reason is recorded into the colleague thread, not swallowed to stderr');
+    assert.equal(rec.replies[0]?.p, 'p-hireA', 'the reason lands in the right project thread');
+    assert.match(rec.replies[0]?.t ?? '', /Stafford's own directory/,
+        'the specific reason is surfaced, not a generic failure');
+});
+
+test('a refusal with no project bound reads Blocked with the state alone (no thread to record into)', async () => {
+    const { spawn, children } = responder();
+    const { deps, rec } = fakeDeps(spawn, {
+        resolveTarget: () => ({ refused: true, projectId: null, reason: 'I could not start: no project is assigned to me yet.' })
+    });
+    const manager = new ClaudeRunnerManager(deps);
+
+    await manager.submit('hireA', 'hi');
+
+    assert.equal(children.length, 0, 'nothing spawned');
+    assert.deepEqual(rec.states, [{ h: 'hireA', s: AGENT_STATES.NOT_REPORTING }], 'blocked state still set');
+    assert.equal(rec.replies.length, 0, 'no thread exists, so the state carries it rather than crashing');
+});
+
+test('a config seed that throws surfaces as Blocked with a reason, not a silent Idle', async () => {
+    // The credential-lock abort: seedManagedConfig deletes the credential and throws. This happens
+    // before Working is set, so the old code let it propagate out and leave the card on Idle.
+    const { spawn, children } = responder();
+    const { deps, rec } = fakeDeps(spawn, {
+        seedManagedConfig: () => { throw new Error('credential could not be locked'); }
+    });
+    const manager = new ClaudeRunnerManager(deps);
+
+    await manager.submit('hireA', 'go');
+
+    assert.equal(children.length, 0, 'no child spawned against an unprepared workspace');
+    assert.deepEqual(rec.states, [{ h: 'hireA', s: AGENT_STATES.NOT_REPORTING }], 'blocked, not idle');
+    assert.match(rec.replies[0]?.t ?? '', /could not be prepared safely/, 'the seed failure reason is surfaced');
+    assert.match(rec.replies[0]?.t ?? '', /credential could not be locked/, 'the specific cause is carried, not hidden');
+});
+
+test('a child that fails to launch reads Blocked, never a clean Idle', async () => {
+    // spawn-error: the child fires 'error' (a missing binary, an unusable cwd). The turn reached Working,
+    // so without this it would fall to Idle in the finally and read as a colleague that had nothing to say.
+    const errored: Array<() => void> = [];
+    const spawn: SpawnFn = (_c, args, options) => {
+        void args; void options;
+        let errCb: (() => void) | null = null;
+        errored.push(() => errCb?.());
+        return {
+            pid: 4242,
+            stdin: { write: () => { /* the child never accepts input: it errors first */ } },
+            stdout: { on: () => undefined },
+            stderr: { on: () => undefined },
+            on: (event: 'exit' | 'error', cb: (...a: never[]) => void) => {
+                if (event === 'error') errCb = cb as unknown as () => void;
+                return undefined;
+            },
+            kill: () => true
+        };
+    };
+    const { deps, rec } = fakeDeps(spawn, { timeoutMs: 2000 });
+    const manager = new ClaudeRunnerManager(deps);
+
+    const turn = manager.submit('hireA', 'run');
+    await tick();
+    errored[0]?.(); // fire the spawn error
+    await turn;
+
+    // Working is set at the start, then the blocked state replaces it. The idle reset is skipped so the
+    // card does not flicker Idle first: the last state the roster sees is the blocked one.
+    assert.deepEqual(rec.states, [
+        { h: 'hireA', s: AGENT_STATES.WORKING },
+        { h: 'hireA', s: AGENT_STATES.NOT_REPORTING }
+    ], 'a child that never launched ends Blocked, not Idle');
+    assert.match(rec.replies[0]?.t ?? '', /could not start/, 'the launch failure is surfaced with a reason');
+});
