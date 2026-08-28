@@ -1,0 +1,155 @@
+name: Release (draft)
+
+# Triggered by a version tag push, for example v0.2.1. It builds the Windows
+# artifact from the tagged commit, assembles the release body from the
+# changelog, and creates a DRAFT release with the artifact attached. It never
+# publishes: a person reviews the draft and presses publish, and attaches
+# screenshots first when a release needs them.
+
+on:
+  push:
+    tags: ['v*']
+
+# The minimum that can create a release and upload an asset. Releases live under
+# the contents scope. Nothing broader: the workflow reads the tag and writes a
+# draft, and never pushes commits, moves tags, or touches main.
+permissions:
+  contents: write
+
+jobs:
+  draft:
+    name: draft release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history so the on-main guard can test ancestry against
+          # origin/main rather than a shallow slice.
+          fetch-depth: 0
+
+      # v0.2.1 gives version 0.2.1 and artifact Stafford-0.2.1-win-x64.zip.
+      - name: Resolve the version from the tag
+        id: v
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact=Stafford-$version-win-x64.zip" >> "$GITHUB_OUTPUT"
+          # Anything that is not a bare major.minor.patch is a prerelease, keyed
+          # off the version string rather than a list of suffixes. So 0.2.2-rc.1
+          # drafts as a prerelease and 0.2.2 does not. A prerelease is never
+          # marked Latest, so a forgotten tick cannot let an rc outrank a stable
+          # release on the releases page.
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Guard: package.json must match the tag. This is the check that catches a
+      # tag pushed before the version bump merged. Mismatch stops the workflow.
+      - name: Verify package.json matches the tag
+        shell: bash
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$pkg" != "${{ steps.v.outputs.version }}" ]; then
+            echo "::error::package.json is $pkg but the tag asks for ${{ steps.v.outputs.version }}. Tag the commit that bumped the version."
+            exit 1
+          fi
+
+      # Guard: the tag must point at a commit on main. A tag on a branch commit
+      # must not produce a release.
+      - name: Verify the tag is on main
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=2147483647 origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::the tagged commit ${GITHUB_SHA} is not on origin/main. A release is only cut from main."
+            exit 1
+          fi
+
+      # Guard: refuse if a release already exists for this tag, draft or
+      # published. Fail rather than overwrite or duplicate. The API list
+      # includes drafts, which gh release view does not always resolve by tag.
+      - name: Verify no release exists for the tag
+        shell: bash
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name' | grep -qx "${{ steps.v.outputs.tag }}"; then
+            echo "::error::a release already exists for ${{ steps.v.outputs.tag }}. Delete it or bump the version."
+            exit 1
+          fi
+
+      # The body comes before the build on purpose, so a missing or malformed
+      # changelog section fails the run in seconds rather than after a full
+      # package build. It is the changelog section for this version, normalised
+      # to ##, then a fixed install-and-requirements block. extract-changelog
+      # exits non-zero on a missing or empty section, which stops the workflow
+      # here, before any build or draft. The install filename comes from the tag.
+      - name: Build the release body
+        shell: bash
+        run: |
+          node scripts/extract-changelog.cjs "${{ steps.v.outputs.version }}" > body.md
+          cat >> body.md <<'EOF'
+
+          ## Install (Windows)
+          The build is unsigned, so Windows SmartScreen stops it the first time. This is expected for an unsigned build, not a sign anything is wrong.
+
+          1. Download `Stafford-${{ steps.v.outputs.version }}-win-x64.zip` from this release.
+          2. Unzip it. You get a `Stafford-${{ steps.v.outputs.version }}-win-x64` folder.
+          3. Run `Stafford.exe` inside the folder. There is no installer.
+          4. SmartScreen shows "Windows protected your PC". Click More info, then Run anyway.
+          5. Stafford starts in the tray and runs there until you open it.
+
+          You approve it once, and Windows remembers the choice for that copy.
+
+          ## Requirements
+          - Windows 11.
+          - Claude Code, installed through its native installer and logged in.
+          EOF
+
+      # Build the Windows artifact from the tagged commit, through the same
+      # composite the CI package job uses, so the build that ships is the build
+      # CI tests. It runs only after the guards and the body have passed.
+      - uses: ./.github/actions/package-app
+        with:
+          builder: --win --x64
+
+      # Confirm the artifact the body names is the one that got built. A body
+      # that points at a file the build did not produce is a broken release.
+      - name: Verify the artifact exists
+        shell: bash
+        run: |
+          if [ ! -f "dist/${{ steps.v.outputs.artifact }}" ]; then
+            echo "::error::expected dist/${{ steps.v.outputs.artifact }}, found:"
+            ls -1 dist || true
+            exit 1
+          fi
+
+      # Create the draft. The body is prepended to the What's Changed list the
+      # Release Notes API generates from the tag history, so the order is the
+      # changelog, then the install block, then the generated list. --verify-tag
+      # aborts if the tag is somehow not on the remote. A suffixed version adds
+      # --prerelease, so an rc never publishes as Latest. Draft only: nothing is
+      # published, and the artifact is attached in the same call so there is
+      # never a draft with no artifact.
+      - name: Create the draft release
+        shell: bash
+        run: |
+          args=(
+            "${{ steps.v.outputs.tag }}"
+            --draft
+            --verify-tag
+            --title "Stafford v${{ steps.v.outputs.version }}, Windows"
+            --notes-file body.md
+            --generate-notes
+            "dist/${{ steps.v.outputs.artifact }}"
+          )
+          if [ "${{ steps.v.outputs.prerelease }}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${args[@]}"

@@ -106,38 +106,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v6
+      # The build lives in one composite action, shared with the release
+      # workflow, so the build that ships is the build this job tests. Setup,
+      # install, typecheck, electron-vite build, electron-builder for this leg's
+      # arch, and the packaged-bundle guard all run inside it.
+      - uses: ./.github/actions/package-app
         with:
-          node-version: '26'
-          cache: npm
+          builder: ${{ matrix.builder }}
 
-      - run: npm ci
-
-      # Electron dropped its own postinstall in 42.0.0, so npm ci does not
-      # download the Electron binary. The test job never needs it; this job
-      # cannot package without it. Explicit, not a repository postinstall, which
-      # would recreate the supply-chain surface Electron removed.
-      - run: npm run electron:install
-
-      - run: npm run typecheck
-
-      # Bundle with electron-vite, then package the built output with
-      # electron-builder for exactly this leg's arch. Unsigned: no Apple
-      # Developer account, and electron-builder is told identity null in the
-      # config so it does not look for a certificate.
-      - run: npx electron-vite build
-      - run: npx electron-builder ${{ matrix.builder }}
-
-      # The guard, reading inside the built bundle. Prints what it checked and
-      # how many, and exits non-zero on failure, so a green leg demonstrably ran
-      # the check. On a Windows bundle it says the darwin invariant is not
-      # applicable and checks the Windows equivalent instead of passing silently.
-      - run: node scripts/check-packaged-bundle.cjs
-
-      # The Windows-only v0.1.0 distributable, downloadable from the Actions run so
-      # a hand-cut release can attach it. Windows leg only; the mac --dir legs
-      # produce nothing shippable yet. Unsigned by the config above and asserted so
-      # by the bundle check that just ran.
+      # The Windows distributable, downloadable from the Actions run. The release
+      # workflow builds its own from the tag through the same composite; this
+      # upload stays so a run can be inspected and, if needed, attached by hand.
+      # Windows leg only; the mac --dir legs produce nothing shippable yet.
       - if: matrix.name == 'windows-x64'
         uses: actions/upload-artifact@v4
         with:

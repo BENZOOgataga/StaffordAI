@@ -1,0 +1,47 @@
+name: Package app
+description: >
+  Build and package the Electron app for one platform with electron-vite and
+  electron-builder, then read the spawn-helper invariant inside the built
+  bundle. One definition, used by the CI package matrix and the release
+  workflow, so the build that ships is the build that CI tests.
+
+inputs:
+  builder:
+    description: The electron-builder platform and arch flags, for example "--win --x64".
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '26'
+        cache: npm
+
+    - run: npm ci
+      shell: bash
+
+    # Electron dropped its own postinstall in 42.0.0, so npm ci does not
+    # download the Electron binary. Packaging needs it. Explicit, not a
+    # repository postinstall, which would recreate the supply-chain surface
+    # Electron removed.
+    - run: npm run electron:install
+      shell: bash
+
+    - run: npm run typecheck
+      shell: bash
+
+    # Bundle with electron-vite, then package the built output with
+    # electron-builder for this leg's arch. Unsigned: electron-builder is told
+    # identity null in the config, so it does not look for a certificate.
+    - run: npx electron-vite build
+      shell: bash
+    - run: npx electron-builder ${{ inputs.builder }}
+      shell: bash
+
+    # The guard, reading inside the built bundle. Prints what it checked and
+    # exits non-zero on failure, so a green run demonstrably ran the check. On a
+    # Windows bundle it says the darwin invariant is not applicable and checks
+    # the Windows equivalent instead of passing silently.
+    - run: node scripts/check-packaged-bundle.cjs
+      shell: bash
