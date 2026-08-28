@@ -16,11 +16,27 @@ import path from 'node:path';
 /**
  * @param homedir  the host home directory, i.e. `os.homedir()`.
  * @param userData Stafford's own user-data directory, i.e. `app.getPath('userData')`.
+ * @param storeDir the directory the database actually lives in, i.e. `path.dirname(store.path)`.
+ *                 On Windows this is under the local app-data directory, a different root from
+ *                 userData, so it must be listed in its own right. Without it the database and the
+ *                 permission-rules table inside it are readable by a colleague. Must be a non-empty
+ *                 absolute path: an empty entry would match nothing and silently reopen that hole.
  */
-export function protectedConfigPaths(homedir: string, userData: string): string[] {
+export function protectedConfigPaths(homedir: string, userData: string, storeDir: string): string[] {
+    if (!storeDir || !path.isAbsolute(storeDir)) {
+        throw new Error('protectedConfigPaths: storeDir must be a non-empty absolute path, got ' + JSON.stringify(storeDir));
+    }
     return [
-        // Stafford's own store: the permission rules, the database, and the managed credential.
-        // This is the invariant that a colleague never reaches its own policy.
+        // Stafford's own database directory: the database file, its WAL and shm sidecars (which can hold
+        // rows not yet checkpointed into the main file), and the permission-rules table inside the
+        // database. This is the invariant that a colleague never reaches its own store or its own policy.
+        // Listed by directory, not by filename, so the sidecars are covered too.
+        storeDir,
+
+        // Stafford's own user-data directory: the managed credential (claude-config) and the small
+        // window-state files live here. On Windows this is the roaming app-data directory, a different
+        // root from the database above, so both are needed. Keeping it protects the managed credential
+        // regardless of where the database lives.
         userData,
 
         // Benzoo's real credential directories. Read defaults to allow, so without these a

@@ -184,8 +184,8 @@ const api = Object.freeze({
      * colleague has no part of this object: it speaks stream-json to Claude Code over its own
      * stdin and stdout, with no preload, no contextBridge and no ipcRenderer, so there is no
      * bridge for it to call and no channel for it to name. Its only other route to the rules
-     * is the database file, which the gate denies because userData is a protected path, and
-     * that denial survives a case-varied spelling and a symlinked one.
+     * is the database file, which the gate denies because the database directory is a protected
+     * path, and that denial survives a case-varied spelling and a symlinked one.
      *
      * So adding an editing UI does not add a way in. It adds a caller to a surface a colleague
      * could never reach, which is why the surface is worth being explicit about here rather

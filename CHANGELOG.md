@@ -6,6 +6,24 @@ All notable changes to Stafford are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1]
+
+### Security
+
+- Fixed: on Windows, a colleague could read Stafford's own database and the permission rules stored
+  inside it, even though the README said it could not. The gate's protected-path rule pointed at the
+  userData directory, but the database lives in the local app-data directory, a different root, so the
+  rule guarded a place the database was never in. The gate now protects the real database directory,
+  which covers the database file and its WAL and shm sidecar files.
+- The exposure was read-only. Writes were already blocked by the default that denies writes outside a
+  colleague's own project, so the database could not be changed, only read. Reading it needed an
+  already-running colleague session, which a colleague cannot start on its own. What was readable is
+  your own project history in the database, meaning conversations, tasks, project paths, and the
+  permission rules, not credentials. The managed credential was not exposed: it lives under userData,
+  which was protected correctly.
+- Affected v0.1.0 and v0.2.0, Windows only. On macOS the two directories are the same path, so the
+  database was covered there.
+
 ## [0.2.0] - 2026-08-27
 
 The first release with the full conversation experience and the projects layer. A colleague's work

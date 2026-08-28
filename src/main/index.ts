@@ -589,16 +589,26 @@ function rebindColleagueManaged(repositories: Repositories, input: ColleagueRebi
 // which is Stafford's own window. A colleague has no part of this: it talks stream-json to
 // Claude Code over its own stdin and stdout, it has no preload, no contextBridge and no
 // ipcRenderer, so there is no channel for it to call. The other conceivable route, editing
-// the database file directly with a tool, is denied by the gate because userData is a
-// protected path. So "only I set permissions" is a property of the wiring, not a convention.
+// the database file directly with a tool, is denied by the gate because the database directory
+// is a protected path (added from the open store, not assumed to sit under userData). So "only I
+// set permissions" is a property of the wiring, not a convention.
 
 /**
  * The paths a colleague must never reach, and the ones an edit gets warned about. Bound to the
- * host home and Stafford's userData here; the set itself lives in one shared module so the gate,
- * the display, and the warnings cannot drift apart on what is protected.
+ * host home, Stafford's userData, and the real database directory here; the set itself lives in one
+ * shared module so the gate, the display, and the warnings cannot drift apart on what is protected.
+ *
+ * The database directory is derived from the open store, not from userData. On Windows the two sit
+ * under different roots (local app-data versus roaming), so protecting userData alone left the
+ * database and the permission-rules table inside it readable. Fail closed: if the store is not open
+ * yet, refuse rather than return a set missing its most important entry. A protected set that
+ * silently omits the database is exactly the defect this guards against.
  */
 function hostProtectedPaths(): string[] {
-    return protectedConfigPaths(os.homedir(), app.getPath('userData'));
+    if (!store) {
+        throw new Error('hostProtectedPaths called before the store was open: refusing to build a protected set without the database directory');
+    }
+    return protectedConfigPaths(os.homedir(), app.getPath('userData'), path.dirname(store.path));
 }
 
 function ruleToView(r: PermissionRuleRecord): PermissionRuleView {
