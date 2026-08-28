@@ -53,8 +53,8 @@ export const INVOKE_CHANNELS = [
     // security story for the write path. A colleague never reaches them: it speaks
     // stream-json to Claude Code over its own stdin and stdout, it has no preload, no
     // contextBridge and no ipcRenderer, and the only other way in would be a tool call
-    // against the database file, which the gate denies because userData is a protected path.
-    // So "only I set permissions" holds by construction rather than by convention.
+    // against the database file, which the gate denies because the database directory is a
+    // protected path. So "only I set permissions" holds by construction rather than by convention.
     'permissions:rules',
     'permissions:effective',
     'permissions:add',
