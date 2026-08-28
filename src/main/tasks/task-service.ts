@@ -68,8 +68,13 @@ export interface TaskServiceDeps {
     readonly tasks: TaskStore;
     readonly now: () => string;
     readonly uuid: () => string;
-    /** Resolves a colleague to the project and working directory its task runs in. */
-    readonly resolveTarget: (hireId: string) => TaskTarget | null;
+    /**
+     * Resolves the project and working directory a task runs in. `projectId` names the project the
+     * task was dispatched against, so an already-assigned task runs in its own repo rather than
+     * wherever the colleague is bound now: a rebind after assign must not move a running task. Omitted
+     * at assign time, where there is no task yet and the colleague's current binding is the origin.
+     */
+    readonly resolveTarget: (hireId: string, projectId?: string) => TaskTarget | null;
     /**
      * One turn, through the manager's queue and the same permission gate a message uses.
      * Null means no turn could run, which ends the attempt rather than looping on nothing.
@@ -182,7 +187,9 @@ export class TaskService {
      */
     start(taskId: string): { task: Task; finished: Promise<Task> } {
         const task = this.#require(taskId);
-        const target = this.#deps.resolveTarget(task.agentId);
+        // The task's own project, not the colleague's current binding: a rebind between assign and
+        // start must not move the run to a different repo than the task was dispatched against.
+        const target = this.#deps.resolveTarget(task.agentId, task.projectId);
         if (!target) throw new Error('that colleague has no project to work in');
 
         // Owner starts. A task already working, or already terminal, is refused here rather
@@ -293,7 +300,10 @@ export class TaskService {
         const feedback = (note ?? '').trim();
         if (feedback === '') throw new Error('sending a task back needs a note saying what to change');
 
-        const target = this.#deps.resolveTarget(task.agentId);
+        // The task's own project, so a send-back after a rebind runs in the repo the task was
+        // dispatched against, not wherever the colleague is bound now. This is the whole point of a
+        // task carrying its context: its work stays with its repo across a rebind.
+        const target = this.#deps.resolveTarget(task.agentId, task.projectId);
         if (!target) throw new Error('that colleague has no project to work in');
 
         // The note is recorded before the run, so it survives however the attempt goes. A

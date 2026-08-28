@@ -74,6 +74,7 @@ function responder({ auto = true }: { auto?: boolean } = {}): { spawn: SpawnFn; 
 
 interface Recorded {
     replies: Array<{ h: string; p: string; t: string }>;
+    replyBlocks: Array<readonly LiveBlock[] | undefined>;
     binds: Array<{ h: string; p: string; s: string }>;
     states: Array<{ h: string; s: string }>;
     seeds: string[];
@@ -84,6 +85,7 @@ interface Recorded {
 function fakeDeps(spawn: SpawnFn, extra: Partial<RunnerManagerDeps> = {}): { deps: RunnerManagerDeps; rec: Recorded } {
     const sessions = new Map<string, string>();
     const replies: Recorded['replies'] = [];
+    const replyBlocks: Recorded['replyBlocks'] = [];
     const binds: Recorded['binds'] = [];
     const states: Recorded['states'] = [];
     const seeds: string[] = [];
@@ -98,14 +100,14 @@ function fakeDeps(spawn: SpawnFn, extra: Partial<RunnerManagerDeps> = {}): { dep
         }),
         seedManagedConfig: (cwd) => { seeds.push(cwd); },
         bindSession: (h, p, s) => { binds.push({ h, p, s }); sessions.set(h, s); },
-        recordReply: (h, p, t) => { replies.push({ h, p, t }); },
+        recordReply: (h, p, t, b) => { replies.push({ h, p, t }); replyBlocks.push(b); },
         setState: (h, s) => { states.push({ h, s }); },
         onStateChanged: () => { changes += 1; },
         spawn,
         timeoutMs: 5000,
         ...extra
     };
-    return { deps, rec: { replies, binds, states, seeds, sessions, stateChanges: () => changes } };
+    return { deps, rec: { replies, replyBlocks, binds, states, seeds, sessions, stateChanges: () => changes } };
 }
 
 // --------------------------------------------------------------------------
@@ -613,4 +615,56 @@ test('a child that fails to launch reads Blocked, never a clean Idle', async () 
         { h: 'hireA', s: AGENT_STATES.NOT_REPORTING }
     ], 'a child that never launched ends Blocked, not Idle');
     assert.match(rec.replies[0]?.t ?? '', /could not start/, 'the launch failure is surfaced with a reason');
+});
+
+// --- B1: a turn that did work but ended with no final text must survive reopen ------------------
+
+test('B1: a turn with tool actions but empty final text is still recorded, so it does not vanish on reopen', async () => {
+    // The turn emits a tool block via the stream deltas the live builder folds, then a result with no
+    // assistant text. Before the fix the record was gated on non-empty text, so this turn wrote no
+    // conversation row: its actions lived only in the activity store, which the Conversation never
+    // reads, and the whole turn disappeared on reopen. Now it is recorded with its blocks.
+    const spawn: SpawnFn = (_c, args, options) => {
+        let dataCb: ((chunk: string) => void) | null = null;
+        let exitCb: ((code: number | null, signal: string | null) => void) | null = null;
+        const child = {
+            pid: 7000,
+            stdin: {
+                write: (chunk: string) => {
+                    if (!chunk.trim().includes('"type":"user"')) return;
+                    const sid = 'sess-b1';
+                    setTimeout(() => {
+                        dataCb?.('{"type":"system","subtype":"init","session_id":"' + sid + '"}\n');
+                        // A tool the colleague ran, as the fine-grained stream events the builder folds.
+                        dataCb?.('{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Write","input":{}}}}\n');
+                        dataCb?.('{"type":"stream_event","event":{"type":"content_block_stop","index":0}}\n');
+                        // The turn ends with no assistant text at all.
+                        dataCb?.('{"type":"result","is_error":false,"session_id":"' + sid + '"}\n');
+                    }, 0);
+                }
+            },
+            stdout: { on: (_e: 'data', cb: (chunk: string) => void) => { dataCb = cb; return undefined; } },
+            stderr: { on: () => undefined },
+            on: (event: 'exit' | 'error', cb: (...a: never[]) => void) => {
+                if (event === 'exit') exitCb = cb as typeof exitCb;
+                return undefined;
+            },
+            kill: () => true
+        };
+        void args; void options; void exitCb;
+        return child;
+    };
+    // onLive must be wired for the live builder to exist, exactly as index.ts wires it.
+    const captured: LiveBlock[][] = [];
+    const { deps, rec } = fakeDeps(spawn, { onLive: (_h, blocks) => { captured.push([...blocks]); } });
+    const manager = new ClaudeRunnerManager(deps);
+
+    await manager.submit('hireA', 'do a write');
+
+    assert.equal(rec.replies.length, 1, 'the work-only turn is recorded, not dropped');
+    assert.equal(rec.replies[0]?.t, '', 'the final text was empty, and that is recorded as-is');
+    assert.equal(rec.replies[0]?.h, 'hireA');
+    // The reply carried its blocks, which is what the Conversation re-renders in place of a text bubble.
+    assert.ok(rec.replyBlocks[0] && rec.replyBlocks[0].length > 0,
+        'the turn is recorded with its rich blocks, so its actions re-render on reopen');
 });
