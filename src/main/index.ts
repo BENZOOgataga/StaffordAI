@@ -34,6 +34,7 @@ import { registerHandlers } from './ipc/handlers.ts';
 import { openDatabase, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
+import { formatTurnErrorLine } from './turn-error-log.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import {
     updateProject as updateProjectService, deleteProject as deleteProjectService, rebindHire as rebindHireService,
@@ -86,6 +87,15 @@ const { appId: APP_ID } = resolveAppId(process.env);
 
 let store: OpenResult | null = null;
 let repositories: Repositories | null = null;
+
+/**
+ * Whether the database is open right now, for the write-failure instrumentation. Defined at module
+ * scope so it reads the real store rather than the local `store` (the HireStore) that shadows it
+ * inside the boot block.
+ */
+function storeDbState(): 'open' | 'closed' | 'no-store' {
+    return store ? (store.db.open ? 'open' : 'closed') : 'no-store';
+}
 // The pending permission approvals (phase 2). Created once the store is open, so a paused
 // tool call can set the colleague's waiting state; denyAll runs on quit.
 let approvalRegistry: ApprovalRegistry | null = null;
@@ -1197,9 +1207,15 @@ function buildDelivery(store: HireStore): void {
         // letting it vanish, the exact silence that once left a colleague stuck on Working with its
         // reply and actions lost and no trace of why.
         onError: (hireId, stage, error) => {
-            const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
-            process.stderr.write('[turn] ' + stage + ' failed for ' + hireId + ': ' + detail + '\n');
-            smoke('turn error: ' + stage + ' for ' + hireId);
+            // A SqliteError from a write carries the distinguishing signal in its code (SQLITE_BUSY,
+            // SQLITE_IOERR, and the rest) and its name, not in the stack the old line logged. The line
+            // records the code, the name, and whether the store was open at the failure, so the [turn]
+            // transient can be told apart the next time it happens rather than collapsing into one line.
+            const dbState = storeDbState();
+            process.stderr.write(formatTurnErrorLine(stage, hireId, error, dbState) + '\n');
+            const code = (error as { code?: unknown }).code;
+            smoke('turn error: ' + stage + ' for ' + hireId +
+                ' code=' + (typeof code === 'string' ? code : 'none') + ' db=' + dbState);
         },
         // Claude's reply, recorded into the colleague's own conversation thread: a
         // message whose sender is the hire and whose target is null, the shape the
@@ -1941,7 +1957,33 @@ process.on('unhandledRejection', (reason) => {
     process.stderr.write('[unhandled-rejection] ' + (reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)) + '\n');
 });
 
+// Single-instance lock. A second Stafford launched against the same user-data directory must not
+// start a second process against the same store: two instances would contend for the one database's
+// write lock, which is the SQLITE_BUSY transient this closes. The second launch surfaces the first
+// instance's window instead, the right move for a tray app a person is trying to reach by opening the
+// exe again. The lock is scoped to the user-data directory, which is Electron's own scope, so a launch
+// with a different --user-data-dir deliberately still starts a second instance. That keeps fresh-config
+// testing working; the cost is that the --user-data-dir case still shares the one home-derived database
+// and is not covered by this lock. The busy_timeout mitigates that residual contention, and unifying
+// the path derivations, a separate task, would settle it. Electron releases the lock on process exit,
+// including a crash, since it is keyed on the live process rather than a file left behind, so a stale
+// lock cannot stop a later launch.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+    // Not the primary instance. Quit before opening the store, the tray, or a window. The primary
+    // instance receives the second-instance event below and surfaces its own window.
+    app.quit();
+} else {
+    // A second launch reached the primary. Bring the window up rather than doing nothing, so a
+    // double-click on the tray app lands in it. openWindow shows and focuses an existing window, or
+    // creates one when the app was tray-only with none open.
+    app.on('second-instance', () => { openWindow(); });
+}
+
 app.whenReady().then(async () => {
+    // This instance did not get the lock, so it is on its way out. Do nothing: no store, no tray.
+    if (!gotSingleInstanceLock) return;
+
     applySessionSecurity(session.defaultSession);
 
     // Replace Electron's default File/Edit/View/Window menu with a minimal one, so the

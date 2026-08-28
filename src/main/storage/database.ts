@@ -51,6 +51,12 @@ export interface Statement {
 export interface StorageDatabase extends MigratableDb {
     prepare(sql: string): Statement;
     close(): void;
+    /**
+     * True while the connection is open, false after close(). better-sqlite3 exposes this, and the
+     * instrumentation reads it at a write failure to record whether the store was open at the time, so
+     * a SqliteError can be told apart from a write against a closed connection.
+     */
+    readonly open: boolean;
 }
 
 interface DatabaseConstructor {
@@ -98,6 +104,15 @@ export function openDatabase(options: OpenOptions): OpenResult {
 
     const file = path.join(dir, DATABASE_FILENAME);
     const db = new Database(file);
+
+    // A transient lock on the file waits rather than throwing at once. better-sqlite3 is synchronous, so
+    // this blocks the main process for up to the timeout, which is why it is not larger: the single
+    // writer is Stafford's one instance (the single-instance lock keeps it one), so the only contenders
+    // left are external and brief, an antivirus scan, the Windows indexer, or a database browser someone
+    // opened on the file. 3 seconds rides those with margin. A lock still held after 3 seconds is a real
+    // problem, so it surfaces as the SqliteError the instrumentation can name rather than hanging the app.
+    // Set before the other pragmas and the migrations so they wait out a transient lock too.
+    db.pragma('busy_timeout = 3000');
 
     const mode = db.pragma('journal_mode = WAL', { simple: true });
     if (mode !== 'wal') {
