@@ -1,6 +1,6 @@
 {
   "name": "stafford",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Local dashboard for running Claude Code agents as a team, named after Stafford Beer",
   "author": "BENZOOgataga",

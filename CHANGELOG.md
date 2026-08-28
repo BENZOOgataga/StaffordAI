@@ -24,6 +24,38 @@ All notable changes to Stafford are recorded here. The format follows
 - Affected v0.1.0 and v0.2.0, Windows only. On macOS the two directories are the same path, so the
   database was covered there.
 
+### Fixed
+
+- A colleague that cannot start now reads Blocked and says why, instead of sitting Idle with no sign
+  that anything went wrong. A spawn refused by containment (a project folder pointed at Stafford's own
+  directory), a missing project or folder, a config seed that could not be prepared, or a child process
+  that failed to launch all set the Blocked state and record the specific reason in the colleague's own
+  thread, where you can read it. The reason used to go only to stderr, which a packaged build never
+  shows.
+- A colleague's action reads in the right tense while it happens. A pending write shows as writing, a
+  completed one as wrote, and a denied or failed one as tried to write, so a write you denied no longer
+  reads as though it went through.
+- A tool blocked at the protected floor shows the file path in its native form in the deny message, the
+  same as the approval banner, rather than a lower-cased forward-slash version.
+- A colleague's turn that did work but ended with no closing text no longer disappears from the
+  Conversation when you reopen it. Its actions are recorded and re-render in place.
+- A task sent back after you rebind the colleague to another project now runs in the repository the task
+  was assigned against, not wherever the colleague is bound at the time.
+
+### Added
+
+- The README shows a release badge that links to the latest GitHub release.
+
+### Internal
+
+- Closed a reflected cross-site scripting issue and a shell-command construction that CodeQL flagged in
+  two development-only scripts, the screenshot harness and a sandbox probe. Neither script is part of the
+  packaged app, so nothing shipped to users was affected. The sandbox probe, a one-off from an earlier
+  investigation, was deleted since nothing referenced it and it could not run on Windows.
+- The permission gate's cache key no longer uses a NUL byte as a separator, which had made the source
+  file read as binary to command-line tools, and a packaging comment that named an old version was
+  corrected. Neither change affects behavior.
+
 ## [0.2.0] - 2026-08-27
 
 The first release with the full conversation experience and the projects layer. A colleague's work
