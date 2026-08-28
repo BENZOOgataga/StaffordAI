@@ -24,6 +24,10 @@ export const INVOKE_CHANNELS = [
     'project:update',
     'project:delete',
     'colleague:rebind',
+    // Remove a colleague from the roster. Archive, not delete: it sets firedAt, stops the running
+    // session, and clears the resume map, while the conversation, tasks, and activity stay in the
+    // store. Renderer-to-main only, the same boundary as rebind, so a colleague cannot fire anyone.
+    'colleague:fire',
     // Opens a native folder picker and returns the chosen directory, or null if cancelled. The
     // create form uses it so a project's folder is picked, not typed; main still validates the pick.
     'dialog:pick-folder',
@@ -369,6 +373,22 @@ export interface ProjectDelete {
 export interface ColleagueRebind {
     readonly hireId: string;
     readonly projectId: string;
+}
+
+/** Firing a colleague: the hire id to remove. */
+export interface ColleagueFire {
+    readonly hireId: string;
+}
+
+/**
+ * The reply to a fire. ok true means the colleague was archived. ok false with a refused message means
+ * the fireable guard or the actor gate refused it; refused and refusedFr carry the reason in both
+ * languages so the UI shows the right one, and both are null on success.
+ */
+export interface FireReply {
+    readonly ok: boolean;
+    readonly refused: string | null;
+    readonly refusedFr: string | null;
 }
 
 /** The reply to a project management write: ok, plus a warning for a refused-but-not-fatal case. */

@@ -13,7 +13,7 @@
 
 import type {
     ChannelCursor, ChannelPageRequest, ChannelSinceRequest, ChannelReply, ChannelConversationRequest, ActivityByHireRequest, CheckpointAck,
-    ProjectCreate, ProjectUpdate, ProjectDelete, ColleagueRebind, HireCreate, ApprovalAnswer, QuestionAnswer,
+    ProjectCreate, ProjectUpdate, ProjectDelete, ColleagueRebind, ColleagueFire, HireCreate, ApprovalAnswer, QuestionAnswer,
     PermissionRulesRequest, PermissionEffectiveRequest, PermissionAdd, PermissionUpdate, PermissionRemove,
     TasksByHireRequest, TaskAssign, TaskStart, TaskReview, TaskDiffRequest, TaskBoardRequest
 } from '../shared/ipc.ts';
@@ -137,6 +137,11 @@ export function isProjectDelete(value: unknown): value is ProjectDelete {
 /** Rebinding a colleague: a bounded hire id and project id. */
 export function isColleagueRebind(value: unknown): value is ColleagueRebind {
     return isObject(value) && isBoundedString(value.hireId, 256) && isBoundedString(value.projectId, 256);
+}
+
+/** Firing a colleague: a bounded hire id. */
+export function isColleagueFire(value: unknown): value is ColleagueFire {
+    return isObject(value) && isBoundedString(value.hireId, 256);
 }
 
 /** Creating a hire: bounded name, type, title, and an owning project id. */

@@ -35,6 +35,7 @@ import { openDatabase, type OpenResult } from './storage/database.ts';
 import { resolveStoreBase } from './storage/store-location.ts';
 import { resolveAppId } from './app-id.ts';
 import { formatTurnErrorLine } from './turn-error-log.ts';
+import { fireColleague } from './fire-colleague.ts';
 import { createProject as createProjectService, createHire as createHireService, type CreateDeps } from './create/create-flow.ts';
 import {
     updateProject as updateProjectService, deleteProject as deleteProjectService, rebindHire as rebindHireService,
@@ -75,7 +76,7 @@ import type {
 import { CHANNEL_SELF_SENDER } from '../shared/ipc.ts';
 import type { LiveBlock, TurnEventsReply } from '../shared/ipc.ts';
 import type {
-    ProjectsManageReply, ProjectManageView, ColleagueRef, ProjectUpdate, ColleagueRebind, ProjectWriteReply
+    ProjectsManageReply, ProjectManageView, ColleagueRef, ProjectUpdate, ColleagueRebind, ProjectWriteReply, FireReply
 } from '../shared/ipc.ts';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -541,6 +542,10 @@ function notifyProjectsChanged(): void {
  * project). A parked colleague is marked so the UI can show it cannot work until rebound.
  */
 function projectsManageView(repositories: Repositories): ProjectsManageReply {
+    // Load-bearing filter: this lists colleagues, so it must exclude fired ones from the projects view
+    // and the parked list. Do not remove it. Reads of one hire by id (the name resolver, the
+    // conversation, the transcript) deliberately do not filter, because history needs a fired colleague
+    // to still resolve; see the fire action.
     const hires = repositories.hires.all().filter((h) => h.firedAt === null);
     const refOf = (h: (typeof hires)[number]): ColleagueRef => ({
         id: h.id, name: h.name, title: h.title, state: h.state, parked: h.activeProjectId === null
@@ -590,6 +595,40 @@ function rebindColleagueManaged(repositories: Repositories, input: ColleagueRebi
     notifyProjectsChanged();
     notifyRosterChanged();
     return { ok: true, warning: null };
+}
+
+/**
+ * Fires a colleague: the archive path. Owner-gated, guarded, then teardown before the mark, so a fired
+ * hire can never be left carrying a live process, the worst state this feature could produce. Nothing
+ * is destroyed: the conversation, tasks, and activity stay, only firedAt is set and the resume map is
+ * cleared. Restore is possible by clearing firedAt, no restore IPC is exposed in this version.
+ */
+function fireColleagueManaged(actor: 'owner' | 'colleague', hireId: string): FireReply {
+    if (!repositories || !runnerManager) {
+        return { ok: false, refused: 'The app is not ready.', refusedFr: "L'application n'est pas prête." };
+    }
+    const repos = repositories;
+    const manager = runnerManager;
+    const registry = approvalRegistry;
+    const reply = fireColleague(
+        {
+            getHire: (id) => repos.hires.get(id),
+            updateHire: (hire) => repos.hires.update(hire),
+            openTaskStates: (id) => repos.tasks.open().filter((t) => t.agentId === id).map((t) => t.state),
+            hasPendingAsk: (id) => registry !== null && registry.list().some((a) => a.hireId === id),
+            disposeRunner: (id) => manager.dispose(id),
+            denyAsk: (id, reason) => { if (registry) registry.denyForHire(id, reason); },
+            now: () => new Date().toISOString(),
+            log: (message) => process.stderr.write(message + '\n')
+        },
+        actor,
+        hireId
+    );
+    if (reply.ok) {
+        notifyRosterChanged();
+        notifyProjectsChanged();
+    }
+    return reply;
 }
 
 
@@ -2093,6 +2132,9 @@ app.whenReady().then(async () => {
             if (!repositories) throw new Error('colleague:rebind: the store is not open');
             return rebindColleagueManaged(repositories, payload);
         },
+        // The renderer is Stafford's own window, so this call is always the owner. The actor is passed
+        // explicitly so the gate is the same shape as task review and a colleague actor is refused.
+        fireColleague: (payload) => fireColleagueManaged('owner', payload.hireId),
         pickFolder: async () => {
             // Modal to the main window so the pick belongs to it. openDirectory only, single
             // selection. The chosen path is still validated by createProject; this only saves typing.
