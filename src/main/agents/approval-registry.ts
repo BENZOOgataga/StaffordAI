@@ -89,4 +89,18 @@ export class ApprovalRegistry {
     denyAll(reason: string): void {
         for (const id of [...this.#pending.keys()]) this.answer(id, false, reason);
     }
+
+    /**
+     * Denies the pending asks for one colleague, and only that colleague. For firing: the fired
+     * colleague's paused turn must not be left awaiting a promise, and its waiting state must clear,
+     * without touching anyone else's pending ask. The match is on the ask's hireId, so a colleague
+     * fired while another is waiting leaves the other one waiting. This is deliberately not denyAll:
+     * denying every colleague's ask because one was fired would be a real and confusing bug.
+     */
+    denyForHire(hireId: string, reason: string): void {
+        const ids = [...this.#pending.entries()]
+            .filter(([, entry]) => entry.approval.hireId === hireId)
+            .map(([id]) => id);
+        for (const id of ids) this.answer(id, false, reason);
+    }
 }

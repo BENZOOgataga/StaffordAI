@@ -17,6 +17,7 @@ import {
     type ChannelCursor, type ChannelMessageRow, type ChannelPageReply,
     type ProjectCreated, type HireCreated, type ActivityRow, type ActivityByHireReply,
     type ProjectsManageReply, type ProjectUpdate, type ProjectDelete, type ColleagueRebind, type ProjectWriteReply,
+    type ColleagueFire, type FireReply,
     type SavedCheckpoints, type PendingApprovals,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
     type PermissionAdd, type PermissionUpdate,
@@ -24,7 +25,7 @@ import {
     type TurnEventsReply, type PendingQuestions, type AskAnswer
 } from '../../shared/ipc.ts';
 import {
-    isChannelPage, isChannelSince, isChannelConversation, isChannelTurnEvents, isChannelReply, isProjectCreate, isProjectUpdate, isProjectDelete, isColleagueRebind, isHireCreate, isActivityByHire, isCheckpointAck,
+    isChannelPage, isChannelSince, isChannelConversation, isChannelTurnEvents, isChannelReply, isProjectCreate, isProjectUpdate, isProjectDelete, isColleagueRebind, isColleagueFire, isHireCreate, isActivityByHire, isCheckpointAck,
     isApprovalAnswer, parseQuestionAnswer,
     isPermissionRulesRequest, isPermissionEffectiveRequest, isPermissionAdd, isPermissionUpdate, isPermissionRemove,
     isTasksByHire, isTaskAssign, isTaskStart, isTaskReview, isTaskDiff, isTaskBoard
@@ -56,6 +57,8 @@ export interface HandlerDeps {
     readonly deleteProject: (payload: ProjectDelete) => ProjectWriteReply;
     /** Rebinds a colleague to a project as a fresh session. */
     readonly rebindColleague: (payload: ColleagueRebind) => ProjectWriteReply;
+    /** Fires a colleague: archives it, stops its session, clears its resume map. Owner-gated in main. */
+    readonly fireColleague: (payload: ColleagueFire) => FireReply;
     /** Opens a native folder picker, returning the chosen directory or null if cancelled. */
     readonly pickFolder: () => Promise<string | null>;
     /**
@@ -173,6 +176,10 @@ export function buildHandlers(deps: HandlerDeps): Record<InvokeChannel, (payload
         'colleague:rebind': (payload: unknown): ProjectWriteReply => {
             if (!isColleagueRebind(payload)) throw new Error('colleague:rebind requires {hireId,projectId}');
             return deps.rebindColleague(payload);
+        },
+        'colleague:fire': (payload: unknown): FireReply => {
+            if (!isColleagueFire(payload)) throw new Error('colleague:fire requires {hireId}');
+            return deps.fireColleague(payload);
         },
         'project:create': (payload: unknown): ProjectCreated => {
             if (!isProjectCreate(payload)) {

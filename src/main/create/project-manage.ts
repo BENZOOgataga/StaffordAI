@@ -73,7 +73,10 @@ export class ProjectBusyError extends Error {
  */
 export function deleteProject(deps: ManageDeps, id: string): void {
     if (!deps.getProject(id)) throw new Error('no such project: ' + String(id));
-    const bound = deps.allHires().filter((h) => h.activeProjectId === id);
+    // Fired colleagues are excluded: a fired colleague is archived, so it must not block a project
+    // delete on its stale state, nor be re-parked. This is a listing over hires, so it filters firedAt,
+    // the same rule the roster and the projects view follow. A read of one hire by id would not filter.
+    const bound = deps.allHires().filter((h) => h.activeProjectId === id && h.firedAt === null);
     const busy = bound.find((h) => h.state !== AGENT_STATES.IDLE);
     if (busy) throw new ProjectBusyError(busy.name);
 

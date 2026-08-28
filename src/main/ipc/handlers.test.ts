@@ -81,6 +81,7 @@ function deps(
         updateProject: () => ({ ok: true, warning: null }),
         deleteProject: () => ({ ok: true, warning: null }),
         rebindColleague: () => ({ ok: true, warning: null }),
+        fireColleague: () => ({ ok: true, refused: null, refusedFr: null }),
         permissionRules: over.permissionRules ?? (() => ({ baseline: [], overrides: [] })),
         effectivePolicy: over.effectivePolicy ?? (() => ({ rules: [] })),
         addPermissionRule: over.addPermissionRule ?? (() => ({ ok: true, warning: null })),

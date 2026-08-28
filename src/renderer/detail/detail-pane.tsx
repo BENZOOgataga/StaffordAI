@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ConversationPanel } from './conversation-panel.tsx';
+import { FireColleague } from './fire-colleague.tsx';
 import { ActivityPanel } from './activity-panel.tsx';
 import { ColleaguePermissionsPanel } from '../permissions/colleague-permissions-panel.tsx';
 import { TasksPanel } from '../tasks/tasks-panel.tsx';
@@ -62,9 +63,14 @@ export function DetailPane({ selected, cards, lang, openTab, openTabNonce }: {
                 </div>
             ) : (
                 <>
-                    <div className="border-border flex items-baseline gap-2 border-b px-5 py-3">
-                        <span className="font-medium">{selected.name}</span>
-                        <span className="text-muted-foreground text-sm">{selected.role}</span>
+                    <div className="border-border flex items-start justify-between gap-2 border-b px-5 py-3">
+                        <div className="flex items-baseline gap-2">
+                            <span className="font-medium">{selected.name}</span>
+                            <span className="text-muted-foreground text-sm">{selected.role}</span>
+                        </div>
+                        {/* Remove lives here, on the detail surface, not on the roster, so a misclick
+                            cannot fire a colleague. The action archives; it never touches git. */}
+                        <FireColleague hireId={hireId} name={selected.name} lang={lang} />
                     </div>
 
                     <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)} className="flex min-h-0 flex-1 flex-col gap-0">

@@ -91,3 +91,19 @@ test('rebindHire refuses a colleague that is still working, and an unknown proje
     const { deps: d2 } = makeDeps([project('p1')], [hire('h1')]);
     assert.throws(() => rebindHire(d2, { hireId: 'h1', projectId: 'nope' }), /no such project/);
 });
+
+test('deleteProject excludes a fired colleague: it does not block the delete or get re-parked', () => {
+    // A fired colleague is archived. Even in a working-looking state and bound to the project, it must
+    // not throw ProjectBusyError, and it must not be re-parked. This is the colleagues-bound listing
+    // filtering on firedAt; a read of one hire by id would not filter.
+    const fired = hire('h1', { activeProjectId: 'p1', state: AGENT_STATES.WORKING, firedAt: '2026-08-20T00:00:00Z' });
+    const live = hire('h2', { activeProjectId: 'p1', sessions: { p1: 's1' } });
+    const { deps, hires, deleted } = makeDeps([project('p1')], [fired, live]);
+
+    deleteProject(deps, 'p1');
+
+    assert.deepEqual(deleted, ['p1'], 'the fired colleague did not block the delete');
+    assert.equal(hires.get('h2')?.activeProjectId, null, 'the live colleague is parked');
+    assert.equal(hires.get('h1')?.firedAt, '2026-08-20T00:00:00Z', 'the fired colleague is untouched');
+    assert.equal(hires.get('h1')?.activeProjectId, 'p1', 'the fired colleague was not re-parked');
+});

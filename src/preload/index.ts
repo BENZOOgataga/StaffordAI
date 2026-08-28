@@ -16,7 +16,7 @@ import {
     type InvokeChannel, type EventChannel, type WindowInvokeChannel, type WindowEventChannel,
     type HealthReport, type ProjectsList, type RosterSnapshot,
     type ChannelCursor, type ChannelPageReply, type ProjectCreated, type HireCreated,
-    type ProjectsManageReply, type ProjectWriteReply,
+    type ProjectsManageReply, type ProjectWriteReply, type FireReply,
     type ActivityByHireReply, type ActivityRow, type SavedCheckpoints, type PendingApprovals,
     type PendingQuestions, type AskAnswer,
     type PermissionRulesReply, type PermissionEffectiveReply, type PermissionWriteReply,
@@ -95,6 +95,10 @@ const api = Object.freeze({
             invoke('project:delete', { id }) as Promise<ProjectWriteReply>,
         rebind: (hireId: string, projectId: string): Promise<ProjectWriteReply> =>
             invoke('colleague:rebind', { hireId, projectId }) as Promise<ProjectWriteReply>,
+        // Remove a colleague from the roster. Archive: its session is stopped and it leaves the roster,
+        // while its conversation, tasks, and activity stay. A refusal comes back with a reason to show.
+        fire: (hireId: string): Promise<FireReply> =>
+            invoke('colleague:fire', { hireId }) as Promise<FireReply>,
         onChanged: (listener: () => void): (() => void) => on('projects:changed', () => listener())
     }),
 

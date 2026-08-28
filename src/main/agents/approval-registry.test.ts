@@ -75,3 +75,36 @@ test('answering an unknown id is a safe no-op', () => {
     const { registry } = makeRegistry();
     assert.doesNotThrow(() => registry.answer('nope', true, null));
 });
+
+test('denyForHire denies one colleague\'s pending asks and no one else\'s', async () => {
+    const { registry, pendingCalls } = makeRegistry();
+    const a1 = registry.ask({ hireId: 'placeholder-a', action: 'write', path: '/p/a1', command: null });
+    const a2 = registry.ask({ hireId: 'placeholder-a', action: 'write', path: '/p/a2', command: null });
+    const b1 = registry.ask({ hireId: 'placeholder-b', action: 'write', path: '/p/b1', command: null });
+
+    registry.denyForHire('placeholder-a', 'This colleague was removed.');
+
+    // Both of A's asks resolve as deny with the reason; B's stays pending, untouched.
+    assert.deepEqual(await a1, { approve: false, note: 'This colleague was removed.' });
+    assert.deepEqual(await a2, { approve: false, note: 'This colleague was removed.' });
+    assert.equal(registry.list().length, 1, 'only B is left pending');
+    assert.equal(registry.list()[0]?.hireId, 'placeholder-b');
+
+    // A's waiting state cleared once; B never got a clear.
+    assert.ok(pendingCalls.some((c) => c.hireId === 'placeholder-a' && c.pending === false),
+        'the fired colleague stopped waiting');
+    assert.ok(!pendingCalls.some((c) => c.hireId === 'placeholder-b' && c.pending === false),
+        'the other colleague was not touched');
+
+    // B still resolves normally afterwards.
+    const idB = registry.list()[0]!.id;
+    registry.answer(idB, true, null);
+    assert.deepEqual(await b1, { approve: true, note: null });
+});
+
+test('denyForHire with no pending ask for that colleague is a harmless no-op', () => {
+    const { registry } = makeRegistry();
+    registry.ask({ hireId: 'placeholder-b', action: 'write', path: '/p/b', command: null });
+    registry.denyForHire('placeholder-a', 'removed');
+    assert.equal(registry.list().length, 1, 'B untouched, no throw');
+});
