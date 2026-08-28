@@ -541,3 +541,49 @@ test('approve and fail still end the task synchronously, with nothing left runni
         assert.equal(h.turns.length, before);
     }
 });
+
+// --- B2: a task carries its own repo across a rebind ----------------------------------------------
+
+test('B2: a task sent back after a rebind runs in the task\'s own repo, not the colleague\'s new binding', async () => {
+    // The colleague's live binding is mutable, so the test can rebind it between the first run and the
+    // send-back. The task must stay with the repo it was dispatched against; the bug was the send-back
+    // re-resolving from the current binding and running the correction in the wrong repository.
+    const tasks = store();
+    const checkpoints: Array<{ cwd: string }> = [];
+    const cwdFor: Record<string, string> = { p1: '/repo1', p2: '/repo2' };
+    let currentProject = 'p1';
+    let n = 0;
+    let i = 0;
+    const replies = [
+        turn({ assistantText: 'first ' + TASK_DONE_SENTINEL }),
+        turn({ assistantText: 'second ' + TASK_DONE_SENTINEL })
+    ];
+    const service = new TaskService({
+        tasks,
+        now: () => '2026-08-22T10:0' + String(n++ % 10) + ':00Z',
+        uuid: () => 't1',
+        // The real resolver's shape: a task passes its own projectId and resolves against it; assign
+        // passes none and falls back to the colleague's current binding, the origin at that moment.
+        resolveTarget: (_hireId: string, projectId?: string) => {
+            const pid = projectId ?? currentProject;
+            return { cwd: cwdFor[pid]!, projectId: pid };
+        },
+        runTurn: () => { const r = replies[Math.min(i, replies.length - 1)]; i += 1; return Promise.resolve(r ?? null); },
+        checkpoint: (req) => { checkpoints.push({ cwd: req.cwd }); return Promise.resolve(COMMITTED); },
+        baseline: () => Promise.resolve('base-tree'),
+        resolveOutputs: (_cwd, declared) => Promise.resolve({ accepted: declared, refused: null })
+    });
+
+    const t = service.assign({ hireId: 'h1', text: 'do it' });
+    assert.equal(t.projectId, 'p1', 'the task captured its origin project at assign');
+    await service.start(t.id).finished;
+    assert.equal(checkpoints[0]?.cwd, '/repo1', 'the first attempt runs in the task\'s repo');
+
+    // The colleague is rebound to a different project after the first attempt.
+    currentProject = 'p2';
+
+    const back = service.review(t.id, 'send-back', 'change the button');
+    await back.finished;
+    assert.equal(checkpoints[1]?.cwd, '/repo1',
+        'the send-back runs in the repo the task was dispatched against, not the new binding /repo2');
+});

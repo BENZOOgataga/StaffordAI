@@ -384,15 +384,26 @@ export class ClaudeRunnerManager {
                 this.#safely(hireId, 'bind-session', () => this.#deps.bindSession(hireId, target.projectId, sessionId));
             }
 
-            // Record Claude's reply into the conversation, both sides now visible. Only a clean turn
-            // with text is recorded; a timeout or a dead process records nothing. A chat turn also
-            // carries its rich block snapshot, so the turn re-renders its thinking, tool calls, diffs,
-            // and todos when the colleague is reopened. A task turn has no live builder, so it passes
-            // no blocks and persists no rich events, unchanged.
-            if ((result.status === 'completed' || result.status === 'interrupted') && result.assistantText.trim() !== '') {
+            // Record Claude's reply into the conversation, both sides now visible. A chat turn carries
+            // its rich block snapshot, so the turn re-renders its thinking, tool calls, diffs, and todos
+            // when the colleague is reopened. A task turn has no live builder, so it passes no blocks and
+            // persists no rich events, unchanged.
+            //
+            // The turn is recorded when it produced anything a reopen must not lose: final text, or rich
+            // blocks from a turn whose final text was empty. A turn that did real work (edits, commands)
+            // but ended with no closing text used to be dropped here, since the gate was on text alone,
+            // so it vanished from the Conversation on reopen while its actions lived only in the Activity
+            // store the Conversation never reads. The empty body is fine: the panel renders the blocks in
+            // place of the text bubble, so an empty-text turn re-renders its actions rather than a blank.
+            // A timeout or a dead process (any status but completed/interrupted) still records nothing.
+            if (result.status === 'completed' || result.status === 'interrupted') {
                 let blocks: readonly LiveBlock[] | undefined;
                 this.#safely(hireId, 'snapshot', () => { blocks = liveBuilder ? liveBuilder.snapshot() : undefined; });
-                this.#safely(hireId, 'record-reply', () => this.#deps.recordReply(hireId, target.projectId, result.assistantText, blocks));
+                const hasText = result.assistantText.trim() !== '';
+                const hasBlocks = blocks !== undefined && blocks.length > 0;
+                if (hasText || hasBlocks) {
+                    this.#safely(hireId, 'record-reply', () => this.#deps.recordReply(hireId, target.projectId, result.assistantText, blocks));
+                }
             }
 
             // Record the tools the colleague used this turn, for the Activity feed. The runner sees the

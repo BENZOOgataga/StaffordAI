@@ -1255,10 +1255,15 @@ function buildDelivery(store: HireStore): void {
         tasks: repositories.tasks,
         now: () => new Date().toISOString(),
         uuid: () => randomUUID(),
-        resolveTarget: (hireId) => {
+        resolveTarget: (hireId, projectId) => {
             const hire = repositories?.hires.get(hireId);
-            if (!hire || !hire.activeProjectId) return null;
-            const cwd = repositories?.projects.get(hire.activeProjectId)?.repos[0]?.path;
+            if (!hire) return null;
+            // A task resolves against its own project when one is passed, so a send-back after a rebind
+            // runs in the repo the task was dispatched against, not the colleague's current binding. At
+            // assign time no project is passed and the current binding is the origin to stamp.
+            const pid = projectId ?? hire.activeProjectId;
+            if (!pid) return null;
+            const cwd = repositories?.projects.get(pid)?.repos[0]?.path;
             if (!cwd) return null;
             // Same self-path guard as the chat path: a task must not run inside Stafford's own repo.
             if (hitsSelf(cwd)) {
@@ -1266,7 +1271,7 @@ function buildDelivery(store: HireStore): void {
                     ': project folder is Stafford\'s own directory, repoint it\n');
                 return null;
             }
-            return { cwd, projectId: hire.activeProjectId };
+            return { cwd, projectId: pid };
         },
         runTurn: (hireId, text, resumeSessionId) =>
             runnerManager
