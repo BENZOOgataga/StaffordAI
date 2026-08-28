@@ -363,7 +363,11 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
     const cache = new Map<string, Resolved>();
 
     const load = (ctx: TurnContext): Resolved => {
-        const key = ctx.projectId + ' ' + ctx.hireId;
+        // A collision-proof cache key for this (project, hire) pair. Length-prefixing the first
+        // id makes the split unambiguous for any inputs with no separator char at all, so no two
+        // pairs can ever fold to one key and serve one pair's cached decision to another. It
+        // replaces a NUL separator that did the same job but made the whole file read as binary.
+        const key = ctx.projectId.length + ':' + ctx.projectId + ':' + ctx.hireId;
         const cached = cache.get(key);
         if (cached) return cached;
 
