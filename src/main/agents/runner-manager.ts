@@ -80,7 +80,7 @@ export interface RunnerManagerDeps {
      * turn's rich snapshot, persisted alongside the text so the turn re-renders its thinking, tools,
      * diffs, and todos on reopen; undefined for a task turn, which persists no rich events.
      */
-    readonly recordReply: (hireId: string, projectId: string, text: string, blocks?: readonly LiveBlock[]) => void;
+    readonly recordReply: (hireId: string, projectId: string, text: string, blocks?: readonly LiveBlock[], synthetic?: boolean) => void;
     /**
      * Streams the colleague's turn as it arrives, for the live Conversation tab: the reply text
      * and the tool calls it makes, in order, as a block snapshot. Called with an empty snapshot the
@@ -401,8 +401,14 @@ export class ClaudeRunnerManager {
                 this.#safely(hireId, 'snapshot', () => { blocks = liveBuilder ? liveBuilder.snapshot() : undefined; });
                 const hasText = result.assistantText.trim() !== '';
                 const hasBlocks = blocks !== undefined && blocks.length > 0;
-                if (hasText || hasBlocks) {
-                    this.#safely(hireId, 'record-reply', () => this.#deps.recordReply(hireId, target.projectId, result.assistantText, blocks));
+                // A synthetic response is recorded even when it is empty. A slash command like /clear or
+                // a silent /compact returns no text and no blocks, and the old gate dropped it entirely,
+                // so the person sent a command and the surface said nothing. Recording it, tagged
+                // synthetic, is what lets the Conversation show that the command ran and what it returned,
+                // rather than the silence that reads exactly like the invisible-refusal bug.
+                if (hasText || hasBlocks || result.synthetic) {
+                    this.#safely(hireId, 'record-reply', () =>
+                        this.#deps.recordReply(hireId, target.projectId, result.assistantText, blocks, result.synthetic));
                 }
             }
 

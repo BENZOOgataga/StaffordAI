@@ -249,7 +249,8 @@ export function channelMessageToRow(m: ChannelMessage): Row {
         // ref_kind CHECK never sees a value it does not allow.
         ref_kind: m.reference ? m.reference.kind : null,
         ref_value: m.reference ? m.reference.value : null,
-        at: m.at
+        at: m.at,
+        synthetic: m.synthetic ? 1 : 0
     };
 }
 
@@ -264,7 +265,8 @@ export function channelMessageFromRow(row: Row): ChannelMessage {
         reference: refKind === null
             ? null
             : { kind: oneOf<ChannelRefKind>(row, 'ref_kind', Object.values(CHANNEL_REF_KINDS)), value: str(row, 'ref_value') },
-        at: str(row, 'at')
+        at: str(row, 'at'),
+        synthetic: bool(row, 'synthetic')
     };
 }
 

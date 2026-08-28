@@ -161,7 +161,7 @@ test('the policy log refuses update and delete at the database even by raw state
 });
 
 function channelMessage(id: string, at: string, over: Partial<ChannelMessage> = {}): ChannelMessage {
-    return { id, projectId: 'p1', senderId: 'Benzoo', targetHireId: null, kind: 'message', body: 'hi', reference: null, at, ...over };
+    return { id, projectId: 'p1', senderId: 'Benzoo', targetHireId: null, kind: 'message', body: 'hi', reference: null, at, synthetic: false, ...over };
 }
 
 test('the channel appends and reads a page of messages and events interleaved in time order', () => {

@@ -191,7 +191,7 @@ test('roster:snapshot returns the cards and takes no payload', () => {
 });
 
 function chRow(id: string): ChannelMessageRow {
-    return { id, projectId: 'p1', senderId: 'h1', kind: 'event', body: 'waiting_for_you', reference: null, at: 't' };
+    return { id, projectId: 'p1', senderId: 'h1', kind: 'event', body: 'waiting_for_you', reference: null, at: 't', synthetic: false };
 }
 
 test('channel:page returns rows and passes the cursor and limit through', () => {

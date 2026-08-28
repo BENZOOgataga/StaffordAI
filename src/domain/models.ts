@@ -252,6 +252,12 @@ export interface ChannelMessage {
     body: string;
     reference: ChannelRef | null;
     at: string;
+    /**
+     * True when this is a CLI or system response, the output of a slash command the CLI answered
+     * itself, not a colleague talking. Rendered as a system line rather than a colleague reply, and
+     * the flag persists so that distinction survives a reopen. False for every ordinary message.
+     */
+    synthetic: boolean;
 }
 
 /** The outcome of a coalesced activity action. `incomplete` is a use whose session ended first. */

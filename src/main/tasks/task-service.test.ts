@@ -26,7 +26,7 @@ function store(): TaskStore & { rows: Map<string, Task> } {
 }
 
 function turn(over: Partial<TurnResult> = {}): TurnResult {
-    return { status: 'completed', sessionId: 'sess-1', assistantText: 'working', toolUses: [], isError: false, ...over };
+    return { status: 'completed', sessionId: 'sess-1', assistantText: 'working', toolUses: [], isError: false, synthetic: false, ...over };
 }
 
 const COMMITTED: CheckpointOutcome = {

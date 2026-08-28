@@ -69,12 +69,12 @@ test('a hire round-trips through the mapping unchanged', () => {
 
 const CHANNEL_MESSAGE: ChannelMessage = {
     id: 'm1', projectId: 'p1', senderId: 'Benzoo', targetHireId: 'h1', kind: 'message',
-    body: 'ship the parser', reference: { kind: 'task', value: 't1' }, at: '2026-08-13T00:00:00Z'
+    body: 'ship the parser', reference: { kind: 'task', value: 't1' }, at: '2026-08-13T00:00:00Z', synthetic: false
 };
 
 const CHANNEL_EVENT: ChannelMessage = {
     id: 'e1', projectId: 'p1', senderId: 'h1', targetHireId: null, kind: 'event',
-    body: 'waiting_for_you', reference: null, at: '2026-08-13T00:00:01Z'
+    body: 'waiting_for_you', reference: null, at: '2026-08-13T00:00:01Z', synthetic: false
 };
 
 test('a channel message round-trips with a typed reference', () => {
