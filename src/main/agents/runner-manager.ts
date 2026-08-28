@@ -45,14 +45,32 @@ export interface RunnerTarget {
     readonly resumeSessionId: string | null;
 }
 
+/**
+ * A turn that could not even start, and the reason to show the person. This is not the same as a
+ * null target: null means there is nothing to surface to (the hire is gone). A refusal means the
+ * colleague exists and is blocked, so it must not read Idle, and the reason must reach the app,
+ * never only stderr. `reason` is first person, since it is recorded into the colleague's own thread.
+ * `projectId` is that thread; null when no project is bound, where the blocked state alone carries it.
+ */
+export interface RunnerRefusal {
+    readonly refused: true;
+    readonly reason: string;
+    readonly projectId: string | null;
+}
+
 export interface RunnerManagerDeps {
     readonly claudePath: string;
     /** The managed CLAUDE_CONFIG_DIR, passed to every child for #61 isolation. */
     readonly claudeConfigDir: string;
     /** The base environment the child inherits (CLAUDE_CONFIG_DIR is layered on top). */
     readonly parentEnv: NodeJS.ProcessEnv;
-    /** Resolves a hire to its cwd, project, and resume id. Null means no turn can run. */
-    readonly resolveTarget: (hireId: string) => RunnerTarget | null;
+    /**
+     * Resolves a hire to its cwd, project, and resume id. A RunnerTarget runs. A RunnerRefusal is a
+     * turn that cannot start with a reason to show (containment refused it, no project or folder is
+     * set); the manager surfaces it as the blocked state plus the reason. Null means there is nothing
+     * to surface to at all (the hire is gone), and the state is left as is.
+     */
+    readonly resolveTarget: (hireId: string) => RunnerTarget | RunnerRefusal | null;
     /** Seeds the managed config for the cwd. Idempotent; called before every turn. */
     readonly seedManagedConfig: (cwd: string) => void;
     /** Persists the harvested session id for this colleague/project (the resume key). */
@@ -255,11 +273,19 @@ export class ClaudeRunnerManager {
         hireId: string, text: string,
         over?: { resumeSessionId: string | null; bindSession: boolean }
     ): Promise<TurnResult | null> {
-        const target = this.#deps.resolveTarget(hireId);
-        if (!target) {
-            // No project/cwd resolvable, so there is nothing to run. Leave state as is.
+        const resolved = this.#deps.resolveTarget(hireId);
+        if (!resolved) {
+            // The hire is gone, so there is nothing to run and nothing to surface to. Leave state as is.
             return null;
         }
+        if ('refused' in resolved) {
+            // A turn that could not start: containment refused the spawn, or no project or folder is
+            // set. The colleague must not read Idle here, and the reason must reach the person in the
+            // app, not vanish onto stderr a packaged build never shows. Surface both and stop.
+            this.#blocked(hireId, resolved.projectId, resolved.reason);
+            return null;
+        }
+        const target = resolved;
         const live = this.#liveFor(hireId);
         live.cwd = target.cwd;
 
@@ -271,8 +297,17 @@ export class ClaudeRunnerManager {
         const liveBuilder = emitLive ? new LiveTurnBuilder() : null;
 
         // #61 isolation: seed the managed dir and hand the child CLAUDE_CONFIG_DIR, the
-        // same config the pty path read. Idempotent per turn.
-        this.#deps.seedManagedConfig(target.cwd);
+        // same config the pty path read. Idempotent per turn. A seed that could not lock the session
+        // credential deletes it and throws: that is a start failure, not a crash, so it surfaces as the
+        // blocked state with its reason rather than propagating out silently and leaving the card Idle.
+        try {
+            this.#deps.seedManagedConfig(target.cwd);
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            this.#blocked(hireId, target.projectId,
+                'I could not start: my workspace could not be prepared safely, so the turn was stopped (' + detail + ').');
+            return null;
+        }
         const env: NodeJS.ProcessEnv = { ...this.#deps.parentEnv, CLAUDE_CONFIG_DIR: this.#deps.claudeConfigDir };
 
         const runner = new ClaudeRunner({
@@ -376,10 +411,35 @@ export class ClaudeRunnerManager {
             // only intended: here it is enforced by the finally, not merely by reaching the last line.
             // The state write itself is isolated: if setState or its roster signal throws, that must not
             // escape the finally and re-strand the colleague, so it is reported rather than propagated.
-            this.#safely(hireId, 'set-idle', () => this.#setState(hireId, AGENT_STATES.IDLE));
+            // A turn whose child never launched is blocked, not idle: that case is set below, so the
+            // idle reset is skipped for it to avoid a flicker between the two states.
+            if (result.status !== 'spawn-error') {
+                this.#safely(hireId, 'set-idle', () => this.#setState(hireId, AGENT_STATES.IDLE));
+            }
+        }
+
+        // A turn whose child never launched (a missing binary, an unusable cwd) is a start failure, not
+        // a colleague that simply had nothing to say. Surface it as Blocked with the runner's own reason,
+        // so a spawn that never ran is visible in the app and never mistaken for a clean idle.
+        if (result.status === 'spawn-error') {
+            this.#blocked(hireId, target.projectId,
+                'I could not start: ' + (result.detail ?? 'the session process failed to launch') + '.');
         }
 
         return result;
+    }
+
+    /**
+     * Surfaces a turn that could not start. The colleague reads Blocked (not_reporting), never Idle,
+     * and the specific reason is recorded into its own conversation thread, so a packaged user who never
+     * sees stderr can read why. When no project is bound there is no thread to record into, so the
+     * blocked state alone carries it. Every write is isolated: surfacing a block must never itself throw.
+     */
+    #blocked(hireId: string, projectId: string | null, reason: string): void {
+        this.#safely(hireId, 'blocked-state', () => this.#setState(hireId, AGENT_STATES.NOT_REPORTING));
+        if (projectId) {
+            this.#safely(hireId, 'blocked-reason', () => this.#deps.recordReply(hireId, projectId, reason));
+        }
     }
 
     /** Surfaces a completion-path failure. Reporting must never itself throw, so it is guarded. */

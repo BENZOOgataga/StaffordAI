@@ -1118,17 +1118,30 @@ function buildDelivery(store: HireStore): void {
         // The same resolution the pty path used: cwd, project, and the resume id.
         resolveTarget: (hireId) => {
             const hire = repositories?.hires.get(hireId);
-            if (!hire || !hire.activeProjectId) return null;
+            // The hire itself is gone: there is no card to surface anything on, so leave state as is.
+            if (!hire) return null;
+            // Blocked, not silent: a colleague with no project or no folder cannot run, and the reason
+            // must reach the person in the app. No project bound has no thread to record into, so the
+            // blocked state alone carries it; the folder cases record their reason into the thread.
+            if (!hire.activeProjectId) {
+                return { refused: true, projectId: null,
+                    reason: 'I could not start: no project is assigned to me yet. Assign me a project folder, then message me again.' };
+            }
             const project = repositories?.projects.get(hire.activeProjectId);
             const cwd = project?.repos[0]?.path;
-            if (!cwd) return null;
+            if (!cwd) {
+                return { refused: true, projectId: hire.activeProjectId,
+                    reason: 'I could not start: my project has no folder set. Open the project and set its folder, then message me again.' };
+            }
             // Fail closed if the project points at Stafford itself, so a colleague can never spawn
             // inside Stafford's own repo. This is what protects a bad project record already saved:
-            // it cannot spawn until its folder is repointed. Same null fail-closed as an empty cwd.
+            // it cannot spawn until its folder is repointed. Now it also says so in the app instead of
+            // only on stderr, so a packaged user is told the specific reason rather than left on Idle.
             if (hitsSelf(cwd)) {
                 process.stderr.write('[containment] refusing to spawn ' + hireId +
                     ': project folder is Stafford\'s own directory, repoint it\n');
-                return null;
+                return { refused: true, projectId: hire.activeProjectId,
+                    reason: 'I could not start: my project folder is Stafford\'s own directory. Point it at a real project folder, then message me again.' };
             }
             return {
                 cwd, projectId: hire.activeProjectId,

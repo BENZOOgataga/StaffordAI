@@ -296,6 +296,21 @@ test('the approval banner path keeps the tool casing, while the resolver still m
     assert.notEqual(shown, FOLD_CASE_INSENSITIVE(shown), 'the shown path is not the lowercased folded form');
 });
 
+test('the other-category floor deny message shows the native path, not the folded form', async () => {
+    // An MCP (other-category) tool reaching a project secret hits the protected floor. The message a
+    // person reads must carry the native casing, not the gate's lowercased forward-slash form.
+    const gate = makePermissionGate({
+        getPolicy: () => policy(), getStoredRules: () => [],
+        protectedPaths: [USERDATA], normalisePath: FOLD_CASE_INSENSITIVE
+    })({ hireId: 'h1', cwd: CWD, projectId: 'proj' });
+    const secret = path.join(CWD, 'Config', '.env'); // mixed case a person would recognize
+    const decision = await Promise.resolve(gate('mcp__fs__read_file', { path: secret }));
+    assert.equal(decision.behavior, 'deny', 'the floor refuses the MCP read of a secret');
+    const msg = (decision as { behavior: 'deny'; message: string }).message;
+    assert.match(msg, /Config/, 'the message keeps the tool casing');
+    assert.ok(!msg.includes('config/.env'), 'the folded lowercased path did not leak into the message');
+});
+
 test('M1: folding both sides does not break an ordinary in-scope write', async () => {
     // The failure mode of folding one side only: nothing matches and everything falls to
     // the category default. This proves the normal path still resolves.
