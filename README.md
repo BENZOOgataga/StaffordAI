@@ -2,6 +2,7 @@
 
 [![License](https://img.shields.io/github/license/BENZOOgataga/StaffordAI?color=blue)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/BENZOOgataga/StaffordAI/ci.yml?branch=main&label=CI)](https://github.com/BENZOOgataga/StaffordAI/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/BENZOOgataga/StaffordAI?label=release)](https://github.com/BENZOOgataga/StaffordAI/releases/latest)
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)
 ![Built with Electron](https://img.shields.io/badge/Electron-2C2E3B?logo=electron&logoColor=9FEAF9)
 ![Built with TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)

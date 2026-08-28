@@ -62,7 +62,7 @@ win:
   # never applied.
   signtoolOptions:
     sign: scripts/no-sign.cjs
-  # v0.1.0 ships Windows-only, so this leg produces a real distributable, not just
+  # Stafford ships Windows-only, so this leg produces a real distributable, not just
   # the dir build that proved compilation. zip builds win-unpacked first, which the
   # packaged-bundle check still reads, then zips it into the downloadable artifact.
   # No installer: an unsigned NSIS installer trips SmartScreen harder than a zip the
