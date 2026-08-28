@@ -48,7 +48,10 @@ function serve() {
             const file = path.join(ROOT, rel);
             if (!file.startsWith(ROOT)) { res.statusCode = 403; res.end(); return; }
             fs.readFile(file, (err, data) => {
-                if (err) { res.statusCode = 404; res.end('not found: ' + rel); return; }
+                // The requested path is not echoed back into the body. The caller (the harness) already
+                // knows the path it asked for, so echoing it adds nothing and would reflect a request
+                // value into the response, which a browser could read as HTML.
+                if (err) { res.statusCode = 404; res.end('not found'); return; }
                 res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');
                 res.end(data);
             });
