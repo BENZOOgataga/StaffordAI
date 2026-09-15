@@ -20,7 +20,7 @@ import type { TurnResult } from './claude-runner.ts';
 function turn(over: Partial<TurnResult> = {}): TurnResult {
     return {
         status: 'completed', sessionId: 'sess-1', assistantText: 'working on it',
-        toolUses: [], isError: false, ...over
+        toolUses: [], isError: false, synthetic: false, ...over
     };
 }
 

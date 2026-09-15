@@ -1259,13 +1259,13 @@ function buildDelivery(store: HireStore): void {
         // Claude's reply, recorded into the colleague's own conversation thread: a
         // message whose sender is the hire and whose target is null, the shape the
         // Conversation renders as the colleague rather than as "You".
-        recordReply: (hireId, projectId, text, blocks) => {
+        recordReply: (hireId, projectId, text, blocks, synthetic) => {
             if (!repositories) return;
             const messageId = randomUUID();
             const at = new Date().toISOString();
             repositories.channel.append({
                 id: messageId, projectId, senderId: hireId, targetHireId: null,
-                kind: 'message', body: text, reference: null, at
+                kind: 'message', body: text, reference: null, at, synthetic: synthetic === true
             });
             // Persist the turn's rich block snapshot alongside the message, so reopening the
             // colleague re-renders its thinking, tools, diffs, and todos. Best-effort: a failure
@@ -1456,7 +1456,7 @@ async function runDeliverySmoke(): Promise<void> {
     const say = async (hireId: string, text: string): Promise<void> => {
         repositories!.channel.append({
             id: randomUUID(), projectId, senderId: CHANNEL_SELF_SENDER, targetHireId: hireId,
-            kind: 'message', body: text, reference: null, at: new Date().toISOString()
+            kind: 'message', body: text, reference: null, at: new Date().toISOString(), synthetic: false
         });
         await runnerManager!.submit(hireId, text);
     };
@@ -2189,7 +2189,7 @@ app.whenReady().then(async () => {
                     // The person's reply is addressed to this colleague, so its
                     // Conversation is keyed by hire and does not leak into another's.
                     targetHireId: hireId,
-                    kind: 'message', body: text, reference: null, at: new Date().toISOString()
+                    kind: 'message', body: text, reference: null, at: new Date().toISOString(), synthetic: false
                 });
                 notifyChannelChanged();
             }

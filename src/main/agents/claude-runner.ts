@@ -146,6 +146,13 @@ export interface TurnResult {
     readonly toolUses: readonly ToolUse[];
     /** True for any non-clean outcome, or when the `result` event itself was an error. */
     readonly isError: boolean;
+    /**
+     * True when the reply is a CLI or system response rather than the model talking: a slash command
+     * like /model or /compact, which the CLI answers itself with an assistant message marked
+     * model "<synthetic>". Keyed off that marker, not num_turns, since an interrupted real turn can
+     * also carry num_turns 0. Lets the manager tag the stored message so it renders as a system line.
+     */
+    readonly synthetic: boolean;
     /** A human-readable note for a non-completed outcome. Never carries message text. */
     readonly detail?: string;
 }
@@ -297,6 +304,10 @@ export class ClaudeRunner {
             let sessionId: string | null = null;
             let assistantText = '';
             let resultFallbackText = '';
+            // Set when an assistant message arrives marked model "<synthetic>": a CLI or system
+            // response rather than the model talking. Sticky for the turn, so the whole turn is
+            // tagged synthetic even if a later event is not marked.
+            let synthetic = false;
             const toolUses: ToolUse[] = [];
             let settled = false;
             let stdoutBuffer = '';
@@ -322,6 +333,7 @@ export class ClaudeRunner {
                     assistantText: assistantText || resultFallbackText,
                     toolUses,
                     isError: isError || this.#interrupted,
+                    synthetic,
                     ...(this.#interrupted ? { detail: 'turn ended after an interrupt' } : {})
                 });
             };
@@ -360,6 +372,9 @@ export class ClaudeRunner {
                         return;
                     }
                     case 'assistant': {
+                        // A CLI or system response is an assistant message marked model "<synthetic>".
+                        // The marker is on the message object itself, not on a content block.
+                        if (isObject(obj.message) && obj.message.model === '<synthetic>') synthetic = true;
                         const extracted = extractAssistant(obj.message);
                         assistantText += extracted.text;
                         toolUses.push(...extracted.tools);
@@ -511,7 +526,7 @@ export class ClaudeRunner {
         assistantText = '',
         toolUses: readonly ToolUse[] = []
     ): TurnResult {
-        return { status, sessionId, assistantText, toolUses, isError: true, detail };
+        return { status, sessionId, assistantText, toolUses, isError: true, synthetic: false, detail };
     }
 }
 

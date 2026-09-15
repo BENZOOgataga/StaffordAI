@@ -283,8 +283,8 @@ export class ChannelRepository {
 
     constructor(db: StorageDatabase) {
         this.#append = db.prepare(
-            'INSERT INTO channel_messages (id, project_id, sender_id, target_hire_id, kind, body, ref_kind, ref_value, at) ' +
-            'VALUES (@id, @project_id, @sender_id, @target_hire_id, @kind, @body, @ref_kind, @ref_value, @at)');
+            'INSERT INTO channel_messages (id, project_id, sender_id, target_hire_id, kind, body, ref_kind, ref_value, at, synthetic) ' +
+            'VALUES (@id, @project_id, @sender_id, @target_hire_id, @kind, @body, @ref_kind, @ref_value, @at, @synthetic)');
         this.#page = db.prepare('SELECT * FROM channel_messages ORDER BY at, id LIMIT ? OFFSET ?');
         // One colleague's own conversation: the rows it sent or that were addressed to
         // it. A colleague's own messages and its events carry sender_id = the hire; a

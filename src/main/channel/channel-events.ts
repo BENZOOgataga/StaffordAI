@@ -60,7 +60,9 @@ export function channelEventFor(input: {
         // language with the colleague's name.
         body: input.state,
         reference: null,
-        at: input.at
+        at: input.at,
+        // A state event is a real record of what the colleague did, not a CLI response.
+        synthetic: false
     };
 }
 

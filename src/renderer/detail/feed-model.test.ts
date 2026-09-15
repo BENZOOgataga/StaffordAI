@@ -4,10 +4,10 @@ import { buildActivityActions } from './feed-model.ts';
 import { CHANNEL_SELF_SENDER, type ChannelMessageRow, type LiveBlock } from '../../shared/ipc.ts';
 
 function msg(id: string, senderId: string, body: string, at: string): ChannelMessageRow {
-    return { id, projectId: 'p', senderId, kind: 'message', body, reference: null, at };
+    return { id, projectId: 'p', senderId, kind: 'message', body, reference: null, at, synthetic: false };
 }
 function event(id: string, senderId: string, state: string, at: string): ChannelMessageRow {
-    return { id, projectId: 'p', senderId, kind: 'event', body: state, reference: null, at };
+    return { id, projectId: 'p', senderId, kind: 'event', body: state, reference: null, at, synthetic: false };
 }
 const tool = (name: string, target: string): LiveBlock => ({ kind: 'tool', id: 't', name, target, status: 'ok' });
 const text = (t: string): LiveBlock => ({ kind: 'text', text: t });

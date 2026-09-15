@@ -73,7 +73,7 @@ function responder({ auto = true }: { auto?: boolean } = {}): { spawn: SpawnFn; 
 }
 
 interface Recorded {
-    replies: Array<{ h: string; p: string; t: string }>;
+    replies: Array<{ h: string; p: string; t: string; synthetic: boolean }>;
     replyBlocks: Array<readonly LiveBlock[] | undefined>;
     binds: Array<{ h: string; p: string; s: string }>;
     states: Array<{ h: string; s: string }>;
@@ -100,7 +100,7 @@ function fakeDeps(spawn: SpawnFn, extra: Partial<RunnerManagerDeps> = {}): { dep
         }),
         seedManagedConfig: (cwd) => { seeds.push(cwd); },
         bindSession: (h, p, s) => { binds.push({ h, p, s }); sessions.set(h, s); },
-        recordReply: (h, p, t, b) => { replies.push({ h, p, t }); replyBlocks.push(b); },
+        recordReply: (h, p, t, b, s) => { replies.push({ h, p, t, synthetic: s === true }); replyBlocks.push(b); },
         setState: (h, s) => { states.push({ h, s }); },
         onStateChanged: () => { changes += 1; },
         spawn,
@@ -119,7 +119,7 @@ test('one message routes through the runner and records the reply keyed by hireI
 
     await manager.submit('hireA', 'hello');
 
-    assert.deepEqual(rec.replies, [{ h: 'hireA', p: 'p-hireA', t: 'reply:hello' }]);
+    assert.deepEqual(rec.replies, [{ h: 'hireA', p: 'p-hireA', t: 'reply:hello', synthetic: false }]);
     assert.equal(rec.binds.length, 1);
     assert.equal(rec.binds[0]?.s, 'sess-1');
     assert.deepEqual(rec.seeds, ['/proj/hireA']);
@@ -331,7 +331,7 @@ test('a chat turn opens with an empty snapshot, streams text, then closes with d
     // The final push is the done marker, so the tab can drop a lingering indicator.
     assert.equal(pushes.at(-1)?.done, true, 'the last push closes the turn');
     // The persisted final matches the last content snapshot exactly: no duplication, no drift.
-    assert.deepEqual(rec.replies, [{ h: 'hireA', p: 'p-hireA', t: 'Hello' }]);
+    assert.deepEqual(rec.replies, [{ h: 'hireA', p: 'p-hireA', t: 'Hello', synthetic: false }]);
     assert.equal(textOf(content.at(-1)!.blocks), rec.replies[0]?.t, 'the last content snapshot equals the persisted message');
 });
 
@@ -667,4 +667,53 @@ test('B1: a turn with tool actions but empty final text is still recorded, so it
     // The reply carried its blocks, which is what the Conversation re-renders in place of a text bubble.
     assert.ok(rec.replyBlocks[0] && rec.replyBlocks[0].length > 0,
         'the turn is recorded with its rich blocks, so its actions re-render on reopen');
+});
+
+// --- a synthetic CLI response is recorded even when empty, so a slash command is never silence ------
+
+test('an empty synthetic response is recorded and tagged synthetic, not dropped', async () => {
+    // The /compact-on-a-resumed-session silence: a CLI response marked model "<synthetic>" with no text
+    // and no blocks used to fall through the hasText/hasBlocks gate entirely, so the surface said
+    // nothing. It must now be recorded, tagged synthetic, so the Conversation can show the command ran.
+    const spawn: SpawnFn = (_c, args, options) => {
+        let dataCb: ((chunk: string) => void) | null = null;
+        const child = {
+            pid: 8100,
+            stdin: {
+                write: (chunk: string) => {
+                    if (!chunk.trim().includes('"type":"user"')) return;
+                    const sid = 'sess-syn';
+                    setTimeout(() => {
+                        dataCb?.('{"type":"system","subtype":"init","session_id":"' + sid + '"}\n');
+                        // A synthetic assistant message with empty content: the shape a silent /compact
+                        // or /clear returns. model "<synthetic>" is the marker; there is no text block.
+                        dataCb?.('{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[]}}\n');
+                        dataCb?.('{"type":"result","is_error":false,"session_id":"' + sid + '","num_turns":0,"result":""}\n');
+                    }, 0);
+                }
+            },
+            stdout: { on: (_e: 'data', cb: (chunk: string) => void) => { dataCb = cb; return undefined; } },
+            stderr: { on: () => undefined },
+            on: (event: 'exit' | 'error', cb: (...a: never[]) => void) => { void event; void cb; return undefined; },
+            kill: () => true
+        };
+        void args; void options;
+        return child;
+    };
+    const { deps, rec } = fakeDeps(spawn);
+    const manager = new ClaudeRunnerManager(deps);
+
+    await manager.submit('hireA', '/compact');
+
+    assert.equal(rec.replies.length, 1, 'the synthetic response is recorded, not dropped');
+    assert.equal(rec.replies[0]?.t, '', 'its text is empty, recorded as-is');
+    assert.equal(rec.replies[0]?.synthetic, true, 'it is tagged synthetic so it renders as a cli line');
+});
+
+test('an ordinary reply is recorded with synthetic false, so it stays a colleague reply', async () => {
+    const { spawn } = responder();
+    const { deps, rec } = fakeDeps(spawn);
+    const manager = new ClaudeRunnerManager(deps);
+    await manager.submit('hireA', 'hello');
+    assert.equal(rec.replies[0]?.synthetic, false, 'a real reply is not tagged synthetic');
 });

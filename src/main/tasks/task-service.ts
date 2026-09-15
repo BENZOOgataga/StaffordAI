@@ -226,7 +226,7 @@ export class TaskService {
                     // rather than spending the bound discovering the same thing five more times.
                     return {
                         status: 'spawn-error', sessionId: input.resumeSessionId, assistantText: '',
-                        toolUses: [], isError: true, detail: 'no project to run in'
+                        toolUses: [], isError: true, synthetic: false, detail: 'no project to run in'
                     };
                 },
                 ...(this.#deps.turnLimit !== undefined ? { turnLimit: this.#deps.turnLimit } : {}),

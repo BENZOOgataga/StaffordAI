@@ -11,10 +11,10 @@ import { eventLabel } from './channel-view.ts';
 import { CHANNEL_SELF_SENDER, type ChannelMessageRow } from '../shared/ipc.ts';
 
 function event(id: string, senderId: string, body: string, at = '2026-08-18T12:00:00Z'): ChannelMessageRow {
-    return { id, projectId: 'p1', senderId, kind: 'event', body, reference: null, at };
+    return { id, projectId: 'p1', senderId, kind: 'event', body, reference: null, at, synthetic: false };
 }
 function message(id: string, senderId: string, body: string): ChannelMessageRow {
-    return { id, projectId: 'p1', senderId, kind: 'message', body, reference: null, at: '2026-08-18T12:00:00Z' };
+    return { id, projectId: 'p1', senderId, kind: 'message', body, reference: null, at: '2026-08-18T12:00:00Z', synthetic: false };
 }
 
 const NOW = Date.parse('2026-08-18T12:00:00Z');
@@ -88,7 +88,7 @@ import {
 import type { ActivityRow } from '../shared/ipc.ts';
 
 function stateRow(id: string, at: string, state: string, senderId = 'marion'): ChannelMessageRow {
-    return { id, projectId: 'p1', senderId, kind: 'event', body: state, reference: null, at };
+    return { id, projectId: 'p1', senderId, kind: 'event', body: state, reference: null, at, synthetic: false };
 }
 function toolRow(id: string, at: string, tool: string, target: string | null, status: 'ok' | 'error' | 'incomplete' | null, live = false): ActivityRow {
     return { id, hireId: 'marion', tool, target, status, at, live };

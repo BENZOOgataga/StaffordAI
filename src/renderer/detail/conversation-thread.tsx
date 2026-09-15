@@ -89,6 +89,15 @@ export function ConversationThread({ items, now, lang, onReply, richFor }: {
                             {item.text}
                         </span>
                     </div>
+                ) : item.kind === 'cli' ? (
+                    // A slash command or its CLI output: a centered system line, in a monospace pill so
+                    // it reads as the tool, not the person or the colleague talking. The text is already
+                    // localized by the model, so this needs no copy of its own and flexes for any length.
+                    <div key={item.id} className="flex justify-center py-0.5">
+                        <span className="text-muted-foreground bg-muted/40 max-w-[78%] truncate rounded px-2 py-0.5 font-mono text-xs">
+                            {item.text}
+                        </span>
+                    </div>
                 ) : (
                     <div key={item.messages[0]?.id ?? item.at}
                         className={cn('flex flex-col gap-1', item.side === 'you' ? 'items-end' : 'items-start')}>
